@@ -1,0 +1,261 @@
+schema: comet.native.v4
+name: session-s1
+language: zh-CN
+phase: archive
+status: done
+state_version: 7
+brief: brief.md
+spec_changes:
+  - capability: session
+    operation: create
+    source: specs/session/spec.md
+workspace:
+  isolation: current
+  change_branch: master
+  target_branch: master
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1：`Context.emitContained` 的一个 listener 抛错时，后续 listener 仍执行；once、listener
+      snapshot 和 Context dispose 行为保持 Runtime 现有规则。
+    result: passed
+    reason:
+      text: Context.emitContained 代理、listener failure isolation、顺序、once、snapshot 与
+        dispose 规则均有实现和测试覆盖。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2：核心事件与自定义 `SessionEventKey<T>` 都能编码为稳定信封；append 后修改输入对象、返回 envelope
+      或派生消息都不能改变日志快照，非有限数字等不能无损表示的值在提交前被拒绝。
+    result: passed
+    reason:
+      text: SessionJson 提供 detached stable envelope、核心与自定义
+        serializer，并在提交前拒绝非有限数字等不可无损表示的值。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: A3：单线程与并发 append 得到从 0 开始、无重复无空洞且与日志顺序一致的 `seq`；任何验证或序列化失败 都不消耗序号、不写日志、不发
+      `session/event`。
+    result: passed
+    reason:
+      text: Session mutex 线性化 append，seq 从 0 连续分配；验证或序列化失败不消耗 seq，且有并发回归测试。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4：`user/message` 与 `assistant/message` 的角色、turn/step、`surfaceOp = append`
+      和 `sourceEventSeqs` 都在提交前校验；引用重复、未来或不存在 seq 时原子失败。
+    result: passed
+    reason:
+      text: 核心 message 的 role/source、turn/step、append surface 与 provenance
+        唯一性和历史顺序均在提交前校验。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5：对同一日志执行 `deriveMessages()` 总是得到相同历史；log-only 事件和空正文 assistant usage 事件
+      不进入历史，不存在第二份可独立修改的 message store。
+    result: passed
+    reason:
+      text: deriveMessages 从完整日志重建 detached surface projection，排除 log-only 与空
+        assistant usage。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: A6：request header/context 的 live fold 与从完整事件日志重新 fold 的结果相同；header
+      canonical equality 保留 system、tools 顺序、call config 和 adapter defaults
+      的实际发送值。
+    result: passed
+    reason:
+      text: canonical header/context fold 与完整日志 replay 一致，保留 defaults、system、tools 顺序和
+        call config。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: A7：成功创建严格遵循 `prepare -> enter -> announce`；`session/created` listener
+      失败会回滚 live entry， 并为已开始的生命周期发布一次配对 `session/disposed`。
+    result: passed
+    reason:
+      text: 生命周期遵循 prepare-enter-announce，created veto 回滚并配对 disposed，重复 announce
+        拒绝且取消清理已覆盖。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: A8：重复 SessionId 不覆盖 live entry；旧 handle/detach 不能删除同 id 的其他实例；owner
+      Context 和 Session Plugin dispose 后 Store 不残留 live Session，list 保持创建顺序。
+    result: passed
+    reason:
+      text: 重复 ID、identity-bound detach、owner/plugin dispose 与创建顺序均已实现并测试。
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: A9：已 enter Session 的 `session/event` 与 `session/disposed` 观察者失败逐个隔离且不回滚状态；
+      `session/flush` 等待所有并行 listener settle 后才返回，并向调用方传播失败。
+    result: passed
+    reason:
+      text: post-commit/disposed observer failure 隔离，parallel flush 等待所有 listener
+        settle 并聚合失败。
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: A10：外部模块可声明并追加自定义事件 key，而无需修改 Session 核心枚举；未知业务事件保持 log-only， 不会进入模型历史。
+    result: passed
+    reason:
+      text: 外部可声明 SessionEventKey 自定义事件；未知事件保持 log-only。
+      truncated: false
+  - id: A11
+    source: brief.md
+    text: A11：最小 fixture 能安装 Runtime 与 Session Plugin，由 child Context 创建 Session、追加
+      user message、 派生相同消息，并在 child dispose 后确认 Store 已移除该 Session。
+    result: passed
+    reason:
+      text: Loader fixture 已验证 Runtime/Session Plugin 安装、child 创建、append、replay 与
+        dispose detach。
+      truncated: false
+  - id: A12
+    source: brief.md
+    text: A12：Runtime 与 Session 的目标平台测试、整仓 build 和 `git diff --check` 通过；依赖审计确认
+      Session 不依赖 apps、backend、agent、Koog 或具体 Provider，无法在本机运行的平台必须明确记录为未验收风险。
+    result: passed
+    reason:
+      text: Runtime 103/103、Session 14/14 的 JVM/Android Release、此前 Debug、整仓
+        build、diff-check 和依赖审计均通过。
+      truncated: false
+builder_handoff:
+  candidate_id: ecde599f-134d-402a-9af8-e32ba4f08a7f
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:3b194741-111d-43eb-b978-e72dc5ff609c
+  iteration: 1
+  summary:
+    text: 完成 session-s1：补齐 Runtime contained event 与跨平台原子 listener 语义，建立独立的 Session
+      模块、append-only 事件日志、稳定 JSON envelope、seq/provenance 校验、surface message
+      projection、request header/context fold、生命周期事务、dispose/flush 语义和 Loader
+      fixture。修复重复 announce、创建取消后的 live Session 泄漏、并发 once listener 竞争等交付前发现的问题。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+  checks:
+    - name:
+        text: Runtime JVM and Android Release tests
+        truncated: false
+      result: passed
+      note:
+        text: 103/103 tests successful on each target
+        truncated: false
+    - name:
+        text: Session JVM and Android Release tests
+        truncated: false
+      result: passed
+      note:
+        text: 14/14 tests successful on each target
+        truncated: false
+    - name:
+        text: Whole repository build
+        truncated: false
+      result: passed
+      note:
+        text: Build successful
+        truncated: false
+    - name:
+        text: Git diff whitespace check
+        truncated: false
+      result: passed
+      note:
+        text: git diff --check completed without errors
+        truncated: false
+    - name:
+        text: iOS source and test compilation
+        truncated: false
+      result: passed
+      note:
+        text: Previously completed compile-only checks; Linux host cannot link iOS test
+          PROGRAM
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: Linux host cannot link iOS test PROGRAM; iOS production and test source
+        compilation passed
+      truncated: false
+    - text: The low-level Store API permits append before announce when called
+        directly; normal Context.createSession does not expose the live handle
+        before lifecycle completion
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: Independent read-only review covered A1-A12, current implementation,
+        tests, dependency boundaries, and regressions; no blocking defects
+        found.
+      truncated: false
+    reviewer_execution_ref: review-session_s1-20260903-01
+  submitted_at: 2026-09-03T03:11:51.654Z
+blockers: []
+verification:
+  candidate_id: ecde599f-134d-402a-9af8-e32ba4f08a7f
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:eddb8a1a-99a0-4cf0-850f-d488ec724780
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: Independent read-only Verifier reviewed the implementation, scoped
+      acceptance scenarios, dependency boundary, and recorded checks. A1-A12 all
+      passed with no blocking defect.
+    truncated: false
+  risks:
+    - text: Linux host cannot link iOS test PROGRAM; iOS production and test source
+        compilation passed, so executable iOS test run remains unavailable on
+        this host
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-03T03:22:10.900Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Independent read-only Verifier reviewed the implementation, scoped
+        acceptance scenarios, dependency boundary, and recorded checks. A1-A12
+        all passed with no blocking defect.
+      truncated: false
+    completed_at: 2026-09-03T03:22:10.900Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-02T15:18:48.137Z

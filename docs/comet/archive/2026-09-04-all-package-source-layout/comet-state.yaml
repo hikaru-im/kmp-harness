@@ -1,0 +1,275 @@
+schema: comet.native.v4
+name: all-package-source-layout
+language: zh-CN
+phase: archive
+status: done
+state_version: 12
+brief: brief.md
+spec_changes: []
+workspace:
+  isolation: current
+  change_branch: master
+  target_branch: master
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 2
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "**A1：全量迁移**：审计清单中的 131 个文件全部位于其 source root 下的 package 镜像目录，不再有 flat
+      source-root 文件残留。"
+    result: passed
+    reason:
+      text: CodegenEngine.rootPath 使用 src/im/hikaru/ruoyi/module/$module；既有 131
+        个迁移文件、apps/shared 5/5 与 modules/runtime 28/28 均位于对应 package 镜像路径。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "**A2：声明保持不变**：131 个迁移文件的 package 声明、文件内容和 import 与迁移前一致；正式包名仍只使用
+      `im.hikaru.harness.*`、`im.hikaru.contracts.*` 或 `im.hikaru.ruoyi.*`。"
+    result: passed
+    reason:
+      text: 静态复核未发现本轮迁移改变 package、import 或源码逻辑；正式包名结构保持不变，关键字包段按实际物理目录归一化。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "**A3：非目标边界**：无 package 入口、`apps/shared` 4 个嵌套文件、`modules/runtime` 19
+      个嵌套文件、`llm-koog` 职责目录和 RuoYi/模板遗留文件均未被本 change 移动或修改。"
+    result: passed
+    reason:
+      text: 剩余 mismatch=38 全部属于 brief 已登记的 modules/llm-koog 职责目录；另有两个无 package
+        应用入口。非目标边界未被扩大。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "**A4：构建与测试**：受影响模块的 JVM/Android/iOS source-set 编译与测试通过；全仓 package/path
+      复核显示迁移后没有新的路径不匹配。"
+    result: passed
+    reason:
+      text: 受影响 JVM 测试退出码 0，Android 受影响模块测试 103/103 成功，Android Debug 构建 309/309 tasks
+        成功；git diff --check clean。iOS 受 Linux/WSL 环境限制未执行，属于已登记限制。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "**A5：Codegen 路径**：`CodegenEngine.rootPath` 使用
+      `src/im/hikaru/ruoyi/module/$module`，生成 Kotlin 文件路径不再包含
+      `src/im.hikaru.ruoyi/`；生成内容中的 package 声明保持正确。"
+    result: passed
+    reason:
+      text: CodegenEngine.rootPath 与 rootPackage 对齐，生成路径不再包含
+        src/im.hikaru.ruoyi/；CodegenTest 已覆盖路径断言。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "**A6：apps/shared 完整路径**：4 个 `apps/shared` 源码文件全部位于
+      `src/im/hikaru/harness/client/...` 对应路径，旧的 `src/client/...`
+      文件不再存在，声明和内容保持不变。"
+    result: passed
+    reason:
+      text: apps/shared 的 4 个目标源码文件已位于 src/im/hikaru/harness/client/...，连同既有测试文件共 5/5
+        精确匹配，旧 src/client 路径无残留。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "**A7：runtime 完整路径**：`modules/runtime/src` 与 `modules/runtime/test` 的全部 28
+      个 Kotlin 文件均位于 package 镜像路径；无
+      `src/plugin`、`src/effect`、`src/service`、`src/event`、`src/intercept`
+      或对应测试路径残留，声明和内容保持不变。"
+    result: passed
+    reason:
+      text: modules/runtime src/test 全部 28 个 Kotlin 文件均位于
+        im/hikaru/harness/runtime/... 镜像路径，旧职责目录路径无残留。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "**A8：扩展后验证**：Codegen 测试、`apps/shared` 与 `modules/runtime` 的可用 JVM/Android
+      检查通过；全仓严格 package-to-path 扫描只剩已登记的 llm-koog、应用入口和模板边界。"
+    result: passed
+    reason:
+      text: 扩展后静态扫描仅剩已登记的 llm-koog 职责目录与两个无 package 应用入口；Codegen、shared、runtime 的可用
+        JVM/Android 检查均通过。
+      truncated: false
+builder_handoff:
+  candidate_id: f5b39636-b611-4b15-be06-ee6055f750fc
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:920115cc-829b-47d4-82d1-42e84fe9dd43
+  iteration: 1
+  summary:
+    text: 已完成 all-package-source-layout 本轮扩展：修正 CodegenEngine.rootPath 的点号路径，将
+      apps/shared 4 个 Kotlin 文件迁移到完整 package 镜像路径，并将 modules/runtime 的 28
+      个源码/测试文件全部整理到 package 镜像路径。既有 131 个 flat source-root 文件迁移成果保持不变。物理移动未修改
+      Kotlin package、import、源码逻辑或模块配置。独立只读全仓扫描确认剩余不匹配仅为 brief 明确保留的
+      modules/llm-koog 职责目录 38 个，另有 apps/jvm-app/src/main.kt 与
+      apps/ios-app/src/ViewController.kt 两个无 package 入口。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+  checks:
+    - name:
+        text: codegen-root-path-audit
+        truncated: false
+      result: passed
+      note:
+        text: CodegenEngine.rootPath 为 src/im/hikaru/ruoyi/module/$module；CodegenTest
+          断言生成路径不包含 src/im.hikaru.ruoyi/。
+        truncated: false
+    - name:
+        text: apps-shared-package-path-scan
+        truncated: false
+      result: passed
+      note:
+        text: apps/shared 5 个 Kotlin 文件全部 exact=5、issues=0；旧 src/client 路径无残留。
+        truncated: false
+    - name:
+        text: runtime-package-path-scan
+        truncated: false
+      result: passed
+      note:
+        text: modules/runtime src/test 共 28 个 Kotlin 文件全部 exact=28、issues=0；无旧
+          src/plugin、src/effect、src/service、src/event、src/intercept 或对应测试路径残留。
+        truncated: false
+    - name:
+        text: full-package-path-scan
+        truncated: false
+      result: passed
+      note:
+        text: 独立只读全仓扫描确认剩余 mismatch=38（仅已登记 llm-koog 职责目录），no-package=2（jvm/ios
+          应用入口）；apps/shared 与 runtime 无 mismatch。
+        truncated: false
+    - name:
+        text: jvm-affected-module-tests
+        truncated: false
+      result: passed
+      note:
+        text: ./kotlin test --platform=jvm --include-module=runtime
+          --include-module=shared --include-module=infra 退出码 0；runtime 103/103
+          成功，infra 8 成功、1 个已知 PostgreSQL 环境测试跳过。
+        truncated: false
+    - name:
+        text: android-affected-module-tests
+        truncated: false
+      result: passed
+      note:
+        text: ./kotlin test --platform=android --include-module=runtime
+          --include-module=shared 通过：103 tests found，103 successful，0 failed。
+        truncated: false
+    - name:
+        text: android-debug-build
+        truncated: false
+      result: passed
+      note:
+        text: ./kotlin build --platform=android --variant=debug 通过，309/309 tasks 完成。
+        truncated: false
+    - name:
+        text: git-diff-check
+        truncated: false
+      result: passed
+      note:
+        text: git diff --check 无输出。
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: iOS 完整 source-set/Xcode 构建在当前 Linux/WSL 环境无法执行；本轮仅做物理路径与声明静态审计。
+      truncated: false
+    - text: modules/llm-koog 的职责目录、两个无 package 应用入口以及 RuoYi/模板遗留边界按 brief
+        非目标保留；未修改其路径或包声明。
+      truncated: false
+    - text: 工作区没有可用 Git 提交基线且包含大量用户既有未提交/未跟踪文件；本轮未执行 reset、clean、checkout、提交或删除。
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: 独立只读复核重新检查了 CodegenEngine.rootPath、apps/shared 与 modules/runtime 的
+        package-to-path 对齐、全仓剩余不匹配边界及 git diff
+        --check；确认本轮目标均满足且未发现源码内容或包声明被意外修改。
+      truncated: false
+    reviewer_execution_ref: pkg-layout-readonly-review-2026-09-04T17:52:09+08:00
+  submitted_at: 2026-09-04T09:53:00.582Z
+blockers: []
+verification:
+  candidate_id: f5b39636-b611-4b15-be06-ee6055f750fc
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:4550cdc2-4820-476a-bcb5-ef3dd6db9a69
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: 独立只读验收通过。CodegenEngine.rootPath、apps/shared 5/5、modules/runtime 28/28 均完成
+      package-to-path 对齐；全仓剩余不匹配仅为 brief 登记的 llm-koog 职责目录和两个无 package
+      应用入口，构建、测试及 diff 检查证据一致。
+    truncated: false
+  risks:
+    - text: iOS 完整 source-set/Xcode 构建在当前 Linux/WSL 环境无法执行。
+      truncated: false
+    - text: 工作区包含用户既有未提交/未跟踪文件，本次验证只读且未修改。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-04T09:57:07.093Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Independent read-only verification passed all four acceptance items. The
+        131 requested files are fully package-mirrored, declarations remain
+        unchanged, non-goal boundaries are preserved, and the available
+        build/test evidence is consistent with the migration.
+      truncated: false
+    completed_at: 2026-09-04T09:25:33.759Z
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: 新增并处理 CodegenEngine.rootPath 点号路径修正、apps/shared 4
+        个源码文件路径整理、modules/runtime 28 个源码/测试文件完整 package 镜像整理；保留原 131
+        个迁移成果并扩大验收范围。
+      truncated: false
+    completed_at: 2026-09-04T09:29:06.142Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立只读验收通过。CodegenEngine.rootPath、apps/shared 5/5、modules/runtime 28/28 均完成
+        package-to-path 对齐；全仓剩余不匹配仅为 brief 登记的 llm-koog 职责目录和两个无 package
+        应用入口，构建、测试及 diff 检查证据一致。
+      truncated: false
+    completed_at: 2026-09-04T09:57:07.093Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-04T07:22:42.201Z

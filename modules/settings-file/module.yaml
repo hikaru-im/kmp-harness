@@ -1,0 +1,10 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../home
+  - ../loader
+  - ../runtime
+  - ../settings
+  - org.yaml:snakeyaml:2.4

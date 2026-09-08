@@ -1,0 +1,76 @@
+apply: [../backend.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../common
+  - $spring.boot.starter.web
+  - $spring.boot.starter.security
+  - $spring.boot.starter.validation
+  - $spring.boot.starter.jdbc
+  - $spring.boot.starter.cache
+  - $spring.boot.starter.data.redis
+  - $spring.boot.starter.quartz
+  - $spring.boot.starter.actuator
+  - org.springframework.boot:spring-boot-autoconfigure
+  - org.springframework:spring-aop
+  - org.springframework:spring-context
+  - org.springframework:spring-expression
+  - org.springframework:spring-web
+  - org.springframework:spring-webmvc
+  - org.springframework:spring-websocket
+  - org.springframework:spring-messaging
+  - org.springframework:spring-tx
+  - org.springframework.data:spring-data-redis
+  - org.springframework.amqp:spring-rabbit
+  - org.springframework.kafka:spring-kafka: compile-only
+  - org.apache.rocketmq:rocketmq-spring-boot:2.3.6: compile-only
+  - org.jetbrains.exposed:exposed-core:1.3.1
+  - org.jetbrains.exposed:exposed-jdbc:1.3.1
+  - org.jetbrains.exposed:exposed-dao:1.3.1
+  - org.jetbrains.exposed:exposed-kotlin-datetime:1.3.1
+  - org.jetbrains.exposed:spring-transaction:1.3.1
+  - com.zaxxer:HikariCP
+  - com.mysql:mysql-connector-j
+  - com.oracle.database.jdbc:ojdbc8
+  - org.postgresql:postgresql
+  - com.microsoft.sqlserver:mssql-jdbc
+  - com.dameng:DmJdbcDriver18:8.1.3.140
+  - cn.com.kingbase:kingbase8:9.0.1.jre7
+  # 7.0.0-RC3-og shades an obsolete org.slf4j implementation into the driver JAR.
+  - org.opengauss:opengauss-jdbc:6.0.3-og
+  - com.taosdata.jdbc:taos-jdbcdriver:3.8.4
+  - org.redisson:redisson-spring-boot-starter:4.6.1
+  - org.redisson:redisson:4.6.1
+  - tools.jackson.core:jackson-databind
+  - com.alibaba:transmittable-thread-local:2.14.5
+  - org.slf4j:slf4j-api
+  - org.aspectj:aspectjrt
+  - org.aspectj:aspectjweaver
+  - com.github.ben-manes.caffeine:caffeine
+  - io.github.mouzt:bizlog-sdk:3.0.6
+  - jakarta.servlet:jakarta.servlet-api
+  - jakarta.validation:jakarta.validation-api
+  - cn.idev.excel:fastexcel:1.2.0
+  - com.baomidou:lock4j-redisson-spring-boot-starter:2.2.7
+  - org.lionsoul:ip2region:2.7.0
+  - com.fasterxml.jackson.core:jackson-annotations:2.21
+  - org.jsoup:jsoup:1.18.3
+  - com.google.guava:guava:33.4.8-jre
+  - com.github.xiaoymin:knife4j-openapi3-jakarta-spring-boot-starter:4.5.0
+  - org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3
+  - org.apache.skywalking:apm-toolkit-trace:9.4.0
+  - org.apache.skywalking:apm-toolkit-opentracing:9.4.0
+  - org.apache.skywalking:apm-toolkit-logback-1.x:9.4.0
+  - io.opentracing:opentracing-util:0.30.0
+  - de.codecentric:spring-boot-admin-starter-client:4.0.4
+
+test-dependencies:
+  - $spring.boot.starter.test
+  - org.springframework.security:spring-security-test
+  - org.springframework.boot:spring-boot-starter-webmvc-test
+  - com.h2database:h2
+  - io.opentracing:opentracing-mock:0.30.0
+  - org.springframework.kafka:spring-kafka: runtime-only
+  - org.springframework.amqp:spring-rabbit: runtime-only
+  - org.apache.rocketmq:rocketmq-spring-boot:2.3.6: runtime-only

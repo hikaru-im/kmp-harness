@@ -1,0 +1,26 @@
+apply: [../backend.module-template.yaml]
+
+product: jvm/app
+
+settings:
+  jvm:
+    mainClass: im.hikaru.ruoyi.server.ApplicationKt
+
+dependencies:
+  - ../common
+  - ../framework
+  - ../features/infra
+  - ../features/harness
+  - ../features/member
+  - ../features/mp
+  - ../features/pay
+  - ../features/system
+  - ../features/sync
+  - $spring.boot.starter.web
+  - jakarta.servlet:jakarta.servlet-api
+  - $spring.boot.starter.actuator
+
+test-dependencies:
+  - $spring.boot.starter.test
+  - com.h2database:h2
+  - org.redisson:redisson:4.6.1

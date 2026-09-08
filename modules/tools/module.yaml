@@ -1,0 +1,10 @@
+apply: [../../kmp.module-template.yaml]
+
+product:
+  type: kmp/lib
+  platforms: [jvm, android, iosSimulatorArm64, iosArm64]
+
+dependencies:
+  - ../llm
+  - ../runtime
+  - ../session

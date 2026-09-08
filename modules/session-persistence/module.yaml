@@ -1,0 +1,28 @@
+apply: [../../kmp.module-template.yaml]
+
+product:
+  type: kmp/lib
+  platforms: [jvm, android, iosSimulatorArm64, iosArm64]
+
+dependencies:
+  - ../agent
+  - ../loader
+  - ../llm-retry
+  - ../tools
+  - ../llm
+  - ../runtime
+  - ../session
+  - androidx.room3:room3-runtime:3.0.0
+  - androidx.sqlite:sqlite-async:2.7.0
+  - androidx.sqlite:sqlite-bundled:2.7.0
+  - org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0
+
+settings:
+  kotlin:
+    ksp:
+      version: 2.3.10
+      processors:
+        - androidx.room3:room3-compiler:3.0.0
+
+test-dependencies:
+  - ../agent-loop

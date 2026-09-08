@@ -1,0 +1,10 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../credentials
+  - ../home
+  - ../loader
+  - ../runtime
+  - org.yaml:snakeyaml:2.4

@@ -1,0 +1,11 @@
+# Shared configuration for platform-neutral contracts and Compose client code.
+settings:
+  kotlin:
+    version: 2.3.10
+    serialization: json
+
+dependencies:
+  - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0
+
+test-dependencies:
+  - org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0

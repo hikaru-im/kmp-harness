@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/home/hikaru/IdeaProjects/kmp-harness/.agents/skills/comet/scripts/comet-hook-router.mjs\" --platform \"codex\" --project-root \"/home/hikaru/IdeaProjects/kmp-harness\""
+          }
+        ]
+      }
+    ]
+  }
+}

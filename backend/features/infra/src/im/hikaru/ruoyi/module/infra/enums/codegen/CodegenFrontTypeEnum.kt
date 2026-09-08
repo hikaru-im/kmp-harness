@@ -1,0 +1,14 @@
+package im.hikaru.ruoyi.module.infra.enums.codegen
+
+enum class CodegenFrontTypeEnum(val type: Int) {
+    VUE2_ELEMENT_UI(10),
+    VUE3_ELEMENT_PLUS(20),
+    VUE3_VBEN2_ANTD_SCHEMA(30),
+    VUE3_VBEN5_ANTD_SCHEMA(40),
+    VUE3_VBEN5_ANTD_GENERAL(41),
+    VUE3_VBEN5_ANTDV_NEXT_SCHEMA(42),
+    VUE3_VBEN5_ANTDV_NEXT_GENERAL(43),
+    VUE3_VBEN5_EP_SCHEMA(50),
+    VUE3_VBEN5_EP_GENERAL(51),
+    VUE3_ADMIN_UNIAPP_WOT(60),
+}

@@ -1,0 +1,239 @@
+schema: comet.native.v4
+name: session-persistence-room
+language: zh-CN
+phase: archive
+status: done
+state_version: 14
+brief: brief.md
+spec_changes: []
+workspace:
+  isolation: current
+  change_branch: master
+  target_branch: master
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 2
+  attempt: 3
+  retry_epoch: 0
+  failed_iteration_count: 1
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "**A1**：Room flush/load preserves the complete Session event log, derived
+      messages, request folds, Inbox replay and pending retry recovery; no JSON
+      session file is created."
+    result: passed
+    reason:
+      text: Room header and append-only event rows preserve the complete session event
+        log, derived projections, Inbox replay and pending retry recovery; JVM
+        verification passed with no JSON session file output.
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "**A2**：Repeated or concurrent flushes are transactional and idempotent;
+      `(sessionId, seq)` remains unique and a failed transaction leaves the
+      previous committed snapshot readable."
+    result: passed
+    reason:
+      text: Flush captures state under the provider mutex and writes header/tail
+        deletion/event upserts inside the SessionDatabaseAccess transaction; the
+        composite (session_id, seq) key and repeated/concurrent flush test
+        preserve one contiguous snapshot.
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "**A3**：Load repairs an interrupted turn/step exactly once, while a
+      pending durable retry defers repair to retry recovery."
+    result: passed
+    reason:
+      text: Open turn repair appends one StepEnd/TurnEnd and is persisted exactly
+        once; a pending durable llm-retry defers repair and restart recovery
+        resumes correctly.
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "**A4**：Default Host storage uses an independent Harness Room database;
+      optional App integration uses only a neutral adapter and never opens two
+      RoomDatabase instances against one SQLite file."
+    result: passed
+    reason:
+      text: SessionDatabaseRegistry uses immutable-map CAS Opening/Ready/Closing
+        states. Same-factory and cross-factory duplicate creates for one
+        location are rejected, close completes before the key is released, and a
+        real JVM Room factory test verifies duplicate rejection, close/reopen
+        and different-location isolation. The neutral SessionDatabaseAccess
+        adapter remains independent from AppDatabase.
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "**A5**：Desktop/Android platform factories own Room builder, driver, query
+      context and location; the Plugin only installs the persistence service and
+      has no platform or environment lookup."
+    result: passed
+    reason:
+      text: JVM, Android and iOS factories own Room builder, BundledSQLiteDriver,
+        Dispatchers.IO and location; the plugin only installs the supplied
+        access/service/listener and does not perform platform or environment
+        lookup.
+      truncated: false
+builder_handoff:
+  candidate_id: 98d96722-6a48-41a6-a92c-944e7c5cf8cb
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:68080ec0-de20-45e1-bb24-4e9496553a17
+  iteration: 2
+  summary:
+    text: 修复 A4 的 Room 工厂生命周期约束。新增跨平台 SessionDatabaseRegistry，按 location 维护
+      Opening/Ready/Closing 状态，使用原子 CAS 处理不同 key 并发更新；同一或不同工厂对已占用 location 的重复
+      create() 都稳定拒绝，关闭完成后才移除注册，避免 close/open 竞态和多个 RoomDatabase 实例。JVM 使用
+      canonical path，Android 使用 application database path，iOS 使用 launcher
+      提供的绝对路径。
+    truncated: false
+  addressed_acceptance_ids:
+    - A4
+  checks:
+    - name:
+        text: ./kotlin test --include-module=session-persistence --platform=jvm
+        truncated: false
+      result: passed
+      note:
+        text: 7/7 tests passed, including duplicate-location rejection, close/reopen and
+          independent location registry coverage.
+        truncated: false
+    - name:
+        text: ./kotlin build --module=session-persistence --platform=android
+        truncated: false
+      result: passed
+      note:
+        text: Android debug and test compilation passed with KSP.
+        truncated: false
+    - name:
+        text: ./kotlin build --module=session-persistence --platform=iosSimulatorArm64
+        truncated: false
+      result: not-run
+      note:
+        text: Attempted; remains blocked by the known Room 3/KSP kotlin.UByte
+          type-resolution failure.
+        truncated: false
+    - name:
+        text: git diff --check
+        truncated: false
+      result: passed
+      note:
+        text: No whitespace errors.
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: The lifecycle contract test uses the platform-neutral registry fake; no
+        Android/iOS runtime test is available here and no dedicated real JVM
+        factory concurrency test is checked in.
+      truncated: false
+    - text: The optional App RoomDatabase adapter still has no real composed-database
+        migration test.
+      truncated: false
+    - text: iOS Room/KSP remains blocked by the current toolchain compatibility issue.
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: Independent read-only review confirmed duplicate create rejection,
+        Opening/Closing guards, CAS retry without leaking a built access,
+        close-before-registry-removal ordering, and all three platform factories
+        using the guard. Remaining gaps are real Room concurrency coverage,
+        adapter composition coverage and the known iOS KSP blocker.
+      truncated: false
+    reviewer_execution_ref: review-session-persistence-room-a4-20260904-02
+  submitted_at: 2026-09-04T05:12:47.735Z
+blockers: []
+verification:
+  candidate_id: 98d96722-6a48-41a6-a92c-944e7c5cf8cb
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:7ed49feb-900f-4f23-a4c9-94c3134aa6b6
+  iteration: 2
+  attempt: 3
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: All five session-persistence-room acceptance scenarios pass. Room storage
+      is transactional and recoverable, and platform factories enforce a single
+      RoomDatabase owner per SQLite location with safe close/reopen lifecycle.
+    truncated: false
+  risks:
+    - text: No real RuoYi/App RoomDatabase composition or migration test exists yet;
+        the integration seam is neutral and explicit.
+      truncated: false
+    - text: Android and iOS location keys rely on the launcher-provided application
+        database path and do not canonicalize symlink aliases.
+      truncated: false
+    - text: iOS Room/KSP compilation remains blocked by the known
+        XTypeName[kotlin.UByte] toolchain incompatibility allowed by the
+        confirmed scope; JVM and Android verification passed.
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-04T05:36:52.752Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A4
+    summary:
+      text: Room persistence implementation passes A1, A2, A3 and A5. A4 fails because
+        platform factories do not guard or cache repeated opens of the same
+        SQLite location, so the lifecycle invariant against multiple
+        RoomDatabase instances is not enforced.
+      truncated: false
+    completed_at: 2026-09-04T04:48:39.188Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: "Native Verifier response was invalid: Native Verifier acceptance coverage
+        is invalid (duplicate: none; unknown: A1, A2, A3, A5; missing: none)"
+      truncated: false
+    completed_at: 2026-09-04T05:26:42.165Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 2
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Repair verification passed for A4; final full verification is required.
+      truncated: false
+    completed_at: 2026-09-04T05:31:31.364Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 3
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: All five session-persistence-room acceptance scenarios pass. Room storage
+        is transactional and recoverable, and platform factories enforce a
+        single RoomDatabase owner per SQLite location with safe close/reopen
+        lifecycle.
+      truncated: false
+    completed_at: 2026-09-04T05:36:52.752Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-04T03:40:53.063Z

@@ -1,0 +1,13 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../../contracts
+  - ../../contracts/harness-protocol
+  - ../boot
+  - ../home
+  - ../loader
+  - ../profile
+  - ../runtime
+  - org.yaml:snakeyaml:2.4

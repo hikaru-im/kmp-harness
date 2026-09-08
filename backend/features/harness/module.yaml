@@ -1,0 +1,15 @@
+apply: [../../backend.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../../../contracts
+  - ../../../contracts/harness-protocol
+  - ../../common
+  - ../../framework
+  - org.springframework:spring-context
+  - org.springframework:spring-websocket
+  - org.slf4j:slf4j-api
+
+test-dependencies:
+  - $spring.boot.starter.test

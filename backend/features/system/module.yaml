@@ -1,0 +1,38 @@
+apply: [../../backend.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../../../contracts
+  - ../../common
+  - ../../framework
+  - ../infra
+  - io.github.mouzt:bizlog-sdk:3.0.6
+  - $spring.boot.starter.validation
+  - org.springframework.boot:spring-boot-starter-mail
+  - jakarta.validation:jakarta.validation-api
+  - org.springframework:spring-web
+  - org.springframework:spring-context
+  - org.springframework.data:spring-data-redis
+  - org.springframework.security:spring-security-core
+  - org.springframework.security:spring-security-config
+  - org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3
+  - jakarta.servlet:jakarta.servlet-api
+  - com.anji-plus:captcha:1.4.0
+  - com.anji-plus:captcha-spring-boot-starter:1.4.0
+  - me.zhyd.oauth:JustAuth:1.16.7
+  - com.xkcoding.justauth:justauth-spring-boot-starter:1.4.0
+  - com.github.binarywang:weixin-java-common:4.8.4-20260623.211820
+  - com.github.binarywang:weixin-java-mp:4.8.4-20260623.211820
+  - com.github.binarywang:weixin-java-miniapp:4.8.4-20260623.211820
+  - com.github.ben-manes.caffeine:caffeine
+  - org.springframework:spring-tx
+  - org.jetbrains.kotlinx:kotlinx-datetime:0.6.2
+  - org.jetbrains.exposed:exposed-kotlin-datetime:1.3.1
+  - org.jetbrains.exposed:exposed-core:1.3.1
+  - org.jetbrains.exposed:exposed-jdbc:1.3.1
+  - cn.idev.excel:fastexcel:1.2.0
+
+test-dependencies:
+  - $spring.boot.starter.test
+  - com.h2database:h2

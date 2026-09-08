@@ -1,0 +1,12 @@
+package im.hikaru.ruoyi.module.system.dal.dataobject.oauth2
+
+import im.hikaru.ruoyi.framework.mybatis.core.dataobject.BaseEntity
+import im.hikaru.ruoyi.framework.tenant.core.db.TenantBaseDO
+import kotlinx.datetime.LocalDateTime
+
+abstract class OAuth2BaseEntity : BaseEntity { override var createTime: LocalDateTime? = null; override var updateTime: LocalDateTime? = null; override var creator: String? = null; override var updater: String? = null; override var deleted: Boolean = false }
+class OAuth2ClientDO : OAuth2BaseEntity() { var id: Long? = null; var clientId: String? = null; var secret: String? = null; var name: String? = null; var logo: String? = null; var description: String? = null; var status: Int? = null; var accessTokenValiditySeconds: Int? = null; var refreshTokenValiditySeconds: Int? = null; var redirectUris: List<String>? = null; var authorizedGrantTypes: List<String>? = null; var scopes: List<String>? = null; var autoApproveScopes: List<String>? = null; var authorities: List<String>? = null; var resourceIds: List<String>? = null; var additionalInformation: String? = null }
+class OAuth2AccessTokenDO : OAuth2BaseEntity(), TenantBaseDO { var id: Long? = null; var accessToken: String? = null; var refreshToken: String? = null; var userId: Long? = null; var userType: Int? = null; var userInfo: Map<String, String>? = null; var clientId: String? = null; var scopes: List<String>? = null; var expiresTime: LocalDateTime? = null; override var tenantId: Long? = null }
+class OAuth2RefreshTokenDO : OAuth2BaseEntity(), TenantBaseDO { var id: Long? = null; var refreshToken: String? = null; var userId: Long? = null; var userType: Int? = null; var clientId: String? = null; var scopes: List<String>? = null; var expiresTime: LocalDateTime? = null; override var tenantId: Long? = null }
+class OAuth2CodeDO : OAuth2BaseEntity() { var id: Long? = null; var code: String? = null; var userId: Long? = null; var userType: Int? = null; var clientId: String? = null; var scopes: List<String>? = null; var redirectUri: String? = null; var state: String? = null; var expiresTime: LocalDateTime? = null; var tenantId: Long? = null }
+class OAuth2ApproveDO : OAuth2BaseEntity() { var id: Long? = null; var userId: Long? = null; var userType: Int? = null; var clientId: String? = null; var scope: String? = null; var approved: Boolean? = null; var expiresTime: LocalDateTime? = null; var tenantId: Long? = null }

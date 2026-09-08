@@ -1,0 +1,18 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../credentials
+  - ../llm
+  - ../llm-koog
+  - ../loader
+  - ../runtime
+  - ../settings
+  - ai.koog:prompt-executor-model:1.1.1
+  - ai.koog:prompt-executor-openai-client:1.1.1
+  - ai.koog:http-client-core:1.1.1
+  - ai.koog:http-client-ktor:1.1.1
+
+test-dependencies:
+  - org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0

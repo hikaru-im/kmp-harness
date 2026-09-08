@@ -1,0 +1,33 @@
+product: jvm/app
+
+dependencies:
+  - ../../modules/bundle/desktop
+  - ../shared
+  - ../../contracts
+  - ../../contracts/harness-protocol
+  - ../../modules/api/gateway
+  - ../../modules/boot
+  - ../../modules/profile-file
+  - $compose.desktop.currentOs
+  - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0
+  - ch.qos.logback:logback-classic:1.5.34: runtime-only
+
+settings:
+  compose: enabled
+
+test-dependencies:
+  - ../../modules/credentials
+  - ../../modules/credentials-local
+  - ../../modules/llm
+  - ../../modules/llm-koog
+  - ../../modules/llm-koog-openai
+  - ../../modules/loader
+  - ../../modules/logger
+  - ../../modules/runtime
+  - ../../modules/settings
+  - ../../modules/settings-file
+  - ai.koog:prompt-executor-model:1.1.1
+  - ai.koog:prompt-executor-openai-client:1.1.1
+  - ai.koog:http-client-core:1.1.1
+  - ai.koog:http-client-ktor:1.1.1
+  - org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0

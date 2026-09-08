@@ -1,0 +1,20 @@
+apply: [../../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../../../contracts
+  - ../../../contracts/harness-protocol
+  - ../../boot
+  - ../../credentials
+  - ../../credentials-local
+  - ../../home
+  - ../../llm
+  - ../../llm-koog-openai
+  - ../../loader
+  - ../../logger
+  - ../../profile
+  - ../../profile-file
+  - ../../runtime
+  - ../../settings
+  - ../../settings-file

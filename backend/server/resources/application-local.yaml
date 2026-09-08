@@ -1,0 +1,56 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/agent-kmp}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:123456}
+    hikari:
+      minimum-idle: 1
+      maximum-pool-size: 20
+      connection-timeout: 30000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      # password: ${REDIS_PASSWORD:}
+      repositories:
+        enabled: false
+  quartz:
+    auto-startup: ${QUARTZ_AUTO_STARTUP:false}
+    scheduler-name: yudaoScheduler
+    job-store-type: jdbc
+    wait-for-jobs-to-complete-on-shutdown: true
+    jdbc:
+      initialize-schema: never
+    properties:
+      org.quartz.jobStore.isClustered: true
+      org.quartz.jobStore.clusterCheckinInterval: 15000
+      org.quartz.jobStore.misfireThreshold: 60000
+      org.quartz.threadPool.threadCount: 25
+      org.quartz.threadPool.threadPriority: 5
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:rabbit}
+    password: ${RABBITMQ_PASSWORD:rabbit}
+  boot:
+    admin:
+      context-path: /admin
+      client:
+        enabled: ${ADMIN_CLIENT_ENABLED:true}
+        url: ${ADMIN_SERVER_URL:http://127.0.0.1:${server.port}/admin}
+        username: ${ADMIN_USERNAME:admin}
+        password: ${ADMIN_PASSWORD:admin}
+        instance:
+          service-host-type: ip
+      frame-ancestors: "'self' localhost localhost:${server.port} 127.0.0.1 127.0.0.1:${server.port}"
+
+yudao:
+  captcha:
+    enable: false
+  sms-code:
+    local-fixed-code: ${YUDAO_SMS_CODE_LOCAL_FIXED_CODE:123456}
+  security:
+    mock-enable: ${YUDAO_SECURITY_MOCK_ENABLE:true}
+
+debug: false

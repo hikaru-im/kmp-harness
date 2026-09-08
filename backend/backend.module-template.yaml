@@ -1,0 +1,17 @@
+# Shared configuration for all JVM backend modules.
+settings:
+  internal:
+    # WxJava pulls a legacy SAX provider through this dependency.
+    excludeDependencies:
+      - pull-parser:pull-parser
+      # Alipay still declares the obsolete jdk15on line. Pay pins the jdk18on
+      # artifacts explicitly, matching the existing migration decision.
+      - org.bouncycastle:bcprov-jdk15on
+  springBoot: enabled
+  kotlin:
+    serialization: json
+    allOpen:
+      presets: [spring]
+
+dependencies:
+  - $kotlin.reflect
