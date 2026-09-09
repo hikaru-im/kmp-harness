@@ -3,6 +3,8 @@
 `docs` 保存 Harness 内部机制的详细设计；仓库级部署边界、本地与远程链路以根
 [README](../README.md) 为准。
 
+- [REFERENCES_GUIDE.md](REFERENCES_GUIDE.md)：本地参考仓库的初始化与更新。
+
 - [runtime-lifecycle.md](runtime-lifecycle.md)：Context、Fiber、effect、dispose 与失败回滚。
 - [advanced-context.md](advanced-context.md)：isolate、intercept 和事件派发语义。
 - [management-layer.md](management-layer.md)：Registry、Entry、Loader 与配置协调。
