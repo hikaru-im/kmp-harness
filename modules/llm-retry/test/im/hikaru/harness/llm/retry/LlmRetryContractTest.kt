@@ -1,6 +1,7 @@
 package im.hikaru.harness.llm.retry
 
 import im.hikaru.harness.agent.AgentPlugin
+import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.agents
 import im.hikaru.harness.agent.loop.AgentLoopPlugin
 import im.hikaru.harness.llm.BlockStartChunk
@@ -49,9 +50,9 @@ class LlmRetryContractTest {
                 }
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
         runtime.install(LlmRetryPlugin())
-        val handle = runtime.context.agents.create()
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("hi"))))
         handle.agent.awaitIdle()
         assertEquals(2, calls)

@@ -1,0 +1,593 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/anomalyco/models.dev",
+    "revision": "26703fa74cc2a990d4a095d5dce6d79dd2202524",
+    "license": "MIT",
+    "notice": "Generated from models.dev; see repository license."
+  },
+  "models": [
+    {
+      "id": "gpt-4.1-mini",
+      "name": "GPT-4.1 mini",
+      "description": "Affordable GPT-4.1 lane for fast coding help and structured extraction",
+      "contextWindow": 1047576,
+      "maxOutputTokens": 32768,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": false
+    },
+    {
+      "id": "gpt-4.1",
+      "name": "GPT-4.1",
+      "description": "Long-lived GPT workhorse for coding, instruction following, and production apps",
+      "contextWindow": 1047576,
+      "maxOutputTokens": 32768,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": false
+    },
+    {
+      "id": "gpt-4o-2024-08-06",
+      "name": "GPT-4o (2024-08-06)",
+      "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+      "contextWindow": 128000,
+      "maxOutputTokens": 16384,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": false
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "name": "GPT-4o (2024-11-20)",
+      "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+      "contextWindow": 128000,
+      "maxOutputTokens": 16384,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": false
+    },
+    {
+      "id": "gpt-4o-mini",
+      "name": "GPT-4o mini",
+      "description": "Small omni GPT for cheap multimodal assistance and production-scale traffic",
+      "contextWindow": 128000,
+      "maxOutputTokens": 16384,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": false
+    },
+    {
+      "id": "gpt-4o",
+      "name": "GPT-4o",
+      "description": "Omni-era GPT for multimodal chat, practical coding, and general assistants",
+      "contextWindow": 128000,
+      "maxOutputTokens": 16384,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": false
+    },
+    {
+      "id": "gpt-5-mini",
+      "name": "GPT-5 Mini",
+      "description": "Small GPT-5 for responsive agents, coding help, and everyday automation",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "gpt-5-nano",
+      "name": "GPT-5 Nano",
+      "description": "Tiny GPT-5 lane for routing, extraction, classification, and bulk jobs",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "gpt-5-pro",
+      "name": "GPT-5 Pro",
+      "description": "Higher-accuracy GPT-5 tier for tough analysis, coding reviews, and planning",
+      "contextWindow": 400000,
+      "maxOutputTokens": 272000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "high"
+      ]
+    },
+    {
+      "id": "gpt-5.1",
+      "name": "GPT-5.1",
+      "description": "Sharper GPT-5 generation for coding, product work, and tool-assisted tasks",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "gpt-5.2-pro",
+      "name": "GPT-5.2 Pro",
+      "description": "Higher-accuracy GPT-5.2 variant for tougher reasoning and review workflows",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": false,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.2",
+      "name": "GPT-5.2",
+      "description": "Reliable GPT generation for broad coding, writing, and tool-assisted product work",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3 Codex Spark",
+      "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+      "contextWindow": 128000,
+      "maxOutputTokens": 32000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "name": "GPT-5.3 Codex",
+      "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 mini",
+      "description": "Strong small GPT for coding subagents, quick tool use, and high-volume work",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "name": "GPT-5.4 nano",
+      "description": "Cheapest GPT-5.4 lane for simple routing, extraction, and bulk automation",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.4-pro",
+      "name": "GPT-5.4 Pro",
+      "description": "More exact GPT-5.4 tier for demanding professional reasoning and agent tasks",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": false,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "description": "Agent-ready GPT for coding and computer-use workflows at a lower cost",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": true,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "name": "GPT-5.5 Pro",
+      "description": "Highest-accuracy GPT-5.5 tier for slower, precision-heavy reasoning and coding",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "description": "Default frontier GPT for coding, computer use, research, and knowledge work",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "description": "Cost-efficient GPT-5.6 model for fast, high-volume workloads",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "description": "Frontier GPT-5.6 model for complex professional work, coding, and agentic workflows",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "description": "Balanced GPT-5.6 model for capable, cost-efficient everyday work",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "gpt-5.6",
+      "name": "GPT-5.6",
+      "description": "Frontier GPT-5.6 model for complex professional work, coding, and agentic workflows",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "description": "Original GPT-5 workhorse for reasoning, coding, writing, and tool workflows",
+      "contextWindow": 400000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6 Astra",
+      "description": "GPT-6 Astra is OpenAI's most capable model for complex reasoning, coding, computer use, research, and document creation.",
+      "contextWindow": 1050000,
+      "maxOutputTokens": 128000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "gpt-realtime-2.1",
+      "name": "GPT-Realtime-2.1",
+      "description": "Realtime speech-to-speech model with configurable reasoning, tool use, and robust voice-agent behavior",
+      "contextWindow": 128000,
+      "maxOutputTokens": 32000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": false,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "id": "o3-pro",
+      "name": "o3-pro",
+      "description": "High-effort o3 tier for difficult technical reasoning and careful answers",
+      "contextWindow": 200000,
+      "maxOutputTokens": 100000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "o3",
+      "name": "o3",
+      "description": "Deliberate o-series reasoner for hard math, coding, and multi-step analysis",
+      "contextWindow": 200000,
+      "maxOutputTokens": 100000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "toolCall": true,
+      "structuredOutput": true,
+      "temperature": false,
+      "reasoning": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  ]
+}

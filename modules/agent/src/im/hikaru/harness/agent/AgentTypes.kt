@@ -1,8 +1,10 @@
 package im.hikaru.harness.agent
 
 import im.hikaru.harness.llm.GenerateOptions
+import im.hikaru.harness.llm.LlmCallConfig
 import im.hikaru.harness.llm.LlmFailure
 import im.hikaru.harness.llm.Message
+import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.RetryPolicy
 import im.hikaru.harness.llm.defaultRetryPolicy
 import im.hikaru.harness.runtime.Context
@@ -18,10 +20,34 @@ import kotlinx.serialization.Serializable
 data class AgentOptions(
     val preset: String? = null,
     val cwd: String? = null,
+    val provider: String? = null,
+    val model: String? = null,
+    val reasoningEffort: ReasoningEffortId? = null,
+    val maxTokens: Long? = null,
 ) {
     init {
         require(preset == null || preset.isNotBlank()) { "Agent preset must not be blank" }
         require(cwd == null || cwd.isNotBlank()) { "Agent cwd must not be blank" }
+        require(provider == null || provider.isNotBlank()) { "Agent provider must not be blank" }
+        require(model == null || model.isNotBlank()) { "Agent model must not be blank" }
+        require(maxTokens == null || maxTokens > 0L) { "Agent max tokens must be positive" }
+    }
+
+    fun requireCallConfig(): LlmCallConfig {
+        val selectedProvider = provider
+        val selectedModel = model
+        if (selectedProvider == null || selectedModel == null) {
+            throw AgentException(
+                "Agent model is not configured; both provider and model are required",
+                AgentErrorCode.MODEL_NOT_CONFIGURED,
+            )
+        }
+        return LlmCallConfig(
+            provider = selectedProvider,
+            model = selectedModel,
+            reasoningEffort = reasoningEffort,
+            maxTokens = maxTokens,
+        )
     }
 }
 

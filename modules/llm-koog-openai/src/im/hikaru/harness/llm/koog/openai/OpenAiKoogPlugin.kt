@@ -34,8 +34,8 @@ public data class OpenAiKoogPluginConfig(
     val settingsSource: OpenAiKoogSettingsSource = OpenAiKoogSettingsSource.Dynamic(),
     val baseUrl: String? = null,
     val credentialName: String = "OPENAI_API_KEY",
-    val chatModels: List<KoogModelProfile>? = null,
-    val responsesModels: List<KoogModelProfile>? = null,
+    val api: String = im.hikaru.harness.llm.koog.openai.chat.OpenAiChatOptionMapper.OPENAI_CHAT_COMPLETIONS_API_ID,
+    val models: List<KoogModelProfile>? = null,
     val httpClientFactory: KoogHttpClient.Factory? = null,
 )
 
@@ -91,13 +91,13 @@ private fun createDelegate(config: OpenAiKoogPluginConfig): KoogLlmPlugin {
             OpenAiKoogCatalog.defaultSettings(
                 baseUrl = config.baseUrl,
                 credentialName = config.credentialName,
-                chatModels = config.chatModels,
-                responsesModels = config.responsesModels,
+                api = config.api,
+                models = config.models,
             ).let { settings ->
                 val resolvedRoutes = settings.resolveRoutes(installedRoutes)
                 val selectedApis =
                     resolvedRoutes.flatMap { route ->
-                        route.models.map { model -> model.api ?: route.api }
+                        route.models.map { route.api }
                     }.toSet()
                 KoogLlmPlugin(
                     routes = resolvedRoutes,

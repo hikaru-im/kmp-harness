@@ -36,10 +36,10 @@ class SessionApiContractTest {
                     flowOf(BlockStartChunk(0, "text"), TextDeltaChunk(0, "ok"), FinishChunk(StopFinishReason))
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
         runtime.install(SessionApiPlugin())
         val api = runtime.context.sessionApi
-        val created = api.create(agentOptions = AgentOptions(cwd = "/tmp"))
+        val created = api.create(agentOptions = AgentOptions(cwd = "/tmp", provider = "scripted", model = "test"))
         val prompt = api.prompt(created.id, createUserMessage(listOf(TextBlock("hi"))))
         prompt.awaitIdle()
         assertEquals(2, api.history(created.id).size)

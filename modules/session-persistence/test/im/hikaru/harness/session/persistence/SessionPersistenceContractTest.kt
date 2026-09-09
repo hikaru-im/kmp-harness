@@ -1,6 +1,7 @@
 package im.hikaru.harness.session.persistence
 
 import im.hikaru.harness.agent.AgentId
+import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.AgentPlugin
 import im.hikaru.harness.agent.agents
 import im.hikaru.harness.agent.loop.AgentLoopPlugin
@@ -289,10 +290,10 @@ class SessionPersistenceContractTest {
         first.install(LlmPlugin())
         first.install(AgentPlugin())
         first.context.llm.registerAdapter(listOf("scripted"), scriptedAdapter())
-        first.install(AgentLoopPlugin("scripted", "test"))
+        first.install(AgentLoopPlugin())
         first.install(LlmRetryPlugin(clock))
         first.install(sessionPersistencePluginForTest(root.resolve("harness-sessions.db").toString()))
-        val firstHandle = first.context.agents.create(id)
+        val firstHandle = first.context.agents.create(id, options = AgentOptions(provider = "scripted", model = "test"))
         val retryPersisted = CompletableDeferred<Unit>()
         first.context.on(SessionEvents.Appended) { notice ->
             if (notice.event.type == LlmRetrySessionEvents.Retry.name) retryPersisted.complete(Unit)
@@ -314,11 +315,11 @@ class SessionPersistenceContractTest {
         second.install(LlmPlugin())
         second.install(AgentPlugin())
         second.context.llm.registerAdapter(listOf("scripted"), scriptedAdapter())
-        second.install(AgentLoopPlugin("scripted", "test"))
+        second.install(AgentLoopPlugin())
         second.install(LlmRetryPlugin(clock))
         second.install(sessionPersistencePluginForTest(root.resolve("harness-sessions.db").toString()))
         val restoredSession = second.context.persistence.load(SessionId(id.value))
-        val restoredHandle = second.context.agents.restore(restoredSession)
+        val restoredHandle = second.context.agents.restore(restoredSession, AgentOptions(provider = "scripted", model = "test"))
         restoredHandle.agent.awaitIdle()
 
         assertEquals(2, calls)

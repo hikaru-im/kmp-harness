@@ -43,6 +43,14 @@ internal object KoogLlmSettingsJsonCodec {
         element: JsonElement,
     ): KoogProviderSettings {
         val value = element.jsonObject
+        val allowed =
+            setOf(
+                "provider", "displayName", "api", "baseUrl", "credential",
+                "requestTimeoutMillis", "connectTimeoutMillis", "socketTimeoutMillis",
+                "models", "modelOverrides", "defaultContextWindow", "defaultMaxTokens",
+                "defaultInput",
+            )
+        require(value.keys.all(allowed::contains)) { "Koog provider '$id' contains unknown fields" }
         val provider = value.string("provider") ?: id
         val displayName = value.string("displayName") ?: provider
         val credential =
@@ -80,10 +88,12 @@ internal object KoogLlmSettingsJsonCodec {
 
     private fun parseModelProfile(element: JsonElement): KoogModelProfile {
         val value = element.jsonObject
+        require(value.keys.all { it in setOf("id", "name", "description", "contextWindow", "maxTokens", "input", "reasoningEfforts", "defaultReasoningEffort") }) {
+            "Koog model entry contains unknown fields"
+        }
         val id = value.string("id") ?: error("Koog model entry must contain id")
         return KoogModelProfile(
             id = id,
-            api = value.string("api"),
             name = value.string("name"),
             description = value.string("description"),
             contextWindow = value.long("contextWindow"),
@@ -98,11 +108,13 @@ internal object KoogLlmSettingsJsonCodec {
         element: JsonElement,
     ): KoogModelOverride {
         val value = element.jsonObject
+        require(value.keys.all { it in setOf("name", "description", "contextWindow", "maxTokens", "input", "reasoningEfforts", "defaultReasoningEffort") }) {
+            "Koog model override '$id' contains unknown fields"
+        }
         require("id" !in value) {
             "Koog model override '$id' must use its map key as the model id"
         }
         return KoogModelOverride(
-            api = value.string("api"),
             name = value.string("name"),
             description = value.string("description"),
             contextWindow = value.long("contextWindow"),
@@ -156,7 +168,6 @@ internal object KoogLlmSettingsJsonCodec {
         buildJsonObject {
             put("id", id)
             writeModelFields(
-                api,
                 name,
                 description,
                 contextWindow,
@@ -169,7 +180,6 @@ internal object KoogLlmSettingsJsonCodec {
     private fun KoogModelOverride.toJson(): JsonObject =
         buildJsonObject {
             writeModelFields(
-                api,
                 name,
                 description,
                 contextWindow,
@@ -180,7 +190,6 @@ internal object KoogLlmSettingsJsonCodec {
         }
 
     private fun JsonObjectBuilder.writeModelFields(
-        api: String?,
         name: String?,
         description: String?,
         contextWindow: Long?,
@@ -188,7 +197,6 @@ internal object KoogLlmSettingsJsonCodec {
         input: List<ModelModality>?,
         reasoningEfforts: KoogReasoningEfforts?,
     ) {
-        api?.let { put("api", it) }
         name?.let { put("name", it) }
         description?.let { put("description", it) }
         contextWindow?.let { put("contextWindow", it) }

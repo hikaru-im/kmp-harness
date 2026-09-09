@@ -308,6 +308,7 @@ class AgentRegistry internal constructor(
 }
 
 enum class AgentErrorCode {
+    MODEL_NOT_CONFIGURED,
     NO_FACTORY,
     DUPLICATE_AGENT,
     INVALID_FACTORY,

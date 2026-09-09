@@ -3,14 +3,16 @@ package im.hikaru.harness.bundle.desktop
 import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
+import im.hikaru.harness.agent.AgentPluginDefinition
+import im.hikaru.harness.agent.loop.AgentLoopPluginDefinition
 import im.hikaru.harness.credentials.local.CREDENTIALS_LOCAL_PLUGIN_NAME
-import im.hikaru.harness.credentials.local.CredentialsLocalPluginDefinition
 import im.hikaru.harness.credentials.local.credentialsLocalPluginDefinition
 import im.hikaru.harness.home.HarnessHome
 import im.hikaru.harness.llm.LLM_PLUGIN_NAME
 import im.hikaru.harness.llm.LlmPluginDefinition
 import im.hikaru.harness.llm.koog.openai.OPENAI_KOOG_PLUGIN_NAME
 import im.hikaru.harness.llm.koog.openai.OpenAiKoogPluginDefinition
+import im.hikaru.harness.llm.retry.LlmRetryPluginDefinition
 import im.hikaru.harness.loader.Entry
 import im.hikaru.harness.loader.PluginCatalog
 import im.hikaru.harness.logger.LOGGER_PLUGIN_NAME
@@ -23,33 +25,40 @@ import im.hikaru.harness.profile.file.FileProfileLoader
 import im.hikaru.harness.profile.file.ProfileLoadRequest
 import im.hikaru.harness.profile.file.ProfileReloadFailure
 import im.hikaru.harness.profile.file.ProfiledHarnessHost
+import im.hikaru.harness.session.SessionPluginDefinition
+import im.hikaru.harness.session.api.SessionApiPluginDefinition
+import im.hikaru.harness.session.persistence.jvmSessionPersistenceDatabaseFactory
+import im.hikaru.harness.session.persistence.sessionPersistencePluginDefinition
 import im.hikaru.harness.settings.file.SETTINGS_FILE_PLUGIN_NAME
-import im.hikaru.harness.settings.file.SettingsFilePluginDefinition
 import im.hikaru.harness.settings.file.settingsFilePluginDefinition
+import im.hikaru.harness.tools.ToolsPluginDefinition
 import java.nio.file.Path
 
 public const val DESKTOP_BUNDLE_NAME: String = "@hikaru-ai/harness-desktop"
 
 /** Every plugin implementation compiled into the Desktop host. */
 public val DesktopPluginCatalog: PluginCatalog =
-    desktopPluginCatalog()
+    desktopPluginCatalog(resolveDesktopHarnessHome())
 
-private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome? = null): PluginCatalog =
+private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog =
     PluginCatalog(
         listOf(
             LoggerPluginDefinition,
-            if (defaultHarnessHome == null) {
-                SettingsFilePluginDefinition
-            } else {
-                settingsFilePluginDefinition(defaultHarnessHome)
-            },
-            if (defaultHarnessHome == null) {
-                CredentialsLocalPluginDefinition
-            } else {
-                credentialsLocalPluginDefinition(defaultHarnessHome)
-            },
+            settingsFilePluginDefinition(defaultHarnessHome),
+            credentialsLocalPluginDefinition(defaultHarnessHome),
             LlmPluginDefinition,
             OpenAiKoogPluginDefinition,
+            SessionPluginDefinition,
+            AgentPluginDefinition,
+            ToolsPluginDefinition,
+            AgentLoopPluginDefinition,
+            SessionApiPluginDefinition,
+            sessionPersistencePluginDefinition(
+                jvmSessionPersistenceDatabaseFactory(
+                    defaultHarnessHome.resolve("harness-sessions.db").toFile()
+                )
+            ),
+            LlmRetryPluginDefinition,
         )
     )
 
@@ -67,6 +76,13 @@ public val DesktopProfileBundle: ProfileBundle =
                             Entry(CREDENTIALS_LOCAL_PLUGIN_NAME, CREDENTIALS_LOCAL_PLUGIN_NAME),
                             Entry(LLM_PLUGIN_NAME, LLM_PLUGIN_NAME),
                             Entry(OPENAI_KOOG_PLUGIN_NAME, OPENAI_KOOG_PLUGIN_NAME),
+                            Entry("session", "session"),
+                            Entry("agent", "agent"),
+                            Entry("tools", "tools"),
+                            Entry("agent-loop", "agent-loop"),
+                            Entry("session-api", "session-api"),
+                            Entry("session-persistence", "session-persistence"),
+                            Entry("llm-retry", "llm-retry"),
                         )
                 )
             ),

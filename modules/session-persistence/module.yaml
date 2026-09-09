@@ -6,12 +6,12 @@ product:
 
 dependencies:
   - ../agent
-  - ../loader
-  - ../llm-retry
-  - ../tools
   - ../llm
+  - ../llm-retry
+  - ../loader
   - ../runtime
   - ../session
+  - ../tools
   - androidx.room3:room3-runtime:3.0.0
   - androidx.sqlite:sqlite-async:2.7.0
   - androidx.sqlite:sqlite-bundled:2.7.0

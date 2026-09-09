@@ -14,12 +14,8 @@ const val AGENT_LOOP_PLUGIN_NAME: String = "agent-loop"
 
 /** Installs the default factory; creating an agent remains an explicit operation. */
 class AgentLoopPlugin(
-    private val config: AgentLoopConfig,
+    private val config: AgentLoopConfig = AgentLoopConfig(),
 ) : SimplePlugin {
-    constructor(provider: String, model: String, system: String? = null) : this(
-        AgentLoopConfig(provider = provider, model = model, system = system),
-    )
-
     override val inject: Set<InjectSpec> =
         setOf(
             InjectSpec.required(AgentKey),
@@ -35,10 +31,12 @@ class AgentLoopPlugin(
         val handle =
             registry.registerFactory(
                 AgentFactory { request ->
+                    val callConfig = request.options.requireCallConfig()
                     AgentLoopAgent(
                         request = request,
                         llm = context.require(LlmKey),
                         config = config,
+                        callConfig = callConfig,
                     )
                 }
             )

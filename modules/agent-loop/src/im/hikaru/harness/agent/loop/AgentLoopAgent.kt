@@ -88,6 +88,7 @@ internal class AgentLoopAgent(
     request: AgentFactoryRequest,
     private val llm: LlmRuntime,
     private val config: AgentLoopConfig,
+    private val callConfig: LlmCallConfig,
 ) : Agent, AgentAttemptResumer {
     override val id: AgentId = request.id
     override val options: AgentOptions = request.options
@@ -378,7 +379,7 @@ internal class AgentLoopAgent(
             attempt += 1
             val prepared =
                 try {
-                    llm.prepareCall(config.callConfig())
+                    llm.prepareCall(callConfig)
                 } catch (error: Throwable) {
                     return StepOutcome.Finished(ErrorTurnEndReason(normalizeLlmFailure(error)))
                 }

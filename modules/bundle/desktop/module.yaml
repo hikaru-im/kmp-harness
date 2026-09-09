@@ -5,16 +5,23 @@ product: jvm/lib
 dependencies:
   - ../../../contracts
   - ../../../contracts/harness-protocol
+  - ../../agent
+  - ../../agent-loop
   - ../../boot
   - ../../credentials
   - ../../credentials-local
   - ../../home
   - ../../llm
   - ../../llm-koog-openai
+  - ../../llm-retry
   - ../../loader
   - ../../logger
   - ../../profile
   - ../../profile-file
   - ../../runtime
+  - ../../session
+  - ../../session-api
+  - ../../session-persistence
   - ../../settings
   - ../../settings-file
+  - ../../tools

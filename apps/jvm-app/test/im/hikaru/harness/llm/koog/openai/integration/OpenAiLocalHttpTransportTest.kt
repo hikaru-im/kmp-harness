@@ -451,7 +451,7 @@ class OpenAiLocalHttpTransportTest {
 
     private fun responsesOptions(): GenerateOptions =
         GenerateOptions(
-            provider = OpenAiKoogCatalog.OPENAI_PROVIDER_ID,
+            provider = "openai-responses",
             model = "o3-mini",
             messages = listOf(createUserMessage(listOf(TextBlock("hello")))),
             temperature = 0.2,
@@ -477,9 +477,15 @@ class OpenAiLocalHttpTransportTest {
                 name: $CREDENTIAL_NAME
               models:
                 - id: gpt-4o-mini
-                  api: openai-chat-completions
+            openai-responses:
+              provider: openai-responses
+              displayName: OpenAI Responses
+              api: openai-responses
+              baseUrl: $baseUrl
+              ${socketTimeoutMillis?.let { "socketTimeoutMillis: $it\n              " }.orEmpty()}credential:
+                name: $CREDENTIAL_NAME
+              models:
                 - id: o3-mini
-                  api: openai-responses
         """.trimIndent() + "\n"
 
     private fun setOwnerOnly(path: Path) {

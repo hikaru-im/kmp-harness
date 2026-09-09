@@ -1,14 +1,7 @@
 # Desktop Bundle
 
-The Desktop bundle is the only production composition module that references the OpenAI Provider plugin. It exports:
+The Desktop bundle is the production composition module. `DesktopPluginCatalog` and `DesktopProfileBundle` expose the same 12 rows: logger, settings-file, credentials-local, llm, llm-koog-openai, session, agent, tools, agent-loop, session-api, session-persistence and llm-retry.
 
-- `DesktopPluginCatalog`, containing logger, settings-file, credentials-local, llm and llm-koog-openai definitions;
-- `DesktopProfileBundle`, the patch layer that inserts those five explicit rows;
-- `startDesktopProfile()`, which resolves and watches the single DSH-compatible profile in the Desktop Harness home.
+`startDesktopProfile()` resolves and watches the DSH-compatible profile under one Desktop Harness home. Home resolution is `explicit path -> HARNESS_HOME -> ~/.harness`; plugin configuration cannot replace it. Session Room storage is fixed by the launcher at `$HARNESS_HOME/harness-sessions.db` and profile rows cannot override its path or factory.
 
-The bundle is the only Desktop home resolver. It applies `explicit path -> HARNESS_HOME -> ~/.harness` once and injects
-the resulting `HarnessHome` into profile, settings and credentials. Plugin patch documents cannot replace that home;
-Desktop definitions also reject settings or credentials `path` overrides. Embedded/test definitions outside this bundle
-may still use explicit file paths.
-
-`apps/jvm-app` depends on this public bundle entrypoint and does not import Koog/OpenAI implementation types.
+The default profile starts without OpenAI provider settings. The provider catalog remains dormant and AgentLoop registers a factory without creating an Agent.

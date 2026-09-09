@@ -31,11 +31,8 @@ private fun KoogProviderSettings.resolveRoute(
     }
     modelOverrides.keys.forEach { id ->
         require(id.isNotBlank()) { "Koog provider '$provider' has a blank model override id" }
-        val overrideApi = modelOverrides.getValue(id).api ?: defaultApi
-        val template = installedByApi[overrideApi]
-            ?: error("Koog provider '$provider' model '$id' names unknown api '$overrideApi'")
-        require(template.models.any { model -> model.model.id == id }) {
-            "Koog provider '$provider' modelOverrides names unknown model '$id' for api '$overrideApi'"
+        require(defaultTemplate.models.any { model -> model.model.id == id }) {
+            "Koog provider '$provider' modelOverrides names unknown model '$id'"
         }
     }
 
@@ -45,7 +42,6 @@ private fun KoogProviderSettings.resolveRoute(
                 modelOverrides[model.model.id]?.withId(model.model.id)
                     ?: KoogModelProfile(
                         id = model.model.id,
-                        api = defaultTemplate.apiFor(model),
                     )
             }
         } else {
@@ -56,9 +52,8 @@ private fun KoogProviderSettings.resolveRoute(
     }
 
     val resolved = entries.map { entry ->
-        val modelApi = entry.api ?: defaultApi
-        val template = installedByApi[modelApi]
-            ?: error("Koog provider '$provider' model '${entry.id}' names unknown api '$modelApi'")
+        val modelApi = defaultApi
+        val template = defaultTemplate
         resolveModel(
             installed = template.models.firstOrNull { model -> model.model.id == entry.id },
             template = template.customModelTemplate,

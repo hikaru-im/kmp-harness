@@ -35,8 +35,6 @@ sealed interface KoogReasoningEfforts {
 @Serializable
 data class KoogModelProfile(
     val id: String,
-    /** Protocol template for this model; omission inherits the provider profile. */
-    val api: String? = null,
     val name: String? = null,
     val description: String? = null,
     val contextWindow: Long? = null,
@@ -47,7 +45,6 @@ data class KoogModelProfile(
 ) {
     init {
         require(id.isNotBlank()) { "Koog model profile id must not be blank" }
-        require(api == null || api.isNotBlank()) { "Koog model profile api must not be blank" }
         require(name == null || name.isNotBlank()) { "Koog model profile name must not be blank" }
         require(contextWindow == null || contextWindow > 0L) {
             "Koog model profile context window must be positive"
@@ -64,7 +61,6 @@ data class KoogModelProfile(
 /** Partial customization of one model from an installed route catalog. */
 @Serializable
 data class KoogModelOverride(
-    val api: String? = null,
     val name: String? = null,
     val description: String? = null,
     val contextWindow: Long? = null,
@@ -75,7 +71,6 @@ data class KoogModelOverride(
     internal fun withId(id: String): KoogModelProfile =
         KoogModelProfile(
             id = id,
-            api = api,
             name = name,
             description = description,
             contextWindow = contextWindow,

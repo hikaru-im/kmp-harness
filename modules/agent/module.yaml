@@ -5,6 +5,7 @@ product:
   platforms: [jvm, android, iosSimulatorArm64, iosArm64]
 
 dependencies:
-  - ../runtime
   - ../llm
+  - ../loader
+  - ../runtime
   - ../session

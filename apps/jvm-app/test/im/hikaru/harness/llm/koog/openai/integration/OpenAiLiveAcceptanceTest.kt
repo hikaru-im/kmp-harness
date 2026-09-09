@@ -455,7 +455,6 @@ private fun liveSettingsYaml(
         models.joinToString("\n") { model ->
             """
             - id: ${yamlScalar(model)}
-              api: ${yamlScalar(api)}
               name: ${yamlScalar(model)}
               input: [text]
             """.trimIndent().prependIndent("        ")

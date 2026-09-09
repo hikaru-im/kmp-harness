@@ -12,11 +12,11 @@ import kotlinx.coroutines.Dispatchers
 /** JVM launcher-owned factory. The caller chooses the database location. */
 @OptIn(ExperimentalAtomicApi::class)
 fun jvmSessionPersistenceDatabaseFactory(databaseFile: File): SessionPersistenceDatabaseFactory {
-    databaseFile.parentFile?.mkdirs()
     val key = databaseFile.canonicalFile.absolutePath
     return object : SessionPersistenceDatabaseFactory {
-        override fun create(): SessionDatabaseAccess =
-            jvmSessionDatabaseRegistry.acquire(key, this) {
+        override fun create(): SessionDatabaseAccess {
+            databaseFile.parentFile?.mkdirs()
+            return jvmSessionDatabaseRegistry.acquire(key, this) {
                 jvmDatabaseAccess(
                     key = key,
                     database =
@@ -29,6 +29,7 @@ fun jvmSessionPersistenceDatabaseFactory(databaseFile: File): SessionPersistence
                 )
             }
         }
+    }
 }
 
 fun jvmSessionPersistencePlugin(databaseFile: File): SimplePlugin =

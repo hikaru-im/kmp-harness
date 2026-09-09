@@ -323,7 +323,7 @@ class OpenAiClientFixtureTest {
                 )
             try {
                 assertEquals(
-                    listOf(CUSTOM_CHAT_MODEL, "o3-mini"),
+                    listOf(CUSTOM_CHAT_MODEL),
                     host.runtime.context.llm
                         .listModels(OpenAiKoogCatalog.OPENAI_PROVIDER_ID)
                         .map { model -> model.id },
@@ -334,7 +334,7 @@ class OpenAiClientFixtureTest {
                     ).toList()
                 val responses =
                     host.runtime.context.llm
-                        .stream(responsesTextOptions(model = "o3-mini"))
+                        .stream(responsesTextOptions(model = "o3-mini", provider = "openai-responses"))
                         .toList()
 
                 assertEquals(TextBlock("chat"), (chat[chat.lastIndex - 2] as BlockEndChunk).block)
@@ -850,8 +850,8 @@ class OpenAiClientFixtureTest {
             OpenAiKoogCatalog.defaultSettings(
                 baseUrl = "$BASE_URL/",
                 credentialName = CREDENTIAL_NAME,
-                chatModels = emptyList(),
-                responsesModels = listOf(KoogModelProfile(id = "gpt-4o-mini")),
+                api = OpenAiResponsesOptionMapper.OPENAI_RESPONSES_API_ID,
+                models = listOf(KoogModelProfile(id = "gpt-4o-mini")),
             )
         val routes = settings.resolveRoutes(installedRoutes)
         val executor =
@@ -908,9 +908,10 @@ class OpenAiClientFixtureTest {
     private fun responsesTextOptions(
         tools: List<ToolSchema>? = null,
         model: String = "gpt-4o-mini",
+        provider: String = OpenAiKoogCatalog.OPENAI_PROVIDER_ID,
     ): GenerateOptions =
         GenerateOptions(
-            provider = OpenAiKoogCatalog.OPENAI_PROVIDER_ID,
+            provider = provider,
             model = model,
             messages = listOf(createUserMessage(listOf(TextBlock("hello")))),
             tools = tools,
@@ -980,9 +981,15 @@ class OpenAiClientFixtureTest {
                 name: $FILE_CREDENTIAL_NAME
               models:
                 - id: gpt-4o-mini
-                  api: openai-chat-completions
+            openai-responses:
+              provider: openai-responses
+              displayName: OpenAI Responses
+              api: openai-responses
+              baseUrl: $baseUrl
+              credential:
+                name: $FILE_CREDENTIAL_NAME
+              models:
                 - id: o3-mini
-                  api: openai-responses
         """.trimIndent() + "\n"
 
     private fun fileSettingsWithCustomChatModelYaml(baseUrl: String): String =
@@ -997,13 +1004,19 @@ class OpenAiClientFixtureTest {
                 name: $FILE_CREDENTIAL_NAME
               models:
                 - id: $CUSTOM_CHAT_MODEL
-                  api: openai-chat-completions
                   name: Fixture Chat Model
                   contextWindow: 65536
                   maxTokens: 4096
                   input: [text]
+            openai-responses:
+              provider: openai-responses
+              displayName: OpenAI Responses
+              api: openai-responses
+              baseUrl: $baseUrl
+              credential:
+                name: $FILE_CREDENTIAL_NAME
+              models:
                 - id: o3-mini
-                  api: openai-responses
         """.trimIndent() + "\n"
 
     private fun setOwnerOnly(path: java.nio.file.Path) {

@@ -1,18 +1,10 @@
 package im.hikaru.harness.agent.loop
 
-import im.hikaru.harness.llm.LlmCallConfig
-
-/** Defaults used by newly-created agents. Callers may still provide per-agent options later. */
+/** Scheduling defaults used by newly-created agents. Model selection belongs to AgentOptions. */
 data class AgentLoopConfig(
-    val provider: String,
-    val model: String,
     val system: String? = null,
 ) {
     init {
-        require(provider.isNotBlank()) { "Agent loop provider must not be blank" }
-        require(model.isNotBlank()) { "Agent loop model must not be blank" }
+        require(system == null || system.isNotBlank()) { "Agent loop system must not be blank" }
     }
-
-    fun callConfig(): LlmCallConfig =
-        LlmCallConfig(provider = provider, model = model)
 }

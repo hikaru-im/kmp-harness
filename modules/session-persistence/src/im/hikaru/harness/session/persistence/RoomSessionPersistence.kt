@@ -176,6 +176,10 @@ val Context.persistence: SessionPersistence
 class SessionPersistencePlugin(
     private val databaseFactory: SessionPersistenceDatabaseFactory,
 ) : SimplePlugin {
+    override val inject = setOf(
+        im.hikaru.harness.runtime.plugin.InjectSpec.required(im.hikaru.harness.session.SessionKey)
+    )
+
     override suspend fun apply(context: Context, scope: EffectScope) {
         val database = databaseFactory.create()
         val provider = RoomSessionPersistence(database, context.sessions)

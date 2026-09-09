@@ -4,6 +4,10 @@
 默认模型目录、settings defaults、Koog client factory、请求/流/failure 语义和 Responses replay codec。
 该模块只向装配层导出 `OpenAiKoogPluginDefinition`；Host 不得再次注册 OpenAI model 或 mapper。
 
+模型目录来自 `resources/model-catalog/openai.json`。它是从固定 models.dev revision 生成并随模块离线打包的快照，应用启动不会访问 models.dev。维护者显式运行 `tools/update-model-catalog.py` 更新；同一 revision 的输出按模型 id 排序且字节稳定。
+
+一个 provider profile 只使用一个 `api`。需要同时使用 Chat Completions 和 Responses 时，声明两个 provider profile，并分别设置 `api: openai-chat-completions` 与 `api: openai-responses`。模型条目不接受 `api`，`models` 非空时完整替换 bundled catalog，`modelOverrides` 只修改 bundled catalog 中的已知模型。
+
 ## Source Layout
 
 ```text

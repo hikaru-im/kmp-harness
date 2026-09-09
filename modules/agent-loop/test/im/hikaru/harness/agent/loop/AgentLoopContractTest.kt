@@ -1,6 +1,8 @@
 package im.hikaru.harness.agent.loop
 
 import im.hikaru.harness.agent.AgentEvents
+import im.hikaru.harness.agent.AgentErrorCode
+import im.hikaru.harness.agent.AgentException
 import im.hikaru.harness.agent.AgentPlugin
 import im.hikaru.harness.agent.agents
 import im.hikaru.harness.agent.AgentPreStepEvent
@@ -43,9 +45,25 @@ import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class AgentLoopContractTest {
+    @Test
+    fun factoryInstallsWithoutCreatingAgentAndRequiresExplicitModelSelection() = runTest {
+        val runtime = Runtime()
+        runtime.install(SessionPlugin())
+        runtime.install(LlmPlugin())
+        runtime.install(AgentPlugin())
+        runtime.install(AgentLoopPlugin())
+
+        assertTrue(runtime.context.agents.list().isEmpty())
+        val error = assertFailsWith<AgentException> { runtime.context.agents.create() }
+        assertEquals(AgentErrorCode.MODEL_NOT_CONFIGURED, error.code)
+        assertTrue(runtime.context.agents.list().isEmpty())
+        runtime.context.dispose()
+    }
+
     @Test
     fun scriptedFollowupProducesOrderedTurnAndAssistantHistory() = runTest {
         val runtime = Runtime()
@@ -63,7 +81,7 @@ class AgentLoopContractTest {
             },
             providers = listOf("scripted"),
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
         val runtimeEvents = mutableListOf<String>()
         runtime.context.on(AgentEvents.PreStep) { event, next ->
             runtimeEvents += "agent/pre-step"
@@ -72,7 +90,7 @@ class AgentLoopContractTest {
         runtime.context.on(AgentEvents.TurnStopping) {
             runtimeEvents += "agent/turn-stopping"
         }
-        val handle = runtime.context.agents.create()
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("hi"))))
         handle.agent.awaitIdle()
         val names = handle.agent.session.events().map { it.type }.filterNot { it.startsWith("agent/inbox/") }
@@ -117,9 +135,9 @@ class AgentLoopContractTest {
             },
             providers = listOf("scripted"),
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
         runtime.context.on(AgentEvents.RequestError) { _, _ -> AgentRequestErrorDecision.Retry }
-        val handle = runtime.context.agents.create()
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("hi"))))
         handle.agent.awaitIdle()
         assertEquals(2, calls)
@@ -153,12 +171,12 @@ class AgentLoopContractTest {
                 }
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
         runtime.context.tools!!.register(
             ToolSchema("echo", "Echo", JsonObject(emptyMap())),
             ToolHandler { ToolExecutionResult(listOf(TextBlock("result"))) },
         )
-        val handle = runtime.context.agents.create()
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("use echo"))))
         handle.agent.awaitIdle()
         assertEquals(2, calls)
@@ -186,8 +204,8 @@ class AgentLoopContractTest {
                 }
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
-        val handle = runtime.context.agents.create()
+        runtime.install(AgentLoopPlugin())
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("one"))))
         handle.agent.followup(createUserMessage(listOf(TextBlock("two"))))
         handle.agent.awaitIdle()
@@ -217,7 +235,7 @@ class AgentLoopContractTest {
                     )
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
 
         // `agent/status(IDLE)` is emitted at the beginning of driver
         // finalization. Enqueue the next turn from that boundary repeatedly;
@@ -229,7 +247,7 @@ class AgentLoopContractTest {
                 idleSignal?.complete(Unit)
             }
         }
-        val handle = runtime.context.agents.create()
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         repeat(32) { index ->
             val signal = CompletableDeferred<Unit>()
             idleSignal = signal
@@ -263,8 +281,8 @@ class AgentLoopContractTest {
                 }
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
-        val handle = runtime.context.agents.create()
+        runtime.install(AgentLoopPlugin())
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("hi"))))
         visible.await()
         handle.agent.cancel()
@@ -296,8 +314,8 @@ class AgentLoopContractTest {
                 }
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
-        val handle = runtime.context.agents.create()
+        runtime.install(AgentLoopPlugin())
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("first"))))
         started.await()
         // Let the provider flow reach its suspension point before enqueueing
@@ -333,8 +351,8 @@ class AgentLoopContractTest {
                     )
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
-        val handle = runtime.context.agents.create()
+        runtime.install(AgentLoopPlugin())
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("use tool"))))
         handle.agent.awaitIdle()
         assertEquals(1, handle.agent.session.deriveMessages().size)
@@ -357,12 +375,12 @@ class AgentLoopContractTest {
                     flowOf(FinishChunk(AbortedFinishReason(LlmFailure("aborted", "ABORTED"))))
             },
         )
-        runtime.install(AgentLoopPlugin("scripted", "test"))
+        runtime.install(AgentLoopPlugin())
         runtime.context.on(AgentEvents.RequestError) { _, next ->
             errors += 1
             next()
         }
-        val handle = runtime.context.agents.create()
+        val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
         handle.agent.followup(createUserMessage(listOf(TextBlock("hi"))))
         handle.agent.awaitIdle()
         assertEquals(1, errors)

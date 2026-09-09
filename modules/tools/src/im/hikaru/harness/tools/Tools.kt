@@ -69,19 +69,25 @@ object ToolSessionEvents {
     val Result = SessionEventKey("tool/result", ToolResultEvent.serializer())
 }
 
-class ToolsPlugin : im.hikaru.harness.runtime.plugin.SimplePlugin {
-    constructor(maxConcurrentCalls: Int = 1) {
+@Serializable
+data class ToolsConfig(
+    val maxConcurrentCalls: Int = 1,
+) {
+    init {
         require(maxConcurrentCalls > 0) { "maxConcurrentCalls must be positive" }
-        this.maxConcurrentCalls = maxConcurrentCalls
     }
+}
 
-    private val maxConcurrentCalls: Int
+class ToolsPlugin(
+    private val config: ToolsConfig = ToolsConfig(),
+) : im.hikaru.harness.runtime.plugin.SimplePlugin {
+    constructor(maxConcurrentCalls: Int) : this(ToolsConfig(maxConcurrentCalls))
 
     override suspend fun apply(
         context: Context,
         scope: im.hikaru.harness.runtime.effect.EffectScope,
     ) {
-        val service = DefaultToolsService(maxConcurrentCalls)
+        val service = DefaultToolsService(config.maxConcurrentCalls)
         scope.add(context.provide(ToolsKey, service))
         scope.add(service)
     }
@@ -131,15 +137,15 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
         val key = (request.scope ?: "") to request.callId
         var handler: ToolHandler? = null
         while (handler == null) {
-                val current = state.load()
-                check(!current.disposed) { "Tools service is disposed" }
-                check(key !in current.completed && key !in current.inFlight) {
-                    "Tool call '${request.callId.value}' already has a result"
-                }
-                val selected = current.entries[request.name]?.handler
-                    ?: error("Tool '${request.name}' is not registered")
-                val updated = current.copy(inFlight = current.inFlight + key)
-                if (state.compareAndSet(current, updated)) handler = selected
+            val current = state.load()
+            check(!current.disposed) { "Tools service is disposed" }
+            check(key !in current.completed && key !in current.inFlight) {
+                "Tool call '${request.callId.value}' already has a result"
+            }
+            val selected = current.entries[request.name]?.handler
+                ?: error("Tool '${request.name}' is not registered")
+            val updated = current.copy(inFlight = current.inFlight + key)
+            if (state.compareAndSet(current, updated)) handler = selected
         }
         val selectedHandler = checkNotNull(handler)
         var acquired = false

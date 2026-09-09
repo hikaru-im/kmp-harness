@@ -6,5 +6,6 @@ product:
 
 dependencies:
   - ../llm
+  - ../loader
   - ../runtime
   - ../session
