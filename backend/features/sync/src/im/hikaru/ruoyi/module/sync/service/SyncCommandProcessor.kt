@@ -21,6 +21,8 @@ class SyncCommandProcessor(
         command: SyncCommandEnvelope,
         requestHash: String,
     ): AppSyncCommandResultVO {
+        // Check before receipt replay: removed commands must not report an old APPLIED outcome.
+        if (!dispatcher.isAllowed(command)) return SyncCommandDecision.Rejected("SYNC_NOT_ALLOWED").toResult(command)
         AppSyncCommandDao.select(context, command.commandId)?.let { existing ->
             return replay(command, requestHash, existing)
         }

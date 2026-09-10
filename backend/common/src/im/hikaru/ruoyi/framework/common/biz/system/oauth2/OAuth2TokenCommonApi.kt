@@ -9,5 +9,6 @@ interface OAuth2TokenCommonApi {
     fun createAccessToken(@Valid req: OAuth2AccessTokenCreateReqDTO): OAuth2AccessTokenRespDTO
     fun checkAccessToken(accessToken: String): OAuth2AccessTokenCheckRespDTO
     fun removeAccessToken(accessToken: String): OAuth2AccessTokenRespDTO?
+    fun removeAccessToken(userId: Long, userType: Int)
     fun refreshAccessToken(refreshToken: String, clientId: String): OAuth2AccessTokenRespDTO
 }

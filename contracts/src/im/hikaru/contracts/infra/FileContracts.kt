@@ -2,9 +2,8 @@ package im.hikaru.contracts.infra
 
 import kotlinx.serialization.Serializable
 
-/** 文件信息的跨平台响应模型。 */
 @Serializable
-public data class FileInfo(
+data class FileInfo(
     val id: Long? = null,
     val configId: Long? = null,
     val path: String? = null,
@@ -15,11 +14,37 @@ public data class FileInfo(
     val createTime: String? = null,
 )
 
-/** 文件预签名地址的跨平台响应模型。 */
 @Serializable
-public data class FilePresignedUrl(
+data class FilePresignedUrl(
     val configId: Long? = null,
     val uploadUrl: String? = null,
     val url: String? = null,
     val path: String? = null,
+)
+
+@Serializable
+data class ConfigInfo(
+    val id: Long? = null,
+    val category: String? = null,
+    val name: String? = null,
+    val key: String? = null,
+    val value: String? = null,
+    val type: Int? = null,
+    val visible: Boolean? = null,
+    val remark: String? = null,
+    val createTime: String? = null,
+)
+
+@Serializable
+data class RedisMonitorInfo(
+    val info: Map<String, String> = emptyMap(),
+    val dbSize: Long? = null,
+    val commandStats: List<RedisCommandStat> = emptyList(),
+)
+
+@Serializable
+data class RedisCommandStat(
+    val command: String? = null,
+    val calls: Long? = null,
+    val usec: Long? = null,
 )

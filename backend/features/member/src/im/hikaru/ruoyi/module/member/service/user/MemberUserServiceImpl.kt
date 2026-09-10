@@ -1,6 +1,8 @@
 package im.hikaru.ruoyi.module.member.service.user
 
 import im.hikaru.ruoyi.framework.common.enums.CommonStatusEnum
+import im.hikaru.ruoyi.framework.common.enums.UserTypeEnum
+import im.hikaru.ruoyi.framework.common.biz.system.oauth2.OAuth2TokenCommonApi
 import im.hikaru.ruoyi.framework.common.exception.util.ServiceExceptionUtil.exception
 import im.hikaru.ruoyi.framework.common.pojo.PageResult
 import im.hikaru.ruoyi.framework.common.util.servlet.ServletUtils
@@ -44,6 +46,7 @@ class MemberUserServiceImpl(
     private val smsCodeApi: SmsCodeApi? = null,
     private val socialClientApi: SocialClientApi? = null,
     private val passwordEncoder: PasswordEncoder = BCryptPasswordEncoder(),
+    private val oauth2TokenApi: OAuth2TokenCommonApi? = null,
 ) : MemberUserService {
 
     override fun getUserByMobile(mobile: String): MemberUserDO? = MemberUserDao.selectByMobile(mobile)
@@ -143,6 +146,9 @@ class MemberUserServiceImpl(
             levelId = updateReqVO.levelId
             groupId = updateReqVO.groupId
         })
+        if (CommonStatusEnum.isDisable(updateReqVO.status?.toInt())) {
+            oauth2TokenApi?.removeAccessToken(id, UserTypeEnum.MEMBER.value)
+        }
         val profileRequest = AppMemberUserUpdateReqVO().apply {
             nickname = updateReqVO.nickname ?: current.nickname
             avatar = updateReqVO.avatar ?: current.avatar

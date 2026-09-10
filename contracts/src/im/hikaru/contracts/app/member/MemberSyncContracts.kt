@@ -16,12 +16,3 @@ object MemberProfileSyncContract {
 
     val OPERATIONS: Set<String> = setOf(UPDATE)
 }
-
-object MemberSignInSyncContract {
-    const val RESOURCE = "member-sign-in"
-    const val CREATE = "create"
-    const val ERROR_DATE_NOT_CURRENT = "SIGN_IN_DATE_NOT_CURRENT"
-    const val ERROR_ALREADY_COMPLETED = "SIGN_IN_ALREADY_COMPLETED"
-
-    val OPERATIONS: Set<String> = setOf(CREATE)
-}

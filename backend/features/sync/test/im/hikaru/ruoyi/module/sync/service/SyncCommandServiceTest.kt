@@ -261,7 +261,9 @@ class SyncCommandServiceTest {
             override val keys = setOf(SyncCommandHandlerKey("member-address", "update"))
             override fun handle(context: SyncCommandContext, command: SyncCommandEnvelope) = block(context, command)
         }
-        return SyncCommandServiceImpl(SyncCommandProcessor(SyncCommandDispatcher(listOf(handler))))
+        return SyncCommandServiceImpl(
+            SyncCommandProcessor(SyncCommandDispatcher(listOf(handler), SyncCommandWhitelist()))
+        )
     }
 
     private fun command(commandId: String, payload: String): AppSyncCommandReqVO = AppSyncCommandReqVO().apply {

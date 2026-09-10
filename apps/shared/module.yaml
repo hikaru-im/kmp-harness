@@ -6,9 +6,27 @@ product:
 
 dependencies:
   - ../../contracts
+  - io.insert-koin:koin-core:4.2.2
+  - io.ktor:ktor-client-core:3.5.1
+  - io.ktor:ktor-client-content-negotiation:3.5.1
+  - io.ktor:ktor-serialization-kotlinx-json:3.5.1
+  - io.ktor:ktor-client-websockets:3.5.1
   - ../../contracts/harness-protocol
   - $compose.foundation: exported
   - org.jetbrains.compose.material3:material3:1.11.0-alpha07: exported
+
+dependencies@jvm:
+  - net.java.dev.jna:jna-platform:5.18.1
+  - io.ktor:ktor-client-cio:3.5.1
+
+dependencies@android:
+  - io.ktor:ktor-client-okhttp:3.5.1
+
+dependencies@ios:
+  - io.ktor:ktor-client-darwin:3.5.1
+
+test-dependencies:
+  - io.ktor:ktor-client-mock:3.5.1
 
 settings:
   compose:

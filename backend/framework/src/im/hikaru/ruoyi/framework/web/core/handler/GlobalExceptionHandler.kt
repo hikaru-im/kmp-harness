@@ -200,7 +200,11 @@ class GlobalExceptionHandler(
                 // 忽略日志，避免影响主流程
             }
         }
-        return CommonResult.error<Any>(ex.code, ex.message)
+        return if (CommonResult.isSuccess(ex.code)) {
+            CommonResult.error<Any>(INTERNAL_SERVER_ERROR.code, INTERNAL_SERVER_ERROR.msg)
+        } else {
+            CommonResult.error<Any>(ex.code, ex.message)
+        }
     }
 
     @ExceptionHandler(Exception::class)

@@ -11,7 +11,6 @@ import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.Parameters
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.tags.Tag
-import jakarta.annotation.security.PermitAll
 import jakarta.validation.Valid
 import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.GetMapping
@@ -37,7 +36,6 @@ class AppFileController(
         required = true,
         schema = Schema(type = "string", format = "binary"),
     )
-    @PermitAll
     fun uploadFile(@Valid uploadReqVO: AppFileUploadReqVO): CommonResult<String> {
         val file = requireNotNull(uploadReqVO.file)
         val content = file.inputStream.use { it.readBytes() }
@@ -60,7 +58,6 @@ class AppFileController(
 
     @PostMapping("/create")
     @Operation(summary = "Create a file record")
-    @PermitAll
     fun createFile(@Valid @RequestBody createReqVO: FileCreateReqVO): CommonResult<Long> =
         CommonResult.success(fileService.createFile(createReqVO))
 }
