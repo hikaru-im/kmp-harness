@@ -1,5 +1,7 @@
 package im.hikaru.harness.client.connection
 
+import im.hikaru.harness.session.api.SessionApi
+
 /**
  * 客户端访问 Harness Host 的类型化连接。
  *
@@ -8,4 +10,5 @@ package im.hikaru.harness.client.connection
  */
 public interface Connection {
     public val host: HostApi
+    public val session: SessionApi
 }

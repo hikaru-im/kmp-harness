@@ -4,6 +4,7 @@ dependencies:
   - ../shared
   - ../../modules/logger
   - androidx.activity:activity-compose:1.8.2
+  - io.ktor:ktor-client-okhttp:3.5.1
 
 settings:
   compose:

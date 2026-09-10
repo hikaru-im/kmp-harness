@@ -13,6 +13,7 @@ import android.security.keystore.KeyProperties
 
 private const val PREFERENCES_NAME = "harness-member-account-v1"
 private const val SESSION_KEY = "member-session"
+private const val SIGNED_OUT_KEY = "member-session-signed-out"
 private const val TENANT_KEY = "tenant-id"
 private const val KEY_ALIAS = "harness-member-account-v1-key"
 private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -28,18 +29,26 @@ class AndroidAppSessionStore(
 
     override val durable = true
 
-    override fun read(): AppSession? =
-        preferences.getString(SESSION_KEY, null)
+    override fun read(): AppSession? = if (preferences.getBoolean(SIGNED_OUT_KEY, false)) null
+        else preferences.getString(SESSION_KEY, null)
             ?.let(::decrypt)
             ?.let { sessionJson.decodeFromString<AppSession>(it) }
 
 
     override fun write(session: AppSession) {
         val encoded = sessionJson.encodeToString(session)
-        check(preferences.edit().putString(SESSION_KEY, encrypt(encoded)).commit()) { "Secure session save failed" }
+        check(
+            preferences.edit()
+                .putString(SESSION_KEY, encrypt(encoded))
+                .putBoolean(SIGNED_OUT_KEY, false)
+                .commit()
+        ) { "Secure session save failed" }
     }
 
     override fun clear() {
+        // Commit the non-sensitive revocation marker first. If the keystore or
+        // preference write is interrupted, a stale encrypted item cannot revive.
+        check(preferences.edit().putBoolean(SIGNED_OUT_KEY, true).commit()) { "Secure session revoke failed" }
         check(preferences.edit().remove(SESSION_KEY).commit()) { "Secure session clear failed" }
     }
 

@@ -6,6 +6,10 @@ product:
 
 dependencies:
   - ../../contracts
+  - ../../modules/agent
+  - ../../modules/llm
+  - ../../modules/session
+  - ../../modules/session-api
   - io.insert-koin:koin-core:4.2.2
   - io.ktor:ktor-client-core:3.5.1
   - io.ktor:ktor-client-content-negotiation:3.5.1

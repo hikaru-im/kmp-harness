@@ -4,6 +4,7 @@ import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.host.HostApiPlugin
 import im.hikaru.harness.api.gateway.host.registerHostApi
+import im.hikaru.harness.api.gateway.session.registerSessionApi
 import im.hikaru.harness.loader.Entry
 import im.hikaru.harness.loader.Loader
 import im.hikaru.harness.loader.Registry
@@ -78,6 +79,7 @@ public class HarnessHost private constructor(
 
             try {
                 gateway.registerHostApi(runtime.context)
+                gateway.registerSessionApi(runtime.context)
                 runtime.provideLoaderFactory(registry)
 
                 runtime.context.effect(
