@@ -145,6 +145,8 @@ class SecurityFilterChainTest {
 
             override fun removeAccessToken(accessToken: String): OAuth2AccessTokenRespDTO? = unsupported()
 
+            override fun removeAccessToken(userId: Long, userType: Int): Unit = unsupported()
+
             override fun refreshAccessToken(refreshToken: String, clientId: String): OAuth2AccessTokenRespDTO =
                 unsupported()
 

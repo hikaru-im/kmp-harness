@@ -16,12 +16,15 @@ import org.springframework.validation.annotation.Validated
 class WebProperties {
 
     @field:NotNull(message = "APP API 不能为空")
+    @field:Valid
     var appApi: Api = Api("/app-api", "**.controller.app.**")
 
     @field:NotNull(message = "Admin API 不能为空")
+    @field:Valid
     var adminApi: Api = Api("/admin-api", "**.controller.admin.**")
 
     @field:NotNull(message = "Admin UI 不能为空")
+    @field:Valid
     var adminUi: Ui? = null
 
     /** API 配置 */

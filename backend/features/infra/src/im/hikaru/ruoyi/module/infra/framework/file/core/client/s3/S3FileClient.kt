@@ -121,10 +121,18 @@ class S3FileClient(id: Long, config: S3FileClientConfig) : AbstractFileClient<S3
 
     private fun buildEndpoint(): String = if (isHttp(config.endpoint)) config.endpoint else "https://${config.endpoint}"
 
-    private fun buildPresignerEndpoint(): String = if (config.enablePathStyleAccess == true) {
-        resolvedDomain.removeSuffix("/${config.bucket}")
-    } else {
-        resolvedDomain.replace("://${config.bucket}.", "://")
+    private fun buildPresignerEndpoint(): String {
+        // Provider endpoints must be used for signing; custom domains are only for public access.
+        if (config.endpoint.contains(S3FileClientConfig.ENDPOINT_ALIYUN) ||
+            config.endpoint.contains(S3FileClientConfig.ENDPOINT_QINIU)
+        ) {
+            return buildEndpoint()
+        }
+        return if (config.enablePathStyleAccess == true) {
+            resolvedDomain.removeSuffix("/${config.bucket}")
+        } else {
+            resolvedDomain.replace("://${config.bucket}.", "://")
+        }
     }
 
     private fun resolveRegion(): String {

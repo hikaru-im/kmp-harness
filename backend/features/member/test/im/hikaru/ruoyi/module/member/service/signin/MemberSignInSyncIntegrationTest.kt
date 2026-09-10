@@ -79,12 +79,11 @@ class MemberSignInSyncIntegrationTest {
             configService,
             pointService,
             levelService,
-            DatabaseSyncChangeWriter(emptyList()),
             MemberSignInDateProvider { currentDate },
         )
         syncService = SyncCommandServiceImpl(
             SyncCommandProcessor(
-                SyncCommandDispatcher(listOf(MemberSignInSyncCommandHandler(recordService))),
+                SyncCommandDispatcher(emptyList(), im.hikaru.ruoyi.module.sync.service.SyncCommandWhitelist()),
             ),
         )
     }
@@ -95,102 +94,29 @@ class MemberSignInSyncIntegrationTest {
     }
 
     @Test
-    fun `sign in applies once and replays the same receipt`() {
+    fun `old queued sign in is consistently rejected without rewards`() {
         val userId = insertUser()
-        val command = createCommand("sign-in-1", userId, currentDate)
-
-        val first = transaction { syncService.submit(userId, batch(command)) }.results.single()
-        val replay = transaction { syncService.submit(userId, batch(command)) }.results.single()
-
-        assertEquals(AppSyncCommandOutcomeVO.APPLIED, first.outcome)
-        assertFalse(first.replayed)
-        assertEquals(AppSyncCommandOutcomeVO.APPLIED, replay.outcome)
-        assertTrue(replay.replayed)
-        assertEquals(first.serverVersion, replay.serverVersion)
-        assertEquals(1, MemberSignInRecordDao.selectCountByUserId(userId))
-        verify(pointService, times(1)).createPointRecord(
-            userId,
-            10,
-            MemberPointBizTypeEnum.SIGN,
-            requireNotNull(first.serverVersion).toString(),
-        )
-        verify(levelService, times(1)).addExperience(
-            userId,
-            5,
-            MemberExperienceBizTypeEnum.SIGN_IN,
-            requireNotNull(first.serverVersion).toString(),
-        )
-    }
-
-    @Test
-    fun `different commands cannot award the same business date twice`() {
-        val userId = insertUser()
-
-        val first = transaction {
-            syncService.submit(userId, batch(createCommand("sign-in-1", userId, currentDate)))
-        }.results.single()
-        val duplicate = transaction {
-            syncService.submit(userId, batch(createCommand("sign-in-2", userId, currentDate)))
-        }.results.single()
-
-        assertEquals(AppSyncCommandOutcomeVO.APPLIED, first.outcome)
-        assertEquals(AppSyncCommandOutcomeVO.REJECTED, duplicate.outcome)
-        assertEquals("SIGN_IN_ALREADY_COMPLETED", duplicate.errorCode)
-        assertEquals(1, MemberSignInRecordDao.selectCountByUserId(userId))
-        verify(pointService, times(1)).createPointRecord(
-            userId,
-            10,
-            MemberPointBizTypeEnum.SIGN,
-            requireNotNull(first.serverVersion).toString(),
-        )
-    }
-
-    @Test
-    fun `queued sign in is rejected after its requested date expires`() {
-        val userId = insertUser()
-
-        val result = transaction {
-            syncService.submit(
-                userId,
-                batch(createCommand("sign-in-old", userId, LocalDate(2026, 7, 26))),
-            )
-        }.results.single()
-
-        assertEquals(AppSyncCommandOutcomeVO.REJECTED, result.outcome)
-        assertEquals("SIGN_IN_DATE_NOT_CURRENT", result.errorCode)
+        for (date in listOf(currentDate, LocalDate(2026, 7, 26))) {
+            val command = createCommand("old-$date", userId, date)
+            repeat(2) {
+                val result = transaction { syncService.submit(userId, batch(command)) }.results.single()
+                assertEquals(AppSyncCommandOutcomeVO.REJECTED, result.outcome)
+                assertEquals("SYNC_NOT_ALLOWED", result.errorCode)
+            }
+        }
         assertEquals(0, MemberSignInRecordDao.selectCountByUserId(userId))
+        org.mockito.Mockito.verifyNoInteractions(pointService, levelService)
     }
 
     @Test
-    fun `sign in command cannot target another user`() {
+    fun `online sign in awards once without entering sync feed`() {
         val userId = insertUser()
-        val otherUserId = insertUser("Other")
-
-        val result = transaction {
-            syncService.submit(userId, batch(createCommand("sign-in-other", otherUserId, currentDate)))
-        }.results.single()
-
-        assertEquals(AppSyncCommandOutcomeVO.REJECTED, result.outcome)
-        assertEquals("INVALID_AGGREGATE_ID", result.errorCode)
-        assertEquals(0, MemberSignInRecordDao.selectCountByUserId(otherUserId))
-    }
-
-    @Test
-    fun `online sign in uses the same mutation path and enters the change feed`() {
-        val userId = insertUser()
-
         val record = recordService.createSignRecord(userId)
-        val summary = recordService.getSignInRecordSummary(userId)
-        val changes = syncService.getChanges(userId, AppSyncChangesQuery("member-sign-in", 0, 100))
-
         assertEquals(currentDate, record.signDate)
-        assertEquals(true, summary.todaySignIn)
-        assertEquals(1, summary.totalDay)
-        assertEquals(listOf(requireNotNull(record.id)), changes.items.map { it.aggregateVersion })
-        assertEquals(userId.toString(), changes.items.single().aggregateId)
-        assertEquals("UPSERT", changes.items.single().operation)
-        assertEquals(record.id, changes.items.single().payload.get("record").get("id").asLong())
-        assertTrue(changes.items.single().payload.get("summary").get("todaySignIn").asBoolean())
+        assertEquals(true, recordService.getSignInRecordSummary(userId).todaySignIn)
+        assertTrue(syncService.getChanges(userId, AppSyncChangesQuery("member-sign-in", 0, 100)).items.isEmpty())
+        verify(pointService, times(1)).createPointRecord(userId, 10, MemberPointBizTypeEnum.SIGN, record.id.toString())
+        verify(levelService, times(1)).addExperience(userId, 5, MemberExperienceBizTypeEnum.SIGN_IN, record.id.toString())
     }
 
     private fun insertUser(nickname: String = "Alice"): Long = MemberUserDao.insert(

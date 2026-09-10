@@ -13,6 +13,7 @@ import org.springframework.beans.factory.config.MethodInvokingFactoryBean
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureOrder
 import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
@@ -24,8 +25,8 @@ import org.springframework.security.web.access.AccessDeniedHandler
  * Spring Security 自动配置类，主要用于相关组件的配置 (迁移自 Java, 去 Lombok)
  *
  * 迁移说明：
- *  - 去除 TokenAuthenticationFilter Bean：依赖 OAuth2TokenCommonApi (common 业务接口)，
- *    待 yudao-module-system 迁移时由业务侧注入。
+ *  - TokenAuthenticationFilter 由 OAuth2TokenCommonApi (common 业务接口) 注入，
+ *    并由 SecurityFilterChain 管理执行。
  *  - 保留 TTL SecurityContextHolderStrategy (TransmittableThreadLocal, 决策表 #14 评估后保留)
  *
  * @author 芋道源码
@@ -58,6 +59,14 @@ class YudaoSecurityAutoConfiguration {
         globalExceptionHandler: GlobalExceptionHandler,
         oauth2TokenApi: OAuth2TokenCommonApi,
     ): TokenAuthenticationFilter = TokenAuthenticationFilter(securityProperties, globalExceptionHandler, oauth2TokenApi)
+
+    /** TokenAuthenticationFilter is managed by Spring Security's filter chain, not the servlet container. */
+    @Bean
+    fun tokenAuthenticationFilterRegistration(
+        filter: TokenAuthenticationFilter,
+    ): FilterRegistrationBean<TokenAuthenticationFilter> = FilterRegistrationBean<TokenAuthenticationFilter>(filter).apply {
+        setEnabled(false)
+    }
 
     @Bean("ss") // 使用 Spring Security 的缩写，方便使用
     fun securityFrameworkService(permissionApi: PermissionCommonApi): SecurityFrameworkService =

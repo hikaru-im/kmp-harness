@@ -1,6 +1,5 @@
 package im.hikaru.ruoyi.module.member.service.signin
 
-import im.hikaru.contracts.app.member.MemberSignInSyncContract
 import im.hikaru.ruoyi.framework.common.enums.CommonStatusEnum
 import im.hikaru.ruoyi.framework.common.exception.util.ServiceExceptionUtil.exception
 import im.hikaru.ruoyi.framework.common.pojo.PageParam
@@ -17,10 +16,6 @@ import im.hikaru.ruoyi.module.member.enums.MemberExperienceBizTypeEnum
 import im.hikaru.ruoyi.module.member.enums.point.MemberPointBizTypeEnum
 import im.hikaru.ruoyi.module.member.service.level.MemberLevelService
 import im.hikaru.ruoyi.module.member.service.point.MemberPointRecordService
-import im.hikaru.ruoyi.module.sync.service.SyncChangeOperation
-import im.hikaru.ruoyi.module.sync.service.SyncChangeWriter
-import im.hikaru.ruoyi.module.sync.service.SyncCommandContext
-import im.hikaru.ruoyi.framework.tenant.core.context.TenantContextHolder
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
@@ -34,7 +29,6 @@ class MemberSignInRecordServiceImpl(
     private val signInConfigService: MemberSignInConfigService,
     private val pointRecordService: MemberPointRecordService,
     private val memberLevelService: MemberLevelService,
-    private val changeWriter: SyncChangeWriter,
     private val dateProvider: MemberSignInDateProvider,
 ) : MemberSignInRecordService {
 
@@ -96,59 +90,6 @@ class MemberSignInRecordServiceImpl(
         record.experience?.takeIf { it != 0 }?.let {
             memberLevelService.addExperience(userId, it, MemberExperienceBizTypeEnum.SIGN_IN, requireNotNull(record.id).toString())
         }
-        val summary = getSignInRecordSummary(userId)
-        appendChange(userId, record, summary)
-        return SignInMutationResult.Applied(record, summary)
-    }
-
-    private fun appendChange(
-        userId: Long,
-        record: MemberSignInRecordDO,
-        summary: AppMemberSignInRecordSummaryRespVO,
-    ) {
-        val recordId = requireNotNull(record.id)
-        changeWriter.append(
-            context = SyncCommandContext(
-                tenantId = TenantContextHolder.getRequiredTenantId(),
-                userId = userId,
-            ),
-            resource = MemberSignInSyncContract.RESOURCE,
-            aggregateId = userId.toString(),
-            operation = SyncChangeOperation.UPSERT,
-            aggregateVersion = recordId,
-            payload = SignInChangePayload(
-                record = SignInRecordPayload(
-                    id = recordId,
-                    day = record.day ?: 0,
-                    point = record.point ?: 0,
-                    experience = record.experience ?: 0,
-                    createTime = record.createTime.toString(),
-                ),
-                summary = SignInSummaryPayload(
-                    totalDay = summary.totalDay ?: 0,
-                    continuousDay = summary.continuousDay ?: 0,
-                    todaySignIn = summary.todaySignIn ?: false,
-                ),
-            ),
-        )
+        return SignInMutationResult.Applied(record, getSignInRecordSummary(userId))
     }
 }
-
-private data class SignInChangePayload(
-    val record: SignInRecordPayload,
-    val summary: SignInSummaryPayload,
-)
-
-private data class SignInRecordPayload(
-    val id: Long,
-    val day: Int,
-    val point: Int,
-    val experience: Int,
-    val createTime: String,
-)
-
-private data class SignInSummaryPayload(
-    val totalDay: Int,
-    val continuousDay: Int,
-    val todaySignIn: Boolean,
-)

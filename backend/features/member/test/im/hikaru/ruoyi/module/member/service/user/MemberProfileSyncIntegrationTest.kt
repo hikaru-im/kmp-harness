@@ -17,6 +17,7 @@ import im.hikaru.ruoyi.module.sync.service.DatabaseSyncChangeWriter
 import im.hikaru.ruoyi.module.sync.service.SyncCommandDispatcher
 import im.hikaru.ruoyi.module.sync.service.SyncCommandProcessor
 import im.hikaru.ruoyi.module.sync.service.SyncCommandServiceImpl
+import im.hikaru.ruoyi.module.sync.service.SyncCommandWhitelist
 import jakarta.validation.Validation
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.SchemaUtils
@@ -52,7 +53,7 @@ class MemberProfileSyncIntegrationTest {
         val validator = Validation.buildDefaultValidatorFactory().validator
         val handler = MemberProfileSyncCommandHandler(commandService, validator)
         syncService = SyncCommandServiceImpl(
-            SyncCommandProcessor(SyncCommandDispatcher(listOf(handler))),
+            SyncCommandProcessor(SyncCommandDispatcher(listOf(handler), SyncCommandWhitelist())),
         )
     }
 

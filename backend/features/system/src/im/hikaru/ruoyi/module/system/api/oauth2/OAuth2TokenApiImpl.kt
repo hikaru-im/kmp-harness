@@ -25,6 +25,10 @@ class OAuth2TokenApiImpl(private val oauth2TokenService: OAuth2TokenService) : O
     override fun removeAccessToken(accessToken: String): OAuth2AccessTokenRespDTO? =
         oauth2TokenService.removeAccessToken(accessToken)?.toResponse()
 
+    override fun removeAccessToken(userId: Long, userType: Int) {
+        oauth2TokenService.removeAccessToken(userId, userType)
+    }
+
     override fun refreshAccessToken(refreshToken: String, clientId: String): OAuth2AccessTokenRespDTO =
         oauth2TokenService.refreshAccessToken(refreshToken, clientId).toResponse()
 
