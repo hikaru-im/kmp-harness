@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +43,7 @@ import im.hikaru.harness.client.connection.TextContent
 import im.hikaru.harness.client.connection.userMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import im.hikaru.harness.client.connection.RemoteConnectionOwner
 
 /** The first application shell shared by Desktop, Android and iOS. */
 @Composable
@@ -149,6 +151,47 @@ public fun HarnessApp(
             }
         }
     }
+}
+
+/** Mobile entry wrapper: discovers and connects the currently authenticated Host. */
+@Composable
+public fun RemoteHarnessApp(
+    account: MemberAccount,
+    remote: RemoteConnectionOwner,
+    clientId: String,
+    modifier: Modifier = Modifier,
+) {
+    val accountState = account.state.collectAsState().value
+    val connection = remote.connection.collectAsState().value
+    val hosts = remote.hosts.collectAsState().value
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(accountState.session, accountState.target) {
+        remote.disconnect()
+        val session = accountState.session
+        if (session != null && accountState.target != null) {
+            try {
+                val discovered = remote.discover(session)
+                discovered.firstOrNull()?.let { remote.connect(session, it, clientId) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The connection state remains observable in the shared shell.
+            }
+        }
+    }
+    DisposableEffect(remote) {
+        onDispose { remote.close() }
+    }
+    HarnessApp(
+        connection = connection,
+        account = account,
+        availableHosts = hosts,
+        onSelectHost = { host ->
+            val session = account.state.value.session
+            if (session != null) scope.launch { remote.connect(session, host, clientId) }
+        },
+        modifier = modifier,
+    )
 }
 
 public enum class HarnessDestination(

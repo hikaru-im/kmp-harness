@@ -61,6 +61,11 @@ class DefaultHostConnectionRegistry : HostConnectionRegistry {
             connectionsBySession[sessionId]
         }
 
+    override fun findAll(principal: HarnessPrincipal): List<HostConnection> =
+        synchronized(lock) {
+            connectionsByHost.values.filter { it.principal == principal }.toList()
+        }
+
     override fun unregister(sessionId: String): HostConnection? =
         synchronized(lock) {
             val connection = connectionsBySession[sessionId] ?: return@synchronized null

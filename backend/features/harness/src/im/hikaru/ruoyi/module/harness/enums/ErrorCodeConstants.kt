@@ -10,4 +10,6 @@ object ErrorCodeConstants {
 
     val DUPLICATE_REQUEST = ErrorCode(1_023_001_000, "Harness Relay 请求编号重复")
     val HOST_DISCONNECTED = ErrorCode(1_023_001_001, "Harness Host 已断开连接")
+    val METHOD_FORBIDDEN = ErrorCode(1_023_001_002, "Harness 远程方法被安全策略拒绝")
+    val REQUEST_TIMEOUT = ErrorCode(1_023_001_003, "Harness Relay 请求超时")
 }

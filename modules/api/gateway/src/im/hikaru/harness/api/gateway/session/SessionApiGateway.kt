@@ -21,6 +21,7 @@ import kotlinx.coroutines.CancellationException
 /** Typed in-process endpoints backing both LocalConnection and a future relay adapter. */
 public object SessionListEndpoint : ApiEndpoint<Unit, List<SessionSummary>>("session.list")
 
+@kotlinx.serialization.Serializable
 public data class SessionCreateRequest(
     val id: SessionId? = null,
     val options: CreateSessionOptions = CreateSessionOptions(),
@@ -31,6 +32,7 @@ public object SessionCreateEndpoint : ApiEndpoint<SessionCreateRequest, SessionS
 
 public object SessionHistoryEndpoint : ApiEndpoint<SessionId, List<Message>>("session.history")
 
+@kotlinx.serialization.Serializable
 public data class SessionPromptRequest(
     val id: SessionId,
     val message: Message,
@@ -38,6 +40,7 @@ public data class SessionPromptRequest(
 
 public object SessionPromptEndpoint : ApiEndpoint<SessionPromptRequest, SessionPrompt>("session.prompt")
 
+@kotlinx.serialization.Serializable
 public data class SessionCancelRequest(
     val id: SessionId,
     val keepInbox: Boolean = false,

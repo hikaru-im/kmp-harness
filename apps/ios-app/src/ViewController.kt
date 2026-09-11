@@ -7,10 +7,12 @@ import im.hikaru.harness.client.account.KtorMemberTransport
 import im.hikaru.harness.client.account.MemberAccount
 import im.hikaru.harness.client.account.createAccountHttpClient
 import im.hikaru.harness.client.account.platformAccountEngine
-import im.hikaru.harness.client.app.HarnessApp
+import im.hikaru.harness.client.app.RemoteHarnessApp
+import im.hikaru.harness.client.connection.RemoteConnectionOwner
 import kotlinx.coroutines.launch
 
 fun ViewController() = ComposeUIViewController {
+    val scope = rememberCoroutineScope()
     val account = remember {
         val engine = platformAccountEngine()
         val client = createAccountHttpClient(engine)
@@ -19,9 +21,17 @@ fun ViewController() = ComposeUIViewController {
             store = IosAppSessionStore(),
         )
     }
-    val scope = rememberCoroutineScope()
+    val remote = remember {
+        val engine = platformAccountEngine()
+        val client = createAccountHttpClient(engine)
+        RemoteConnectionOwner(
+            client = client,
+            closeClient = { client.close(); engine.close() },
+            scope = scope,
+        )
+    }
     DisposableEffect(account) {
         onDispose { scope.launch { account.shutdown() } }
     }
-    HarnessApp(connection = null, account = account)
+    RemoteHarnessApp(account = account, remote = remote, clientId = "ios-client")
 }

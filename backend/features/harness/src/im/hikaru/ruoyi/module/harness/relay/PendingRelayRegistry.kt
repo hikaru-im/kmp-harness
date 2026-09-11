@@ -8,6 +8,8 @@ interface PendingRelayRegistry {
 
     fun complete(connection: HostConnection, response: RelayResponse): PendingRelayRequest?
 
+    fun remove(request: PendingRelayRequest): PendingRelayRequest?
+
     fun removeByHost(connection: HostConnection): List<PendingRelayRequest>
 
     fun removeByClientSession(sessionId: String): List<PendingRelayRequest>

@@ -45,6 +45,7 @@ data class SessionHeader(
     }
 }
 
+@Serializable
 data class CreateSessionOptions(
     val cwd: String? = null,
     val parentSession: SessionId? = null,

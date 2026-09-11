@@ -144,6 +144,24 @@ class HarnessRelayServiceTest {
         assertEquals(ErrorCodeConstants.HOST_DISCONNECTED.code, response.result.code)
     }
 
+    @Test
+    fun `sensitive remote methods are rejected before reaching host`() {
+        val hostSession = session("host", tenantId = 1, userId = 7)
+        val clientSession = session("client", tenantId = 1, userId = 7)
+        addSessions(hostSession, clientSession)
+        service.registerHost(hostSession, registration())
+        sender.messages.clear()
+
+        service.routeRequest(
+            clientSession,
+            request("sensitive").copy(method = "credentials.set"),
+        )
+
+        val response = HarnessProtocolJson.decodeFromString<RelayResponse>(sender.messages.single().content)
+        assertEquals(ErrorCodeConstants.METHOD_FORBIDDEN.code, response.result.code)
+        assertEquals("client", sender.messages.single().sessionId)
+    }
+
     private fun addSessions(vararg sessions: WebSocketSession) {
         sessions.forEach(sessionManager::addSession)
     }

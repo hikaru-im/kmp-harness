@@ -10,5 +10,5 @@ Compose UI
     -> Desktop Harness Host
 ```
 
-iOS 复用 `apps/shared` 的客户端协议和状态逻辑，只在应用层提供平台能力。当前应用只完成
-Compose 入口，远程连接尚未实现。
+iOS 复用 `apps/shared` 的客户端协议和状态逻辑，只在应用层提供平台能力。远程连接使用
+`RemoteConnection`；Apple 编译与模拟器运行仍需在 macOS 环境执行。

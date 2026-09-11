@@ -34,6 +34,11 @@ class DefaultPendingRelayRegistry : PendingRelayRegistry {
         pending.remove(key)
     }
 
+    override fun remove(request: PendingRelayRequest): PendingRelayRequest? = synchronized(lock) {
+        val key = request.toKey()
+        if (pending[key] == request) pending.remove(key) else null
+    }
+
     override fun removeByHost(connection: HostConnection): List<PendingRelayRequest> =
         removeMatching { request ->
             request.hostSessionId == connection.sessionId &&

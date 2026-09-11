@@ -11,4 +11,5 @@ Compose UI
 ```
 
 RuoYi 后端负责登录、租户、设备、Host 授权和远程转发。Android 不直接发现或连接 Desktop
-端口，也不持有 Host 凭据。当前应用只完成 Compose 和 Android 日志基础装配，远程连接尚未实现。
+端口，也不持有 Host 凭据。远程连接使用 `RemoteConnection`，并遵守 Host generation、
+订阅归属、序号缺口和敏感 API 拒绝策略。
