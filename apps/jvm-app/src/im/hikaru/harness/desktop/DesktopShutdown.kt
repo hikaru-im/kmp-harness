@@ -24,21 +24,38 @@ internal suspend fun <Host, Account> openDesktopResources(
     }
 }
 
-/** Transfer a newly-created transport to Account, or close it if Account construction fails. */
-internal fun <Transport : AutoCloseable, Account> createOwnedAccount(
-    createTransport: () -> Transport,
+/** Acquire engine, client and transport in order, closing every acquired resource on failure. */
+internal fun <Engine : AutoCloseable, Client : AutoCloseable, Transport : AutoCloseable, Account> createOwnedAccount(
+    createEngine: () -> Engine,
+    createClient: (Engine) -> Client,
+    createTransport: (Client) -> Transport,
     createAccount: (Transport) -> Account,
 ): Account {
-    val transport = createTransport()
+    var engine: Engine? = null
+    var client: Client? = null
+    var transport: Transport? = null
     return try {
-        createAccount(transport)
+        val acquiredEngine = createEngine()
+        engine = acquiredEngine
+        val acquiredClient = createClient(acquiredEngine)
+        client = acquiredClient
+        val acquiredTransport = createTransport(acquiredClient)
+        transport = acquiredTransport
+        createAccount(acquiredTransport)
     } catch (error: Throwable) {
-        try {
-            transport.close()
-        } catch (cleanupError: Throwable) {
-            if (cleanupError !== error) error.addSuppressed(cleanupError)
-        }
+        closeAfterFailure(transport, error)
+        closeAfterFailure(client, error)
+        closeAfterFailure(engine, error)
         throw error
+    }
+}
+
+private fun closeAfterFailure(resource: AutoCloseable?, failure: Throwable) {
+    if (resource == null) return
+    try {
+        resource.close()
+    } catch (cleanupError: Throwable) {
+        if (cleanupError !== failure) failure.addSuppressed(cleanupError)
     }
 }
 

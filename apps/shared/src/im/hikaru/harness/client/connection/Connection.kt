@@ -2,7 +2,10 @@ package im.hikaru.harness.client.connection
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.json.JsonElement
 import kotlin.jvm.JvmInline
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 /**
  * 客户端访问 Harness Host 的类型化连接。
@@ -69,9 +72,47 @@ public data class ToolResultContent(
 }
 
 @Serializable
-public data class Message(val content: List<MessageContent>)
+public enum class MessageRole { USER, ASSISTANT }
 
-public fun userMessage(text: String): Message = Message(listOf(TextContent(text)))
+@Serializable
+public sealed interface MessageSource
+
+@Serializable
+@SerialName("user")
+public data object UserMessageSource : MessageSource
+
+@Serializable
+@SerialName("plugin")
+public data class PluginMessageSource(val plugin: String) : MessageSource
+
+@Serializable
+@SerialName("model")
+public data class ModelMessageSource(
+    val provider: String,
+    val model: String,
+    val replayState: JsonElement? = null,
+) : MessageSource
+
+@Serializable
+@SerialName("tool")
+public data class ToolMessageSource(val callId: String) : MessageSource
+
+@Serializable
+public data class Message(
+    val id: String,
+    val role: MessageRole,
+    val content: List<MessageContent>,
+    val source: MessageSource,
+)
+
+@OptIn(ExperimentalUuidApi::class)
+public fun userMessage(text: String): Message =
+    Message(
+        id = Uuid.random().toString(),
+        role = MessageRole.USER,
+        content = listOf(TextContent(text)),
+        source = UserMessageSource,
+    )
 
 @Serializable
 public data class SessionSummary(

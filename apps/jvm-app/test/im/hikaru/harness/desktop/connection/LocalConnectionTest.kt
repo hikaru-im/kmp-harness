@@ -6,10 +6,13 @@ import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.boot.DesktopProfile
 import im.hikaru.harness.boot.HarnessHost
 import im.hikaru.harness.client.connection.AgentOptions
+import im.hikaru.harness.client.connection.MessageRole
+import im.hikaru.harness.client.connection.ModelMessageSource
 import im.hikaru.harness.client.connection.TextContent
 import im.hikaru.harness.client.connection.ReasoningContent
 import im.hikaru.harness.client.connection.ToolCallContent
 import im.hikaru.harness.client.connection.ToolResultContent
+import im.hikaru.harness.client.connection.ToolMessageSource
 import im.hikaru.harness.agent.AgentPlugin
 import im.hikaru.harness.agent.AgentId
 import im.hikaru.harness.agent.agents
@@ -39,6 +42,7 @@ import im.hikaru.harness.session.api.SessionApiPlugin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -125,40 +129,58 @@ class LocalConnectionTest {
                 )
             val session = requireNotNull(host.runtime.context.agents.get(AgentId(created.id.value))).session
             val callId = CallId("call-1")
+            val replayState = JsonPrimitive("replay-token")
+            val assistantMessage =
+                createAssistantMessage(
+                    content = listOf(ReasoningBlock("thinking"), ToolCallBlock(callId, "lookup", "{}")),
+                    provider = "scripted",
+                    model = "test-model",
+                    replayState = replayState,
+                )
             session.append(
                 SessionEventKeys.AssistantMessage,
                 AssistantMessageEvent(
                     turn = 1,
                     step = 1,
-                    message =
-                        createAssistantMessage(
-                            content = listOf(ReasoningBlock("thinking"), ToolCallBlock(callId, "lookup", "{}")),
-                            provider = "scripted",
-                            model = "test-model",
-                        ),
+                    message = assistantMessage,
                 ),
             )
+            val toolResultMessage =
+                createToolResultMessage(
+                    callId = callId,
+                    content =
+                        listOf(
+                            im.hikaru.harness.llm.TextBlock("result"),
+                            ReasoningBlock("trace"),
+                        ),
+                    isError = false,
+                )
             session.append(
                 SessionEventKeys.UserMessage,
                 UserMessageEvent(
                     turn = 1,
-                    message =
-                        createToolResultMessage(
-                            callId = callId,
-                            content = listOf(im.hikaru.harness.llm.TextBlock("result")),
-                            isError = false,
-                        ),
+                    message = toolResultMessage,
                 ),
             )
 
             val history = connection.session.history(created.id)
             assertEquals(session.deriveMessages().map(::toClientMessage), history)
+            assertEquals(assistantMessage.id.value, history[0].id)
+            assertEquals(MessageRole.ASSISTANT, history[0].role)
+            assertEquals(ModelMessageSource("scripted", "test-model", replayState), history[0].source)
             assertEquals(
                 listOf(ReasoningContent("thinking"), ToolCallContent("call-1", "lookup", "{}")),
                 history[0].content,
             )
+            assertEquals(toolResultMessage.id.value, history[1].id)
+            assertEquals(MessageRole.USER, history[1].role)
+            assertEquals(ToolMessageSource("call-1"), history[1].source)
             assertEquals(
-                ToolResultContent("call-1", listOf(TextContent("result")), false),
+                ToolResultContent(
+                    "call-1",
+                    listOf(TextContent("result"), ReasoningContent("trace")),
+                    false,
+                ),
                 history[1].content.single(),
             )
         } finally {

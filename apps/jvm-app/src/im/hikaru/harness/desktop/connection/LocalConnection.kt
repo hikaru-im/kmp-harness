@@ -14,6 +14,13 @@ import im.hikaru.harness.api.gateway.session.SessionListEndpoint
 import im.hikaru.harness.api.gateway.session.SessionPromptEndpoint
 import im.hikaru.harness.api.gateway.session.SessionPromptRequest
 import im.hikaru.harness.llm.Message
+import im.hikaru.harness.llm.MessageId
+import im.hikaru.harness.llm.MessageRole
+import im.hikaru.harness.llm.MessageSource as CoreMessageSource
+import im.hikaru.harness.llm.ModelMessageSource
+import im.hikaru.harness.llm.PluginMessageSource
+import im.hikaru.harness.llm.ToolMessageSource
+import im.hikaru.harness.llm.UserMessageSource
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.client.connection.HostApi
@@ -21,6 +28,10 @@ import im.hikaru.harness.client.connection.AgentOptions as ClientAgentOptions
 import im.hikaru.harness.client.connection.CreateSessionOptions as ClientCreateSessionOptions
 import im.hikaru.harness.client.connection.Message as ClientMessage
 import im.hikaru.harness.client.connection.MessageContent
+import im.hikaru.harness.client.connection.MessageRole as ClientMessageRole
+import im.hikaru.harness.client.connection.MessageSource
+import im.hikaru.harness.client.connection.ModelMessageSource as ClientModelMessageSource
+import im.hikaru.harness.client.connection.PluginMessageSource as ClientPluginMessageSource
 import im.hikaru.harness.client.connection.ReasoningContent
 import im.hikaru.harness.client.connection.SessionId as ClientSessionId
 import im.hikaru.harness.client.connection.SessionPrompt as ClientSessionPrompt
@@ -30,6 +41,8 @@ import im.hikaru.harness.client.connection.SessionApi
 import im.hikaru.harness.client.connection.TextContent
 import im.hikaru.harness.client.connection.ToolCallContent
 import im.hikaru.harness.client.connection.ToolResultContent
+import im.hikaru.harness.client.connection.ToolMessageSource as ClientToolMessageSource
+import im.hikaru.harness.client.connection.UserMessageSource as ClientUserMessageSource
 import im.hikaru.harness.session.CreateSessionOptions
 import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.api.SessionPrompt
@@ -120,13 +133,39 @@ private fun toClientSummary(summary: SessionSummary): ClientSessionSummary =
 
 internal fun toClientMessage(message: Message): ClientMessage =
     ClientMessage(
+        id = message.id.value,
+        role = when (message.role) {
+            MessageRole.USER -> ClientMessageRole.USER
+            MessageRole.ASSISTANT -> ClientMessageRole.ASSISTANT
+        },
         content = message.content.map(::toClientContent),
+        source = message.source.toClientSource(),
     )
 
 internal fun ClientMessage.toCoreMessage(): Message =
-    im.hikaru.harness.llm.createUserMessage(
+    Message(
+        id = MessageId(id),
+        role = when (role) {
+            ClientMessageRole.USER -> MessageRole.USER
+            ClientMessageRole.ASSISTANT -> MessageRole.ASSISTANT
+        },
         content = content.map(::toCoreContent),
+        source = source.toCoreSource(),
     )
+
+private fun CoreMessageSource.toClientSource(): MessageSource = when (this) {
+    UserMessageSource -> ClientUserMessageSource
+    is PluginMessageSource -> ClientPluginMessageSource(plugin)
+    is ModelMessageSource -> ClientModelMessageSource(provider, model, replayState)
+    is ToolMessageSource -> ClientToolMessageSource(callId.value)
+}
+
+private fun MessageSource.toCoreSource(): CoreMessageSource = when (this) {
+    ClientUserMessageSource -> UserMessageSource
+    is ClientPluginMessageSource -> PluginMessageSource(plugin)
+    is ClientModelMessageSource -> ModelMessageSource(provider, model, replayState)
+    is ClientToolMessageSource -> ToolMessageSource(im.hikaru.harness.llm.CallId(callId))
+}
 
 private fun toClientContent(content: im.hikaru.harness.llm.ContentBlock): MessageContent =
     when (content) {

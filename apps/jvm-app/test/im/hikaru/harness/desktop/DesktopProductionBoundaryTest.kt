@@ -21,8 +21,7 @@ class DesktopProductionBoundaryTest {
                     }
                     .filter { (_, line) ->
                         line.startsWith("import ai.koog.") ||
-                            (line.startsWith("import im.hikaru.harness.llm.") &&
-                                line !in allowedDomainImports) ||
+                            (line.startsWith(LLM_IMPORT_PREFIX) && line !in allowedDomainImports) ||
                             line.contains("OpenAiKoogPlugin") ||
                             line.contains("DesktopLlmProviderPlugin")
                     }
@@ -52,15 +51,6 @@ class DesktopProductionBoundaryTest {
         }
     }
 
-    private companion object {
-        private val allowedDomainImports =
-            setOf(
-                "import im.hikaru.harness.llm.Message",
-                "import im.hikaru.harness.llm.TextBlock",
-                "import im.hikaru.harness.llm.createUserMessage",
-            )
-    }
-
     private fun locateProjectRoot(): Path {
         var current = Path.of("").toAbsolutePath()
         repeat(8) {
@@ -68,5 +58,23 @@ class DesktopProductionBoundaryTest {
             current = current.parent ?: return@repeat
         }
         error("Cannot locate project root")
+    }
+
+    private companion object {
+        private const val LLM_IMPORT_PREFIX = "import im.hikaru.harness.llm."
+        private val allowedDomainImports =
+            setOf(
+                "import im.hikaru.harness.llm.CallId",
+                "import im.hikaru.harness.llm.Message",
+                "import im.hikaru.harness.llm.MessageId",
+                "import im.hikaru.harness.llm.MessageRole",
+                "import im.hikaru.harness.llm.MessageSource as CoreMessageSource",
+                "import im.hikaru.harness.llm.ModelMessageSource",
+                "import im.hikaru.harness.llm.PluginMessageSource",
+                "import im.hikaru.harness.llm.ToolMessageSource",
+                "import im.hikaru.harness.llm.UserMessageSource",
+                "import im.hikaru.harness.llm.TextBlock",
+                "import im.hikaru.harness.llm.createUserMessage",
+            )
     }
 }

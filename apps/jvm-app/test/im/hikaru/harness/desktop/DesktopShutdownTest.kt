@@ -26,14 +26,48 @@ class DesktopShutdownTest {
 
     @Test
     fun accountConstructionFailureClosesCreatedTransport() {
+        val engine = TestTransport()
+        val client = TestTransport()
         val transport = TestTransport()
         assertFailsWith<IllegalArgumentException> {
             createOwnedAccount(
+                createEngine = { engine },
+                createClient = { client },
                 createTransport = { transport },
                 createAccount = { throw IllegalArgumentException("account failed") },
             )
         }
         assertEquals(1, transport.closeCount)
+        assertEquals(1, client.closeCount)
+        assertEquals(1, engine.closeCount)
+    }
+
+    @Test
+    fun engineCreationFailureDoesNotLeakOrCreateLaterResources() {
+        val created = mutableListOf<String>()
+        assertFailsWith<IllegalStateException> {
+            createOwnedAccount(
+                createEngine = { created += "engine"; throw IllegalStateException("engine failed") },
+                createClient = { created += "client"; TestTransport() },
+                createTransport = { created += "transport"; TestTransport() },
+                createAccount = { TestTransport() },
+            )
+        }
+        assertEquals(listOf("engine"), created)
+    }
+
+    @Test
+    fun clientCreationFailureClosesEngine() {
+        val engine = TestTransport()
+        assertFailsWith<IllegalArgumentException> {
+            createOwnedAccount(
+                createEngine = { engine },
+                createClient = { throw IllegalArgumentException("client failed") },
+                createTransport = { TestTransport() },
+                createAccount = { TestTransport() },
+            )
+        }
+        assertEquals(1, engine.closeCount)
     }
 
     @Test

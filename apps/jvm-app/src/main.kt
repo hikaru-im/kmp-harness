@@ -53,9 +53,9 @@ fun main(args: Array<String>) {
 private fun createDesktopAccount(home: Path?): MemberAccount {
     val store = desktopAppSessionStore(resolveDesktopHarnessHome(home).directory)
     return createOwnedAccount(
-        createTransport = {
-            KtorMemberTransport(createAccountHttpClient(platformAccountEngine()))
-        },
+        createEngine = ::platformAccountEngine,
+        createClient = ::createAccountHttpClient,
+        createTransport = ::KtorMemberTransport,
         createAccount = { transport -> MemberAccount(transport = transport, store = store) },
     )
 }
