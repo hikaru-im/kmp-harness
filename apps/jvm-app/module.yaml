@@ -2,12 +2,19 @@ product: jvm/app
 
 dependencies:
   - ../../modules/bundle/desktop
+  - ../../modules/agent
+  - ../../modules/llm
+  - ../../modules/home
+  - ../../modules/session
+  - ../../modules/session-api
   - ../shared
   - ../../contracts
   - ../../contracts/harness-protocol
   - ../../modules/api/gateway
   - ../../modules/boot
   - ../../modules/profile-file
+  - io.ktor:ktor-client-cio:3.5.1
+  - org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0
   - $compose.desktop.currentOs
   - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0
   - ch.qos.logback:logback-classic:1.5.34: runtime-only
@@ -16,6 +23,7 @@ settings:
   compose: enabled
 
 test-dependencies:
+  - ../../modules/agent-loop
   - ../../modules/credentials
   - ../../modules/credentials-local
   - ../../modules/llm

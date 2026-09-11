@@ -1,36 +1,40 @@
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
-import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.harness.bundle.desktop.startDesktopProfile
+import im.hikaru.harness.bundle.desktop.resolveDesktopHarnessHome
+import im.hikaru.harness.client.app.HarnessApp
+import im.hikaru.harness.client.account.KtorMemberTransport
+import im.hikaru.harness.client.account.MemberAccount
+import im.hikaru.harness.client.account.createAccountHttpClient
+import im.hikaru.harness.client.account.desktopAppSessionStore
+import im.hikaru.harness.client.account.platformAccountEngine
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.desktop.connection.LocalConnection
-import kotlinx.coroutines.CancellationException
+import im.hikaru.harness.desktop.createOwnedAccount
+import im.hikaru.harness.desktop.openDesktopResources
+import im.hikaru.harness.desktop.shutdownDesktopResources
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 
 fun main(args: Array<String>) {
     val options = DesktopLaunchOptions.parse(args)
-    val profiledHost =
+    val resources =
         runBlocking {
-            startDesktopProfile(
-                harnessHome = options.home,
-                overlays = options.patches,
+            openDesktopResources(
+                startHost = {
+                    startDesktopProfile(
+                        harnessHome = options.home,
+                        overlays = options.patches,
+                    )
+                },
+                createAccount = { createDesktopAccount(options.home) },
+                closeHost = { it.close() },
             )
         }
+    val profiledHost = resources.host
     val harnessHost = profiledHost.host
     val connection = LocalConnection(harnessHost.gateway)
+    val account = resources.account
 
     try {
         application {
@@ -38,14 +42,22 @@ fun main(args: Array<String>) {
                 onCloseRequest = ::exitApplication,
                 title = "KMP Harness",
             ) {
-                HostScreen(connection)
+                HarnessApp(connection = connection, account = account)
             }
         }
     } finally {
-        runBlocking {
-            profiledHost.close()
-        }
+        runBlocking { shutdownDesktopResources(account::shutdown, profiledHost::close) }
     }
+}
+
+private fun createDesktopAccount(home: Path?): MemberAccount {
+    val store = desktopAppSessionStore(resolveDesktopHarnessHome(home).directory)
+    return createOwnedAccount(
+        createEngine = ::platformAccountEngine,
+        createClient = ::createAccountHttpClient,
+        createTransport = { engine, client -> KtorMemberTransport(client, engine) },
+        createAccount = { transport -> MemberAccount(transport = transport, store = store) },
+    )
 }
 
 private data class DesktopLaunchOptions(
@@ -76,56 +88,4 @@ private data class DesktopLaunchOptions(
             return DesktopLaunchOptions(home, patches)
         }
     }
-}
-
-@Composable
-private fun HostScreen(connection: Connection) {
-    var state by remember { mutableStateOf<HostScreenState>(HostScreenState.Loading) }
-
-    LaunchedEffect(connection) {
-        state =
-            try {
-                val result = connection.host.describe()
-                val description = result.data
-
-                if (result.isSuccess && description != null) {
-                    HostScreenState.Ready(description)
-                } else {
-                    HostScreenState.Failed(result.msg ?: "Host 描述请求失败")
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                HostScreenState.Failed("Host 描述请求失败")
-            }
-    }
-
-    MaterialTheme {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text =
-                    when (val current = state) {
-                        HostScreenState.Loading -> "正在启动 Harness Host"
-                        is HostScreenState.Ready ->
-                            "${current.description.displayName}\n${current.description.hostId}"
-                        is HostScreenState.Failed -> current.message
-                    }
-            )
-        }
-    }
-}
-
-private sealed interface HostScreenState {
-    data object Loading : HostScreenState
-
-    data class Ready(
-        val description: HostDescription,
-    ) : HostScreenState
-
-    data class Failed(
-        val message: String,
-    ) : HostScreenState
 }

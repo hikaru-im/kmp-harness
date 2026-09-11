@@ -4,6 +4,7 @@ product:
 
 dependencies:
   - ../shared
+  - io.ktor:ktor-client-darwin:3.5.1
 
 settings:
   compose: enabled

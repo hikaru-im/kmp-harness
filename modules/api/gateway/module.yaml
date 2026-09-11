@@ -5,6 +5,10 @@ product:
   platforms: [jvm, android, iosSimulatorArm64, iosArm64]
 
 dependencies:
+  - ../../agent
+  - ../../llm
   - ../../runtime
+  - ../../session
+  - ../../session-api
   - ../../../contracts
   - ../../../contracts/harness-protocol

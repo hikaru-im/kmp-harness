@@ -5,8 +5,48 @@ import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.boot.DesktopProfile
 import im.hikaru.harness.boot.HarnessHost
+import im.hikaru.harness.client.connection.AgentOptions
+import im.hikaru.harness.client.connection.MessageRole
+import im.hikaru.harness.client.connection.ModelMessageSource
+import im.hikaru.harness.client.connection.TextContent
+import im.hikaru.harness.client.connection.ReasoningContent
+import im.hikaru.harness.client.connection.ToolCallContent
+import im.hikaru.harness.client.connection.ToolResultContent
+import im.hikaru.harness.client.connection.ToolMessageSource
+import im.hikaru.harness.agent.AgentPlugin
+import im.hikaru.harness.agent.AgentId
+import im.hikaru.harness.agent.agents
+import im.hikaru.harness.agent.loop.AgentLoopPlugin
+import im.hikaru.harness.llm.BlockStartChunk
+import im.hikaru.harness.llm.FinishChunk
+import im.hikaru.harness.llm.LlmAdapter
+import im.hikaru.harness.llm.LlmPlugin
+import im.hikaru.harness.llm.CallId
+import im.hikaru.harness.llm.createAssistantMessage
+import im.hikaru.harness.llm.createToolResultMessage
+import im.hikaru.harness.llm.ReasoningBlock
+import im.hikaru.harness.llm.ReasoningEffortId
+import im.hikaru.harness.llm.ToolCallBlock
+import im.hikaru.harness.llm.StopFinishReason
+import im.hikaru.harness.llm.StreamChunk
+import im.hikaru.harness.llm.TextDeltaChunk
+import im.hikaru.harness.llm.llm
+import im.hikaru.harness.client.connection.userMessage
+import im.hikaru.harness.loader.Entry
+import im.hikaru.harness.loader.PluginCatalog
+import im.hikaru.harness.loader.pluginDefinition
+import im.hikaru.harness.session.SessionPlugin
+import im.hikaru.harness.session.AssistantMessageEvent
+import im.hikaru.harness.session.SessionEventKeys
+import im.hikaru.harness.session.UserMessageEvent
+import im.hikaru.harness.session.api.SessionApiPlugin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -35,4 +75,157 @@ class LocalConnectionTest {
             host.close()
         }
     }
+
+    @Test
+    fun shouldDeriveHistoryThroughTheTypedConnectionAndRejectMissingModelStably() = runTest {
+        val host = HarnessHost.start(testProfile())
+        try {
+            host.runtime.context.llm.registerAdapter(
+                providers = listOf("scripted"),
+                adapter = object : LlmAdapter {
+                    override fun stream(options: im.hikaru.harness.llm.GenerateOptions): Flow<StreamChunk> =
+                        flowOf(
+                            BlockStartChunk(0, "text"),
+                            TextDeltaChunk(0, "ok"),
+                            FinishChunk(StopFinishReason),
+                        )
+                },
+            )
+            val connection = LocalConnection(host.gateway)
+            val created =
+                connection.session.create(
+                    agentOptions = AgentOptions(provider = "scripted", model = "test-model"),
+                )
+            val prompt = connection.session.prompt(created.id, userMessage("hi"))
+            prompt.awaitIdle()
+            val history = connection.session.history(created.id)
+            assertEquals(listOf("hi", "ok"), history.flatMap { it.content }.map { (it as TextContent).text })
+            val derived =
+                host.runtime.context.agents
+                    .get(AgentId(created.id.value))
+                    ?.session
+                    ?.deriveMessages()
+                    ?.flatMap { message -> message.content.mapNotNull { (it as? im.hikaru.harness.llm.TextBlock)?.text } }
+            assertEquals(listOf("hi", "ok"), derived)
+
+            val mapped =
+                connection.session.create(
+                    agentOptions = AgentOptions(
+                        provider = "scripted",
+                        model = "test-model",
+                        reasoningEffort = im.hikaru.harness.client.connection.ReasoningEffortId("high"),
+                        maxTokens = 2048,
+                    ),
+                )
+            val mappedAgent = requireNotNull(host.runtime.context.agents.get(AgentId(mapped.id.value)))
+            assertEquals(ReasoningEffortId("high"), mappedAgent.options.reasoningEffort)
+            assertEquals(2048, mappedAgent.options.maxTokens)
+
+            val missing =
+                assertFailsWith<LocalConnectionException> {
+                    connection.session.create(agentOptions = AgentOptions())
+                }
+            assertEquals(422, missing.code)
+            assertTrue(missing.message!!.contains("MODEL_NOT_CONFIGURED"))
+        } finally {
+            host.close()
+        }
+    }
+
+    @Test
+    fun historyPreservesReasoningToolCallAndToolResultFromSessionEvents() = runTest {
+        val host = HarnessHost.start(testProfile())
+        try {
+            val connection = LocalConnection(host.gateway)
+            val created =
+                connection.session.create(
+                    agentOptions = AgentOptions(provider = "scripted", model = "test-model"),
+                )
+            val session = requireNotNull(host.runtime.context.agents.get(AgentId(created.id.value))).session
+            val callId = CallId("call-1")
+            val replayState = JsonPrimitive("replay-token")
+            val assistantMessage =
+                createAssistantMessage(
+                    content = listOf(ReasoningBlock("thinking"), ToolCallBlock(callId, "lookup", "{}")),
+                    provider = "scripted",
+                    model = "test-model",
+                    replayState = replayState,
+                )
+            session.append(
+                SessionEventKeys.AssistantMessage,
+                AssistantMessageEvent(
+                    turn = 1,
+                    step = 1,
+                    message = assistantMessage,
+                ),
+            )
+            val toolResultMessage =
+                createToolResultMessage(
+                    callId = callId,
+                    content =
+                        listOf(
+                            im.hikaru.harness.llm.TextBlock("result"),
+                            ReasoningBlock("trace"),
+                        ),
+                    isError = false,
+                )
+            session.append(
+                SessionEventKeys.UserMessage,
+                UserMessageEvent(
+                    turn = 1,
+                    message = toolResultMessage,
+                ),
+            )
+
+            val history = connection.session.history(created.id)
+            assertEquals(session.deriveMessages().map(::toClientMessage), history)
+            assertEquals(assistantMessage.id.value, history[0].id)
+            assertEquals(MessageRole.ASSISTANT, history[0].role)
+            assertEquals(ModelMessageSource("scripted", "test-model", replayState), history[0].source)
+            assertEquals(
+                listOf(ReasoningContent("thinking"), ToolCallContent("call-1", "lookup", "{}")),
+                history[0].content,
+            )
+            assertEquals(toolResultMessage.id.value, history[1].id)
+            assertEquals(MessageRole.USER, history[1].role)
+            assertEquals(ToolMessageSource("call-1"), history[1].source)
+            assertEquals(
+                ToolResultContent(
+                    "call-1",
+                    listOf(TextContent("result"), ReasoningContent("trace")),
+                    false,
+                ),
+                history[1].content.single(),
+            )
+        } finally {
+            host.close()
+        }
+    }
+
+    private fun testProfile(): DesktopProfile =
+        DesktopProfile(
+            hostDescription =
+                HostDescription(
+                    protocolVersion = ProtocolVersion(1, 0),
+                    hostId = HostId("desktop-local-test-flow"),
+                    displayName = "Local Flow",
+                ),
+            catalog =
+                PluginCatalog(
+                    listOf(
+                        pluginDefinition("session", SessionPlugin()),
+                        pluginDefinition("llm", LlmPlugin()),
+                        pluginDefinition("agent", AgentPlugin()),
+                        pluginDefinition("agent-loop", AgentLoopPlugin()),
+                        pluginDefinition("session-api", SessionApiPlugin()),
+                    ),
+                ),
+            entries = listOf(
+                Entry("session", "session"),
+                Entry("llm", "llm"),
+                Entry("agent", "agent"),
+                Entry("agent-loop", "agent-loop"),
+                Entry("session-api", "session-api"),
+            ),
+        )
 }

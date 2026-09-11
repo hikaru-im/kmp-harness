@@ -44,18 +44,27 @@ import platform.Security.kSecValueData
 
 private const val SESSION_ACCOUNT = "member-session"
 private const val SESSION_SERVICE = "im.hikaru.harness.account.v1"
+private const val SIGNED_OUT_KEY = "harness-member-account-v1.signed-out"
 private const val TENANT_KEY = "harness-member-account-v1.tenant-id"
 
 private val sessionJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
 class IosAppSessionStore : AppSessionStore {
     override val durable = true
+    private val defaults = NSUserDefaults.standardUserDefaults
 
-    override fun read(): AppSession? = readKeychain()?.let { sessionJson.decodeFromString<AppSession>(it) }
+    override fun read(): AppSession? = if (defaults.boolForKey(SIGNED_OUT_KEY)) null
+        else readKeychain()?.let { sessionJson.decodeFromString<AppSession>(it) }
 
-    override fun write(session: AppSession) = writeKeychain(sessionJson.encodeToString(session))
+    override fun write(session: AppSession) {
+        writeKeychain(sessionJson.encodeToString(session))
+        defaults.setBool(false, forKey = SIGNED_OUT_KEY)
+    }
 
     override fun clear() {
+        // The marker is ordinary, non-sensitive revocation state. It is written
+        // before SecItemDelete so a locked keychain cannot resurrect a token.
+        defaults.setBool(true, forKey = SIGNED_OUT_KEY)
         val status = withBaseQuery { query -> SecItemDelete(query) }
         check(status == errSecSuccess || status == errSecItemNotFound) { "Keychain clear failed" }
     }

@@ -231,9 +231,9 @@ class AgentRegistry internal constructor(
             try {
                 entry.ownerContext.dispose()
             } catch (error: Throwable) {
-                if (failure == null) failure = error else failure?.addSuppressed(error)
+                if (failure == null) failure = error else failure.addSuppressed(error)
             }
-            context.emitContained(AgentEvents.Disposed, AgentNotice(entry.agent))
+            emitDisposed(entry.agent)
         }
         failure?.let { throw it }
     }
@@ -268,10 +268,19 @@ class AgentRegistry internal constructor(
         try {
             removed.ownerContext.dispose()
         } catch (error: Throwable) {
-            if (failure == null) failure = error else failure?.addSuppressed(error)
+            if (failure == null) failure = error else failure.addSuppressed(error)
         }
-        context.emitContained(AgentEvents.Disposed, AgentNotice(agent))
+        emitDisposed(agent)
         failure?.let { throw it }
+    }
+
+    /** Parent Context marks itself disposing before plugin effects stop. */
+    private fun emitDisposed(agent: Agent) {
+        try {
+            context.emitContained(AgentEvents.Disposed, AgentNotice(agent))
+        } catch (_: IllegalStateException) {
+            // Disposal notifications are best effort once the parent Context is closing.
+        }
     }
 
     private fun checkActive() {

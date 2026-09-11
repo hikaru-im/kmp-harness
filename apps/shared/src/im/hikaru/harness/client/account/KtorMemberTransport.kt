@@ -28,7 +28,10 @@ fun createAccountHttpClient(engine: HttpClientEngine): HttpClient = HttpClient(e
     install(WebSockets)
 }
 
-class KtorMemberTransport(private val client: HttpClient) : MemberTransport {
+class KtorMemberTransport(
+    private val client: HttpClient,
+    private val engine: HttpClientEngine,
+) : MemberTransport {
     override suspend fun login(target: BackendTenant, mobile: String, password: String): MemberAuthLoginResponse =
         response { client.post(target.baseUrl + "/app-api/member/auth/login") {
             tenant(target); contentType(ContentType.Application.Json); setBody(MemberPasswordLoginRequest(mobile, password))
@@ -52,7 +55,20 @@ class KtorMemberTransport(private val client: HttpClient) : MemberTransport {
     override suspend fun tenant(target: BackendTenant, website: String): AppTenantResponse? = response {
         client.get(target.baseUrl + "/app-api/system/tenant/get-by-website") { parameter("website", website) }
     }
-    override fun close() = client.close()
+    override fun close() {
+        var failure: Throwable? = null
+        try {
+            client.close()
+        } catch (error: Throwable) {
+            failure = error
+        }
+        try {
+            engine.close()
+        } catch (error: Throwable) {
+            if (failure == null) failure = error else if (failure !== error) failure.addSuppressed(error)
+        }
+        failure?.let { throw it }
+    }
 
     private fun HttpRequestBuilder.tenant(target: BackendTenant) { header("tenant-id", target.tenantId) }
     private fun HttpRequestBuilder.authenticate(session: AppSession) {
