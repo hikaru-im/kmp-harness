@@ -22,6 +22,7 @@ settings:
   compose: enabled
 
 test-dependencies:
+  - ../../modules/agent-loop
   - ../../modules/credentials
   - ../../modules/credentials-local
   - ../../modules/llm

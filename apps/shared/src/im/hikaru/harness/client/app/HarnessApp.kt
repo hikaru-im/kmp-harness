@@ -27,17 +27,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import im.hikaru.contracts.harness.identity.HostDescription
-import im.hikaru.harness.agent.AgentOptions
+import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.client.account.AccountException
 import im.hikaru.harness.client.account.AccountState
 import im.hikaru.harness.client.account.BackendTenant
 import im.hikaru.harness.client.account.MemberAccount
 import im.hikaru.harness.client.connection.Connection
-import im.hikaru.harness.llm.TextBlock
-import im.hikaru.harness.llm.createUserMessage
-import im.hikaru.harness.session.CreateSessionOptions
-import im.hikaru.harness.session.SessionId
-import im.hikaru.harness.session.api.SessionSummary
+import im.hikaru.harness.client.connection.AgentOptions
+import im.hikaru.harness.client.connection.CreateSessionOptions
+import im.hikaru.harness.client.connection.Message
+import im.hikaru.harness.client.connection.SessionId
+import im.hikaru.harness.client.connection.SessionSummary
+import im.hikaru.harness.client.connection.TextContent
+import im.hikaru.harness.client.connection.userMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -75,9 +77,15 @@ public fun HarnessApp(
         connectionState = HarnessConnectionState.Connecting
         try {
             val result = connection.host.describe()
-            if (result.isSuccess && result.data != null) {
-                host = result.data
-                connectionState = HarnessConnectionState.Online
+            val description = result.data
+            if (result.isSuccess && description != null) {
+                host = description
+                connectionState =
+                    if (description.protocolVersion.major == ProtocolVersion.Current.major) {
+                        HarnessConnectionState.Online
+                    } else {
+                        HarnessConnectionState.ProtocolIncompatible
+                    }
             } else {
                 connectionState = HarnessConnectionState.Disconnected
             }
@@ -166,10 +174,8 @@ private fun NavigationBar(
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         HarnessDestination.entries.forEach { destination ->
-            if (destination != HarnessDestination.Sessions) {
-                TextButton(onClick = { onSelect(destination) }) {
-                    Text(if (destination == current) "[${destination.label}]" else destination.label)
-                }
+            TextButton(onClick = { onSelect(destination) }) {
+                Text(if (destination == current) "[${destination.label}]" else destination.label)
             }
         }
     }
@@ -385,7 +391,7 @@ private fun SessionScreen(connection: Connection?) {
                         try {
                             val receipt = connection.session.prompt(
                                 id,
-                                createUserMessage(listOf(TextBlock(prompt))),
+                                userMessage(prompt),
                             )
                             receipt.awaitIdle()
                             history = connection.session.history(id).map(::displayMessage)
@@ -405,10 +411,10 @@ private fun SessionScreen(connection: Connection?) {
     }
 }
 
-private fun displayMessage(message: im.hikaru.harness.llm.Message): String =
+private fun displayMessage(message: Message): String =
     message.content.joinToString("") { block ->
         when (block) {
-            is TextBlock -> block.text
+            is TextContent -> block.text
             else -> "[内容]"
         }
     }

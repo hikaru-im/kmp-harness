@@ -10,6 +10,7 @@ import im.hikaru.harness.client.account.desktopAppSessionStore
 import im.hikaru.harness.client.account.platformAccountEngine
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.desktop.connection.LocalConnection
+import im.hikaru.harness.desktop.shutdownDesktopResources
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 
@@ -39,10 +40,7 @@ fun main(args: Array<String>) {
             }
         }
     } finally {
-        runBlocking {
-            account.shutdown()
-            profiledHost.close()
-        }
+        runBlocking { shutdownDesktopResources(account::shutdown, profiledHost::close) }
     }
 }
 

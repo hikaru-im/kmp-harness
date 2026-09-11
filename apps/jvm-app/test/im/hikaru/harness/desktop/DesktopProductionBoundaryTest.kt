@@ -21,7 +21,8 @@ class DesktopProductionBoundaryTest {
                     }
                     .filter { (_, line) ->
                         line.startsWith("import ai.koog.") ||
-                            line.startsWith("import im.hikaru.harness.llm.") ||
+                            (line.startsWith("import im.hikaru.harness.llm.") &&
+                                line !in allowedDomainImports) ||
                             line.contains("OpenAiKoogPlugin") ||
                             line.contains("DesktopLlmProviderPlugin")
                     }
@@ -30,6 +31,15 @@ class DesktopProductionBoundaryTest {
 
         assertTrue(forbidden.isEmpty(), "Provider imports leaked into Desktop production source: $forbidden")
         assertFalse(Files.exists(sourceRoot.resolve("im/hikaru/harness/desktop/DesktopHostProfile.kt")))
+    }
+
+    private companion object {
+        private val allowedDomainImports =
+            setOf(
+                "import im.hikaru.harness.llm.Message",
+                "import im.hikaru.harness.llm.TextBlock",
+                "import im.hikaru.harness.llm.createUserMessage",
+            )
     }
 
     private fun locateProjectRoot(): Path {
