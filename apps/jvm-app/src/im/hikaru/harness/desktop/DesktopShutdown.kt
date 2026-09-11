@@ -28,24 +28,29 @@ internal suspend fun <Host, Account> openDesktopResources(
 internal fun <Engine : AutoCloseable, Client : AutoCloseable, Transport : AutoCloseable, Account> createOwnedAccount(
     createEngine: () -> Engine,
     createClient: (Engine) -> Client,
-    createTransport: (Client) -> Transport,
+    createTransport: (Engine, Client) -> Transport,
     createAccount: (Transport) -> Account,
 ): Account {
     var engine: Engine? = null
     var client: Client? = null
     var transport: Transport? = null
+    var ownershipTransferred = false
     return try {
         val acquiredEngine = createEngine()
         engine = acquiredEngine
         val acquiredClient = createClient(acquiredEngine)
         client = acquiredClient
-        val acquiredTransport = createTransport(acquiredClient)
+        val acquiredTransport = createTransport(acquiredEngine, acquiredClient)
         transport = acquiredTransport
+        ownershipTransferred = true
         createAccount(acquiredTransport)
     } catch (error: Throwable) {
-        closeAfterFailure(transport, error)
-        closeAfterFailure(client, error)
-        closeAfterFailure(engine, error)
+        if (ownershipTransferred) {
+            closeAfterFailure(transport, error)
+        } else {
+            closeAfterFailure(client, error)
+            closeAfterFailure(engine, error)
+        }
         throw error
     }
 }

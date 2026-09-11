@@ -55,7 +55,7 @@ private fun createDesktopAccount(home: Path?): MemberAccount {
     return createOwnedAccount(
         createEngine = ::platformAccountEngine,
         createClient = ::createAccountHttpClient,
-        createTransport = ::KtorMemberTransport,
+        createTransport = { engine, client -> KtorMemberTransport(client, engine) },
         createAccount = { transport -> MemberAccount(transport = transport, store = store) },
     )
 }

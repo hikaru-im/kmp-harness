@@ -17,8 +17,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val engine = platformAccountEngine()
+        val client = createAccountHttpClient(engine)
         account = MemberAccount(
-            transport = KtorMemberTransport(createAccountHttpClient(platformAccountEngine())),
+            transport = KtorMemberTransport(client, engine),
             store = AndroidAppSessionStore(applicationContext),
         )
         setContent {

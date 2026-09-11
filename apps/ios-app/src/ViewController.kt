@@ -12,8 +12,10 @@ import kotlinx.coroutines.launch
 
 fun ViewController() = ComposeUIViewController {
     val account = remember {
+        val engine = platformAccountEngine()
+        val client = createAccountHttpClient(engine)
         MemberAccount(
-            transport = KtorMemberTransport(createAccountHttpClient(platformAccountEngine())),
+            transport = KtorMemberTransport(client, engine),
             store = IosAppSessionStore(),
         )
     }

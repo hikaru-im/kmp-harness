@@ -24,7 +24,7 @@ class KtorMemberTransportTest {
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }
-        val transport = KtorMemberTransport(createAccountHttpClient(engine))
+        val transport = KtorMemberTransport(createAccountHttpClient(engine), engine)
         val session = AppSession(
             MemberIdentity(BackendTenant("https://one.example.test", 7), 11),
             accessToken = "sensitive-access-token",
@@ -51,7 +51,7 @@ class KtorMemberTransportTest {
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }
-        val transport = KtorMemberTransport(createAccountHttpClient(engine))
+        val transport = KtorMemberTransport(createAccountHttpClient(engine), engine)
 
         transport.tenant(BackendTenant("https://tenant.example.test", 7), "tenant.example.test")
 

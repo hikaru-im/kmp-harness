@@ -38,7 +38,23 @@ public data class AgentOptions(
     val cwd: String? = null,
     val provider: String? = null,
     val model: String? = null,
-)
+    val reasoningEffort: ReasoningEffortId? = null,
+    val maxTokens: Long? = null,
+) {
+    init {
+        require(preset == null || preset.isNotBlank()) { "Agent preset must not be blank" }
+        require(cwd == null || cwd.isNotBlank()) { "Agent cwd must not be blank" }
+        require(provider == null || provider.isNotBlank()) { "Agent provider must not be blank" }
+        require(model == null || model.isNotBlank()) { "Agent model must not be blank" }
+        require(maxTokens == null || maxTokens > 0L) { "Agent max tokens must be positive" }
+    }
+}
+
+@JvmInline
+@Serializable
+public value class ReasoningEffortId(public val value: String) {
+    init { require(value.isNotBlank()) { "Reasoning effort must not be blank" } }
+}
 
 @Serializable
 public sealed interface MessageContent
@@ -72,7 +88,13 @@ public data class ToolResultContent(
 }
 
 @Serializable
-public enum class MessageRole { USER, ASSISTANT }
+public enum class MessageRole {
+    @SerialName("user")
+    USER,
+
+    @SerialName("assistant")
+    ASSISTANT,
+}
 
 @Serializable
 public sealed interface MessageSource

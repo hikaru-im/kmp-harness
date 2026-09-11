@@ -19,6 +19,7 @@ import im.hikaru.harness.llm.MessageRole
 import im.hikaru.harness.llm.MessageSource as CoreMessageSource
 import im.hikaru.harness.llm.ModelMessageSource
 import im.hikaru.harness.llm.PluginMessageSource
+import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.ToolMessageSource
 import im.hikaru.harness.llm.UserMessageSource
 import im.hikaru.harness.agent.AgentOptions
@@ -91,6 +92,8 @@ public class LocalConnection(
                             cwd = agentOptions.cwd,
                             provider = agentOptions.provider,
                             model = agentOptions.model,
+                            reasoningEffort = agentOptions.reasoningEffort?.let { ReasoningEffortId(it.value) },
+                            maxTokens = agentOptions.maxTokens,
                         ),
                     ),
                 ).let(::toClientSummary)

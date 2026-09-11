@@ -25,6 +25,7 @@ import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.createAssistantMessage
 import im.hikaru.harness.llm.createToolResultMessage
 import im.hikaru.harness.llm.ReasoningBlock
+import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.ToolCallBlock
 import im.hikaru.harness.llm.StopFinishReason
 import im.hikaru.harness.llm.StreamChunk
@@ -106,6 +107,19 @@ class LocalConnectionTest {
                     ?.deriveMessages()
                     ?.flatMap { message -> message.content.mapNotNull { (it as? im.hikaru.harness.llm.TextBlock)?.text } }
             assertEquals(listOf("hi", "ok"), derived)
+
+            val mapped =
+                connection.session.create(
+                    agentOptions = AgentOptions(
+                        provider = "scripted",
+                        model = "test-model",
+                        reasoningEffort = im.hikaru.harness.client.connection.ReasoningEffortId("high"),
+                        maxTokens = 2048,
+                    ),
+                )
+            val mappedAgent = requireNotNull(host.runtime.context.agents.get(AgentId(mapped.id.value)))
+            assertEquals(ReasoningEffortId("high"), mappedAgent.options.reasoningEffort)
+            assertEquals(2048, mappedAgent.options.maxTokens)
 
             val missing =
                 assertFailsWith<LocalConnectionException> {
