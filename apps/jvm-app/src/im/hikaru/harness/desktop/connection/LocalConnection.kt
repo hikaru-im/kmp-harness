@@ -21,12 +21,15 @@ import im.hikaru.harness.client.connection.AgentOptions as ClientAgentOptions
 import im.hikaru.harness.client.connection.CreateSessionOptions as ClientCreateSessionOptions
 import im.hikaru.harness.client.connection.Message as ClientMessage
 import im.hikaru.harness.client.connection.MessageContent
+import im.hikaru.harness.client.connection.ReasoningContent
 import im.hikaru.harness.client.connection.SessionId as ClientSessionId
 import im.hikaru.harness.client.connection.SessionPrompt as ClientSessionPrompt
 import im.hikaru.harness.client.connection.SessionPromptReceipt as ClientSessionPromptReceipt
 import im.hikaru.harness.client.connection.SessionSummary as ClientSessionSummary
 import im.hikaru.harness.client.connection.SessionApi
 import im.hikaru.harness.client.connection.TextContent
+import im.hikaru.harness.client.connection.ToolCallContent
+import im.hikaru.harness.client.connection.ToolResultContent
 import im.hikaru.harness.session.CreateSessionOptions
 import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.api.SessionPrompt
@@ -115,19 +118,47 @@ private fun toClientSummary(summary: SessionSummary): ClientSessionSummary =
         agentPreset = summary.agentPreset,
     )
 
-private fun toClientMessage(message: Message): ClientMessage =
+internal fun toClientMessage(message: Message): ClientMessage =
     ClientMessage(
-        content = message.content.mapNotNull { block ->
-            (block as? im.hikaru.harness.llm.TextBlock)?.let { TextContent(it.text) }
-        },
+        content = message.content.map(::toClientContent),
     )
 
-private fun ClientMessage.toCoreMessage(): Message =
+internal fun ClientMessage.toCoreMessage(): Message =
     im.hikaru.harness.llm.createUserMessage(
-        content = content.mapNotNull { block ->
-            (block as? TextContent)?.let { im.hikaru.harness.llm.TextBlock(it.text) }
-        },
+        content = content.map(::toCoreContent),
     )
+
+private fun toClientContent(content: im.hikaru.harness.llm.ContentBlock): MessageContent =
+    when (content) {
+        is im.hikaru.harness.llm.TextBlock -> TextContent(content.text)
+        is im.hikaru.harness.llm.ReasoningBlock -> ReasoningContent(content.text)
+        is im.hikaru.harness.llm.ToolCallBlock ->
+            ToolCallContent(content.id.value, content.name, content.arguments)
+        is im.hikaru.harness.llm.ToolResultBlock ->
+            ToolResultContent(
+                toolCallId = content.toolCallId.value,
+                content = content.content.map(::toClientContent),
+                isError = content.isError,
+            )
+    }
+
+private fun toCoreContent(content: MessageContent): im.hikaru.harness.llm.ContentBlock =
+    when (content) {
+        is TextContent -> im.hikaru.harness.llm.TextBlock(content.text)
+        is ReasoningContent -> im.hikaru.harness.llm.ReasoningBlock(content.text)
+        is ToolCallContent ->
+            im.hikaru.harness.llm.ToolCallBlock(
+                im.hikaru.harness.llm.CallId(content.id),
+                content.name,
+                content.arguments,
+            )
+        is ToolResultContent ->
+            im.hikaru.harness.llm.ToolResultBlock(
+                toolCallId = im.hikaru.harness.llm.CallId(content.toolCallId),
+                content = content.content.map(::toCoreContent),
+                isError = content.isError,
+            )
+    }
 
 private class LocalSessionPrompt(
     private val delegate: SessionPrompt,

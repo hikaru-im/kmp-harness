@@ -1,6 +1,7 @@
 package im.hikaru.harness.client.connection
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlin.jvm.JvmInline
 
 /**
@@ -40,7 +41,32 @@ public data class AgentOptions(
 public sealed interface MessageContent
 
 @Serializable
+@SerialName("text")
 public data class TextContent(val text: String) : MessageContent
+
+@Serializable
+@SerialName("reasoning")
+public data class ReasoningContent(val text: String) : MessageContent
+
+@Serializable
+@SerialName("tool-call")
+public data class ToolCallContent(
+    val id: String,
+    val name: String,
+    val arguments: String,
+) : MessageContent {
+    init { require(id.isNotBlank() && name.isNotBlank()) }
+}
+
+@Serializable
+@SerialName("tool-result")
+public data class ToolResultContent(
+    val toolCallId: String,
+    val content: List<MessageContent>,
+    val isError: Boolean = false,
+) : MessageContent {
+    init { require(toolCallId.isNotBlank()) }
+}
 
 @Serializable
 public data class Message(val content: List<MessageContent>)

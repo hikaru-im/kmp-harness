@@ -7,6 +7,36 @@ import kotlin.test.assertFailsWith
 
 class DesktopShutdownTest {
     @Test
+    fun accountInitializationFailureClosesAlreadyStartedHost() = runTest {
+        val events = mutableListOf<String>()
+        val initializationFailure = IllegalStateException("account initialization failed")
+
+        val thrown =
+            assertFailsWith<IllegalStateException> {
+                openDesktopResources(
+                    startHost = { events += "host-started"; "host" },
+                    createAccount = { events += "account-started"; throw initializationFailure },
+                    closeHost = { events += "$it-closed" },
+                )
+            }
+
+        assertEquals(initializationFailure, thrown)
+        assertEquals(listOf("host-started", "account-started", "host-closed"), events)
+    }
+
+    @Test
+    fun accountConstructionFailureClosesCreatedTransport() {
+        val transport = TestTransport()
+        assertFailsWith<IllegalArgumentException> {
+            createOwnedAccount(
+                createTransport = { transport },
+                createAccount = { throw IllegalArgumentException("account failed") },
+            )
+        }
+        assertEquals(1, transport.closeCount)
+    }
+
+    @Test
     fun accountFailureDoesNotSkipHostAndPreservesFailure() = runTest {
         val closed = mutableListOf<String>()
         val accountFailure = IllegalStateException("account close failed")
@@ -37,5 +67,10 @@ class DesktopShutdownTest {
                 )
             }
         assertEquals(hostFailure, thrown)
+    }
+
+    private class TestTransport : AutoCloseable {
+        var closeCount = 0
+        override fun close() { closeCount += 1 }
     }
 }

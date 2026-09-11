@@ -7,6 +7,9 @@ import im.hikaru.harness.boot.DesktopProfile
 import im.hikaru.harness.boot.HarnessHost
 import im.hikaru.harness.client.connection.AgentOptions
 import im.hikaru.harness.client.connection.TextContent
+import im.hikaru.harness.client.connection.ReasoningContent
+import im.hikaru.harness.client.connection.ToolCallContent
+import im.hikaru.harness.client.connection.ToolResultContent
 import im.hikaru.harness.agent.AgentPlugin
 import im.hikaru.harness.agent.AgentId
 import im.hikaru.harness.agent.agents
@@ -15,6 +18,11 @@ import im.hikaru.harness.llm.BlockStartChunk
 import im.hikaru.harness.llm.FinishChunk
 import im.hikaru.harness.llm.LlmAdapter
 import im.hikaru.harness.llm.LlmPlugin
+import im.hikaru.harness.llm.CallId
+import im.hikaru.harness.llm.createAssistantMessage
+import im.hikaru.harness.llm.createToolResultMessage
+import im.hikaru.harness.llm.ReasoningBlock
+import im.hikaru.harness.llm.ToolCallBlock
 import im.hikaru.harness.llm.StopFinishReason
 import im.hikaru.harness.llm.StreamChunk
 import im.hikaru.harness.llm.TextDeltaChunk
@@ -24,6 +32,9 @@ import im.hikaru.harness.loader.Entry
 import im.hikaru.harness.loader.PluginCatalog
 import im.hikaru.harness.loader.pluginDefinition
 import im.hikaru.harness.session.SessionPlugin
+import im.hikaru.harness.session.AssistantMessageEvent
+import im.hikaru.harness.session.SessionEventKeys
+import im.hikaru.harness.session.UserMessageEvent
 import im.hikaru.harness.session.api.SessionApiPlugin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -98,6 +109,58 @@ class LocalConnectionTest {
                 }
             assertEquals(422, missing.code)
             assertTrue(missing.message!!.contains("MODEL_NOT_CONFIGURED"))
+        } finally {
+            host.close()
+        }
+    }
+
+    @Test
+    fun historyPreservesReasoningToolCallAndToolResultFromSessionEvents() = runTest {
+        val host = HarnessHost.start(testProfile())
+        try {
+            val connection = LocalConnection(host.gateway)
+            val created =
+                connection.session.create(
+                    agentOptions = AgentOptions(provider = "scripted", model = "test-model"),
+                )
+            val session = requireNotNull(host.runtime.context.agents.get(AgentId(created.id.value))).session
+            val callId = CallId("call-1")
+            session.append(
+                SessionEventKeys.AssistantMessage,
+                AssistantMessageEvent(
+                    turn = 1,
+                    step = 1,
+                    message =
+                        createAssistantMessage(
+                            content = listOf(ReasoningBlock("thinking"), ToolCallBlock(callId, "lookup", "{}")),
+                            provider = "scripted",
+                            model = "test-model",
+                        ),
+                ),
+            )
+            session.append(
+                SessionEventKeys.UserMessage,
+                UserMessageEvent(
+                    turn = 1,
+                    message =
+                        createToolResultMessage(
+                            callId = callId,
+                            content = listOf(im.hikaru.harness.llm.TextBlock("result")),
+                            isError = false,
+                        ),
+                ),
+            )
+
+            val history = connection.session.history(created.id)
+            assertEquals(session.deriveMessages().map(::toClientMessage), history)
+            assertEquals(
+                listOf(ReasoningContent("thinking"), ToolCallContent("call-1", "lookup", "{}")),
+                history[0].content,
+            )
+            assertEquals(
+                ToolResultContent("call-1", listOf(TextContent("result")), false),
+                history[1].content.single(),
+            )
         } finally {
             host.close()
         }

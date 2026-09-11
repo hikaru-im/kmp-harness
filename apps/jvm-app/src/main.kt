@@ -10,25 +10,31 @@ import im.hikaru.harness.client.account.desktopAppSessionStore
 import im.hikaru.harness.client.account.platformAccountEngine
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.desktop.connection.LocalConnection
+import im.hikaru.harness.desktop.createOwnedAccount
+import im.hikaru.harness.desktop.openDesktopResources
 import im.hikaru.harness.desktop.shutdownDesktopResources
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 
 fun main(args: Array<String>) {
     val options = DesktopLaunchOptions.parse(args)
-    val profiledHost =
+    val resources =
         runBlocking {
-            startDesktopProfile(
-                harnessHome = options.home,
-                overlays = options.patches,
+            openDesktopResources(
+                startHost = {
+                    startDesktopProfile(
+                        harnessHome = options.home,
+                        overlays = options.patches,
+                    )
+                },
+                createAccount = { createDesktopAccount(options.home) },
+                closeHost = { it.close() },
             )
-    }
+        }
+    val profiledHost = resources.host
     val harnessHost = profiledHost.host
     val connection = LocalConnection(harnessHost.gateway)
-    val account = MemberAccount(
-        transport = KtorMemberTransport(createAccountHttpClient(platformAccountEngine())),
-        store = desktopAppSessionStore(resolveDesktopHarnessHome(options.home).directory),
-    )
+    val account = resources.account
 
     try {
         application {
@@ -42,6 +48,16 @@ fun main(args: Array<String>) {
     } finally {
         runBlocking { shutdownDesktopResources(account::shutdown, profiledHost::close) }
     }
+}
+
+private fun createDesktopAccount(home: Path?): MemberAccount {
+    val store = desktopAppSessionStore(resolveDesktopHarnessHome(home).directory)
+    return createOwnedAccount(
+        createTransport = {
+            KtorMemberTransport(createAccountHttpClient(platformAccountEngine()))
+        },
+        createAccount = { transport -> MemberAccount(transport = transport, store = store) },
+    )
 }
 
 private data class DesktopLaunchOptions(

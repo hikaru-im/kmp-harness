@@ -62,7 +62,13 @@ public fun HarnessApp(
     val accountState = account?.state?.collectAsState()?.value ?: AccountState()
     LaunchedEffect(account, defaultTarget) {
         if (account != null && defaultTarget != null && account.state.value.target == null) {
-            runCatching { account.selectTarget(defaultTarget) }
+            try {
+                account.selectTarget(defaultTarget)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The tenant screen remains available for an explicit retry.
+            }
         }
     }
     LaunchedEffect(connection, accountState.session == null) {
@@ -274,6 +280,8 @@ private fun TenantScreen(account: MemberAccount?, state: AccountState) {
                     try {
                         account.selectTarget(BackendTenant(baseUrl.trimEnd('/'), id))
                         error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (failure: Throwable) {
                         error = failure.message ?: "租户不可用"
                     }
@@ -301,6 +309,8 @@ private fun ProfileScreen(account: MemberAccount?, state: AccountState) {
                     try {
                         account?.loadProfile()
                         error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (failure: Throwable) {
                         error = failure.message ?: "资料加载失败"
                     }
@@ -346,8 +356,13 @@ private fun SessionScreen(connection: Connection?) {
     var history by remember { mutableStateOf<List<String>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(connection) {
-        runCatching { sessions = connection.session.list() }
-            .onFailure { error = "会话列表不可用" }
+        try {
+            sessions = connection.session.list()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            error = "会话列表不可用"
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("会话", style = MaterialTheme.typography.titleLarge)
@@ -367,6 +382,8 @@ private fun SessionScreen(connection: Connection?) {
                     selected = created.id
                     history = connection.session.history(created.id).map(::displayMessage)
                     error = null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (failure: Throwable) {
                     error = failure.message ?: "会话创建失败"
                 }
@@ -377,8 +394,13 @@ private fun SessionScreen(connection: Connection?) {
                 TextButton(onClick = {
                     selected = item.id
                     scope.launch {
-                        runCatching { history = connection.session.history(item.id).map(::displayMessage) }
-                            .onFailure { error = "历史记录不可用" }
+                        try {
+                            history = connection.session.history(item.id).map(::displayMessage)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            error = "历史记录不可用"
+                        }
                     }
                 }) { Text(item.id.value) }
             }
@@ -397,6 +419,8 @@ private fun SessionScreen(connection: Connection?) {
                             history = connection.session.history(id).map(::displayMessage)
                             prompt = ""
                             error = null
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
                         } catch (failure: Throwable) {
                             error = failure.message ?: "消息发送失败"
                         }

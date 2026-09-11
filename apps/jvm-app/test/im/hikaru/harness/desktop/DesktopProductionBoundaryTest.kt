@@ -33,6 +33,25 @@ class DesktopProductionBoundaryTest {
         assertFalse(Files.exists(sourceRoot.resolve("im/hikaru/harness/desktop/DesktopHostProfile.kt")))
     }
 
+    @Test
+    fun sharedUiShouldPropagateCancellationBeforeMappingFailuresToUiState() {
+        val source =
+            Files.readAllLines(
+                locateProjectRoot().resolve("apps/shared/src/im/hikaru/harness/client/app/HarnessApp.kt")
+            )
+
+        assertFalse(source.any { it.contains("runCatching") }, "HarnessApp must not map cancellation via runCatching")
+        source.forEachIndexed { index, line ->
+            if (line.contains("catch (") && line.contains(": Throwable)")) {
+                val preceding = source.subList(maxOf(0, index - 4), index)
+                assertTrue(
+                    preceding.any { it.contains("catch (cancelled: CancellationException)") },
+                    "Throwable handler at HarnessApp.kt:${index + 1} is missing cancellation propagation",
+                )
+            }
+        }
+    }
+
     private companion object {
         private val allowedDomainImports =
             setOf(
