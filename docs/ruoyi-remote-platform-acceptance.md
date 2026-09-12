@@ -96,9 +96,9 @@ Passed:
 - `./kotlin test -p jvm -m harness-protocol` (11 tests)
 - `./kotlin test -p jvm -m harness` (12 tests, including subscribe forwarding, unsubscribed-stream
   isolation, and missing-stream rejection at the Relay)
-- `./kotlin test -p jvm -m shared` (30 tests, including sequence tracking, owner reconnect, the
-  session stream driver, connection-replacement re-subscription, refresh-failure isolation, and
-  subscription lifecycle)
+- `./kotlin test -p jvm -m shared` (35 tests in this candidate, including sequence tracking, owner
+  reconnect, the session stream driver, connection-replacement re-subscription, refresh-failure
+  isolation, subscription lifecycle, and the account session persistence and logout cases)
 - `./kotlin test -p jvm -m jvm-app` (32 tests; 5 live-provider tests skipped without
   `HARNESS_OPENAI_LIVE_API_KEY`)
 - `./kotlin task :shared:compileAndroidDebug :shared:compileIosSimulatorArm64Debug :shared:compileIosArm64Debug :android-app:compileAndroidDebug :ios-app:compileIosSimulatorArm64Debug :ios-app:compileIosArm64Debug :harness:compileJvm :jvm-app:compileJvm`
@@ -127,7 +127,7 @@ as the A19 real-environment exercise.
 | A15 | Passed (code + tests) | Sensitive-method rejection retained on client, Relay, and Host adapter |
 | A16 | Passed (code + tests) | The shell subscribes the selected Session and consumes forwarded events and gap recoveries; a Host switch drops the client subscriptions (`select`) instead of rebuilding them on the new Host, and connection replacement re-subscribes without racing cleanup; covered by `harness` and `shared` tests |
 | A17 | Passed (code + tests) | Reconnect, re-handshake, subscription rebuild, history recovery, no command replay; the driver re-subscribes on the replaced connection and refreshes through it |
-| A18 | Partially verified | Android/iOS Kotlin compilation passes; device and simulator runtime blocked |
+| A18 | Blocked (not run) | Android/iOS Kotlin compilation passes, which is compile-only evidence; the device and simulator runtime exercise was not run, because no Android device or emulator and no Apple SDK/Xcode are available, so runtime behavior stays blocked |
 | A19 | Not run | Needs a real backend, Member login, isolated database, device, and provider |
 | A20 | Passed | This document, plus the deployment and rollback notes below |
 

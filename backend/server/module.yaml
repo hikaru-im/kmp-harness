@@ -23,4 +23,5 @@ dependencies:
 test-dependencies:
   - $spring.boot.starter.test
   - com.h2database:h2
+  - org.springframework.data:spring-data-redis
   - org.redisson:redisson:4.6.1

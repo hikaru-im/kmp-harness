@@ -21,6 +21,7 @@ class DesktopAppSessionStoreTest {
 
         store.write(session)
         assertEquals(session, store.read())
+        assertEquals(session, DesktopAppSessionStore(backend, marker).read())
         backend.failClear = true
         store.clear()
 
