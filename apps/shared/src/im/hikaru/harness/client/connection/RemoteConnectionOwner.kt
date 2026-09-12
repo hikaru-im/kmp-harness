@@ -131,9 +131,18 @@ public class RemoteConnectionOwner(
         }
     }
 
-    /** Pins the supervised loop to [host]; the current connection is dropped so the loop reconnects. */
+    /**
+     * Pins the supervised loop to [host]; the current connection is dropped so the loop reconnects.
+     *
+     * Switching Host also drops this client's subscriptions, so the previous Host's registration is not
+     * carried over to the new one: [connectTo] rebuilds only what this identity scope still owns, and
+     * the shell re-registers its current selection once the new connection is online.
+     */
     public suspend fun select(host: HostDescription) {
-        mutex.withLock { desiredHostId = host.hostId.value }
+        mutex.withLock {
+            desiredHostId = host.hostId.value
+            subscriptions.clear()
+        }
         mutex.withLock { mutableConnection.value?.close() }
     }
 
@@ -142,7 +151,15 @@ public class RemoteConnectionOwner(
             subscriptions.add(streamId)
             mutableConnection.value
         }
-        connection?.subscribe(streamId)
+        connection?.let { current ->
+            try {
+                current.subscribe(streamId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The intent is already recorded, so the next connection rebuilds it.
+            }
+        }
     }
 
     public suspend fun unsubscribe(streamId: StreamId) {
@@ -150,7 +167,15 @@ public class RemoteConnectionOwner(
             subscriptions.remove(streamId)
             mutableConnection.value
         }
-        connection?.unsubscribe(streamId)
+        connection?.let { current ->
+            try {
+                current.unsubscribe(streamId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Already dropped locally; the connection is closing or gone.
+            }
+        }
     }
 
     private suspend fun supervise() {

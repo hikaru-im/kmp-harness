@@ -50,11 +50,13 @@ import im.hikaru.harness.client.connection.HistoryRecovery
 import im.hikaru.harness.client.connection.RemoteConnectionOwner
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 
 /** The first application shell shared by Desktop, Android and iOS. */
 @Composable
 public fun HarnessApp(
     connection: Connection?,
+    connectionChanges: Flow<Connection?> = flowOf<Connection?>(null),
     account: MemberAccount? = null,
     defaultTarget: BackendTenant? = null,
     availableHosts: List<HostDescription> = emptyList(),
@@ -160,6 +162,8 @@ public fun HarnessApp(
                 HarnessDestination.Sessions ->
                     SessionScreen(
                         connection = connection,
+                        connectionChanges = connectionChanges,
+                        hostId = host?.hostId?.value,
                         sessionEvents = sessionEvents,
                         historyRecoveries = historyRecoveries,
                         onSubscribeSession = onSubscribeSession,
@@ -201,6 +205,7 @@ public fun RemoteHarnessApp(
     }
     HarnessApp(
         connection = connection,
+        connectionChanges = remote.connection,
         account = account,
         availableHosts = hosts,
         onSelectHost = { host -> scope.launch { remote.select(host) } },
@@ -405,6 +410,8 @@ private fun HostScreen(
 @Composable
 private fun SessionScreen(
     connection: Connection?,
+    connectionChanges: Flow<Connection?> = flowOf<Connection?>(null),
+    hostId: String? = null,
     sessionEvents: Flow<RelayEvent> = emptyFlow(),
     historyRecoveries: Flow<HistoryRecovery> = emptyFlow(),
     onSubscribeSession: (suspend (SessionId) -> Unit)? = null,
@@ -418,8 +425,14 @@ private fun SessionScreen(
     // 回调用 rememberUpdatedState 读取，避免每次重组产生的新 lambda 重启订阅副作用。
     val subscribeSession = rememberUpdatedState(onSubscribeSession)
     val unsubscribeSession = rememberUpdatedState(onUnsubscribeSession)
+    // 连接被 owner 替换后 driver 会为新连接重新订阅；refresh 必须读当前连接，不能沿用启动时的那个。
+    val currentConnection = rememberUpdatedState<Connection?>(connection)
     var sessions by remember { mutableStateOf<List<SessionSummary>>(emptyList()) }
     var selected by remember { mutableStateOf<SessionId?>(null) }
+    // 切换 Host 时放弃当前选择：owner 已按 A16 清理订阅，这里保证 shell 不会把旧选择重新订阅到新 Host。
+    LaunchedEffect(hostId) {
+        if (selected != null) selected = null
+    }
     var provider by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }
@@ -454,8 +467,11 @@ private fun SessionScreen(
             recoveries = historyRecoveries,
             subscribe = { subscribeSession.value?.invoke(it) },
             unsubscribe = { unsubscribeSession.value?.invoke(it) },
-            refresh = { history = connection.session.history(it).map(::displayMessage) },
+            refresh = { session ->
+                currentConnection.value?.session?.history(session)?.map(::displayMessage)?.let { history = it }
+            },
             onEvent = { liveEvents = maxOf(liveEvents, it.sequence.toInt() + 1) },
+            connectionChanges = connectionChanges,
         ).run(active)
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

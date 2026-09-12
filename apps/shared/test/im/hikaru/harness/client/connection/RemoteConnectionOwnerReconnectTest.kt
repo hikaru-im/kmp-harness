@@ -109,6 +109,37 @@ class RemoteConnectionOwnerReconnectTest {
             owner.close()
         }
     }
+
+    @Test
+    fun selectingAHostDropsTheSubscriptionsInsteadOfRebuildingThemOnTheNewHost() = runBlocking {
+        val client = HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })
+        val owner =
+            RemoteConnectionOwner(
+                client = client,
+                closeClient = { client.close() },
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            )
+        try {
+            owner.subscribe(StreamId("session-1"))
+            assertEquals(setOf(StreamId("session-1")), owner.subscribedStreams())
+
+            owner.select(
+                HostDescription(
+                    protocolVersion = ProtocolVersion.Current,
+                    hostId = HostId("desktop-other"),
+                    displayName = "Other",
+                ),
+            )
+
+            assertTrue(
+                owner.subscribedStreams().isEmpty(),
+                "switching Host must drop the previous subscriptions instead of rebuilding them on the new Host",
+            )
+        } finally {
+            owner.close()
+        }
+    }
+
     private fun session() =
         AppSession(
             identity = MemberIdentity(target = BackendTenant("https://example.com", 1L), userId = 7L),

@@ -46,8 +46,18 @@ Selecting or creating a Session is what makes a client subscribe:
 - `SessionStreamDriver` subscribes the selected Session, consumes the forwarded events and the gap
   recoveries, and refreshes the screen from the authoritative history instead of trusting the event
   body.
+- The driver follows the connection lifecycle: `RemoteConnectionOwner` publishes every connection it
+  installs, and the driver releases the previous subscription and subscribes again on the new one.
+  `collectLatest` cancels and joins the previous subscription before the next one starts, so a
+  reconnect can never race an unsubscribe against a subscribe, and the screen refresh reads the
+  current connection instead of a socket that was already closed.
+- A transient history refresh failure is best-effort and never tears the subscription down; the next
+  forwarded event or gap recovery retries it.
 - The subscription is released when the selection ends, including when the surrounding coroutine is
-  cancelled by cancelling the Session, switching Host, or logging out.
+  cancelled by cancelling the Session, switching Host, or logging out. `RemoteConnectionOwner.select`
+  drops this client's subscriptions on a Host switch, and the shell drops the current Session
+  selection when the connected Host changes, so the driver cannot re-register the previous selection
+  on the new Host.
 - The subscription is exactly what the Host and the Relay filter on, so a stream no client subscribed
   to is never published, and a sequence gap is repaired through history instead of being treated as a
   contiguous stream.
@@ -62,7 +72,8 @@ after a drop; an uncertain result surfaces as unknown and the caller refreshes h
 
 The shell drives every remote Session through `SessionStreamDriver`, so this is a reachable runtime
 path rather than a library-only one: the driver is the caller of `subscribe`/`unsubscribe` and the
-consumer of the forwarded events and the gap recoveries.
+consumer of the forwarded events and the gap recoveries. It re-subscribes on every connection the
+owner installs, so the subscription survives the reconnect path rather than dying with the old socket.
 
 ## Security policy
 
@@ -85,8 +96,9 @@ Passed:
 - `./kotlin test -p jvm -m harness-protocol` (11 tests)
 - `./kotlin test -p jvm -m harness` (12 tests, including subscribe forwarding, unsubscribed-stream
   isolation, and missing-stream rejection at the Relay)
-- `./kotlin test -p jvm -m shared` (27 tests, including sequence tracking, owner reconnect, the
-  session stream driver, and subscription lifecycle)
+- `./kotlin test -p jvm -m shared` (30 tests, including sequence tracking, owner reconnect, the
+  session stream driver, connection-replacement re-subscription, refresh-failure isolation, and
+  subscription lifecycle)
 - `./kotlin test -p jvm -m jvm-app` (32 tests; 5 live-provider tests skipped without
   `HARNESS_OPENAI_LIVE_API_KEY`)
 - `./kotlin task :shared:compileAndroidDebug :shared:compileIosSimulatorArm64Debug :shared:compileIosArm64Debug :android-app:compileAndroidDebug :ios-app:compileIosSimulatorArm64Debug :ios-app:compileIosArm64Debug :harness:compileJvm :jvm-app:compileJvm`
@@ -113,8 +125,8 @@ as the A19 real-environment exercise.
 | A13 | Passed (code + tests) | Host registration, discovery, and handshake paths; `shared` connection tests |
 | A14 | Passed (code + tests) | Identity scoping and generation guards; `harness` relay tests |
 | A15 | Passed (code + tests) | Sensitive-method rejection retained on client, Relay, and Host adapter |
-| A16 | Passed (code + tests) | The shell subscribes the selected Session and consumes forwarded events and gap recoveries; subscription isolation, sequence gaps, and cleanup covered by `harness` and `shared` tests |
-| A17 | Passed (code + tests) | Reconnect, re-handshake, subscription rebuild, history recovery, no command replay |
+| A16 | Passed (code + tests) | The shell subscribes the selected Session and consumes forwarded events and gap recoveries; a Host switch drops the client subscriptions (`select`) instead of rebuilding them on the new Host, and connection replacement re-subscribes without racing cleanup; covered by `harness` and `shared` tests |
+| A17 | Passed (code + tests) | Reconnect, re-handshake, subscription rebuild, history recovery, no command replay; the driver re-subscribes on the replaced connection and refreshes through it |
 | A18 | Partially verified | Android/iOS Kotlin compilation passes; device and simulator runtime blocked |
 | A19 | Not run | Needs a real backend, Member login, isolated database, device, and provider |
 | A20 | Passed | This document, plus the deployment and rollback notes below |
