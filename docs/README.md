@@ -18,6 +18,7 @@
 - [session-s1-plan.md](session-s1-plan.md)：Session S1 对齐 DSH 的数据格式、原子提交、Store 事务和实施拆分。
 - [harness-host-api.md](harness-host-api.md)：Host、RuoYi Relay、配置所有权、DSH API 对照与实施顺序。
 - [cordis-alignment.md](cordis-alignment.md)：与 Cordis 的能力、命名和明确差异。
+- [ui-slot-integration-plan.md](ui-slot-integration-plan.md)：KMP Client Runtime、静态 Extension Point 与 Compose UI Slot 的结合方案。
 
-这些文档不定义客户端 UI、RuoYi Relay 或平台装配；对应职责分别记录在 `apps`、`backend` 和
-各模块 README 中。设计与代码不一致时，应同时修正相关 README，不能只更新总览。
+这些文档记录 Harness 内部设计；部署边界、RuoYi Relay 与最终平台装配分别以 `backend`、
+`apps` 和各模块 README 为准。设计与代码不一致时，应同时修正相关 README，不能只更新总览。
