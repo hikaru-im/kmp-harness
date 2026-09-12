@@ -21,6 +21,32 @@ Relay events are delivered only to subscribed client WebSocket sessions. The cli
 deduplicates sequence numbers and exposes a sequence gap to the history recovery
 caller; it never treats a gap as a successful contiguous stream.
 
+### Host registration and event forwarding
+
+The Desktop Host connects out to the configured RuoYi backend instead of waiting to be
+polled:
+
+- `DesktopHostRelay` follows the authenticated `MemberAccount` scope and registers the Host.
+  Login, logout, tenant change, and backend change each start or stop the outbound connection;
+  the previous scope's registration is closed before a new one is opened.
+- `HostEventStream` turns the local Harness Session event log into ordered `RelayEvent`s
+  (stream id is the Session id, sequence is the persisted event sequence) and feeds them to
+  the relay adapter. Only appended Session events leave the Host; Agent commands, profile,
+  and credentials stay Host-owned.
+- `HostRelayConnection` publishes only the streams a client subscribed to. The Relay applies
+  the same filter again, so a Host defect cannot widen the audience on its own.
+- The Relay records the subscription and forwards `session.events.subscribe` /
+  `session.events.unsubscribe` to the owning Host, so the Host learns what to publish. An
+  event for an unsubscribed stream is never broadcast.
+
+### Reconnect and history recovery
+
+`RemoteConnectionOwner` is the only place that reconnects. It re-discovers the Host,
+re-handshakes, rebuilds the subscriptions of the current identity scope, and re-pulls history
+after a detected gap, using bounded exponential backoff. `session.create` and
+`session.prompt` are never replayed on a new connection, because their outcome is uncertain
+after a drop; an uncertain result surfaces as unknown and the caller refreshes history instead.
+
 ## Security policy
 
 The following methods are rejected before the Host Gateway is reached:
@@ -37,18 +63,52 @@ only source of identity.
 
 ## Verification record
 
-- Passed: `./kotlin test -p jvm -m harness-protocol`
-- Passed: `./kotlin test -p jvm -m harness`
-- Passed: `./kotlin task :harness:compileJvm :jvm-app:compileJvm`
-- Passed: `./kotlin task :shared:compileAndroidDebug :shared:compileIosSimulatorArm64Debug :shared:compileIosArm64Debug`
-- Passed: `git diff --check`
-- Not run: a real RuoYi backend with Member credentials and an isolated database.
-- Not run: Desktop-to-backend-to-Android remote exercise with a live model provider.
-- Blocked: iOS application compile and simulator lifecycle, because this Linux environment has no Apple SDK/Xcode.
-- Blocked: Android device lifecycle and network exercise, because no Android device/emulator was attached.
+Passed:
+
+- `./kotlin test -p jvm -m harness-protocol` (11 tests)
+- `./kotlin test -p jvm -m harness` (12 tests, including subscribe forwarding, unsubscribed-stream
+  isolation, and missing-stream rejection at the Relay)
+- `./kotlin test -p jvm -m shared` (24 tests, including sequence tracking and owner reconnect)
+- `./kotlin test -p jvm -m jvm-app` (32 tests; 5 live-provider tests skipped without
+  `HARNESS_OPENAI_LIVE_API_KEY`)
+- `./kotlin task :shared:compileAndroidDebug :shared:compileIosSimulatorArm64Debug :shared:compileIosArm64Debug :android-app:compileAndroidDebug :ios-app:compileIosSimulatorArm64Debug :ios-app:compileIosArm64Debug :harness:compileJvm :jvm-app:compileJvm`
+- `git diff --check`
+
+Not run:
+
+- A real RuoYi backend with Member credentials and an isolated database.
+- Desktop-to-backend-to-Android remote exercise with a live model provider.
+
+Blocked:
+
+- Android device lifecycle and network exercise, because no Android device or emulator was attached.
+- iOS simulator lifecycle and runtime exercise, because this Linux environment has no Apple SDK/Xcode.
+  The Kotlin/Native iOS compilation targets themselves do compile and are listed above.
 
 Fixture tests and compile results are development evidence only. They do not count
 as the A19 real-environment exercise.
+
+### Acceptance status
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| A13 | Passed (code + tests) | Host registration, discovery, and handshake paths; `shared` connection tests |
+| A14 | Passed (code + tests) | Identity scoping and generation guards; `harness` relay tests |
+| A15 | Passed (code + tests) | Sensitive-method rejection retained on client, Relay, and Host adapter |
+| A16 | Passed (code + tests) | Subscription isolation and sequence gap handling; `harness` and `shared` tests |
+| A17 | Passed (code + tests) | Reconnect, re-handshake, subscription rebuild, history recovery, no command replay |
+| A18 | Partially verified | Android/iOS Kotlin compilation passes; device and simulator runtime blocked |
+| A19 | Not run | Needs a real backend, Member login, isolated database, device, and provider |
+| A20 | Passed | This document, plus the deployment and rollback notes below |
+
+## Dependencies and compatibility
+
+- The backend `harness` feature depends on `contracts` and `contracts/harness-protocol`; no new
+  database migration is introduced.
+- The Desktop application now depends on `modules/runtime`, because it registers the Host event
+  listener against the Harness runtime context.
+- Shared client code uses only multiplatform primitives so the Android and iOS targets keep
+  compiling; no JVM-only API is used in `apps/shared`.
 
 ## Deployment and rollback
 

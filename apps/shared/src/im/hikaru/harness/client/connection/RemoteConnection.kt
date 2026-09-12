@@ -46,11 +46,18 @@ public class RemoteConnection private constructor(
     private val nextRequest = AtomicRequestId()
     private val pending = mutableMapOf<String, CompletableDeferred<RelayResponse>>()
     private val pendingMutex = Mutex()
-    private val nextSequences = mutableMapOf<String, Long>()
+    private val sequences = SequenceTracker()
+    private val recoveries = mutableSetOf<String>()
+    private val recoveryMutex = Mutex()
+    private val closed = CompletableDeferred<Unit>()
     private val mutableEvents = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 64)
     private val mutableSequenceGaps = MutableSharedFlow<SequenceGap>(extraBufferCapacity = 16)
+    private val mutableHistoryRecoveries = MutableSharedFlow<HistoryRecovery>(extraBufferCapacity = 16)
     public val events: Flow<RelayEvent> = mutableEvents.asSharedFlow()
     public val sequenceGaps: Flow<SequenceGap> = mutableSequenceGaps.asSharedFlow()
+
+    /** History snapshots pulled after a detected sequence gap, so the caller can reconcile its view. */
+    public val historyRecoveries: Flow<HistoryRecovery> = mutableHistoryRecoveries.asSharedFlow()
     private var reader: Job = scope.launch { readLoop() }
 
     override val host: HostApi = object : HostApi {
@@ -98,7 +105,7 @@ public class RemoteConnection private constructor(
 
     public suspend fun unsubscribe(streamId: StreamId) {
         invoke("session.events.unsubscribe", JsonPrimitive(streamId.value)).decodeResult<String>()
-        nextSequences.remove(streamId.value)
+        sequences.forget(streamId)
     }
 
     public suspend fun recoverHistory(id: SessionId): List<Message> = session.history(id)
@@ -132,16 +139,17 @@ public class RemoteConnection private constructor(
                     HarnessWebSocketMessageTypes.RelayEvent -> {
                         val event = runCatching { json.decodeFromString(RelayEvent.serializer(), outer.content) }.getOrNull() ?: continue
                         if (event.hostId != hostDescription.hostId) continue
-                        val key = event.streamId.value
-                        val expected = nextSequences[key] ?: event.sequence
-                        when {
-                            event.sequence < expected -> Unit
-                            event.sequence > expected -> {
-                                mutableSequenceGaps.tryEmit(SequenceGap(event.streamId, expected, event.sequence))
-                                nextSequences[key] = event.sequence + 1
+                        when (val outcome = sequences.accept(event)) {
+                            SequenceOutcome.Duplicate -> Unit
+                            is SequenceOutcome.Gap -> {
+                                mutableSequenceGaps.tryEmit(
+                                    SequenceGap(event.streamId, outcome.expected, outcome.received),
+                                )
                                 mutableEvents.tryEmit(event)
+                                recoverHistoryFor(event.streamId)
                             }
-                            else -> { nextSequences[key] = expected + 1; mutableEvents.tryEmit(event) }
+
+                            SequenceOutcome.Deliver -> mutableEvents.tryEmit(event)
                         }
                     }
                 }
@@ -149,12 +157,41 @@ public class RemoteConnection private constructor(
         } finally {
             val error = RemoteConnectionException("Remote connection closed")
             pendingMutex.withLock { pending.values.forEach { it.completeExceptionally(error) }; pending.clear() }
+            closed.complete(Unit)
+        }
+    }
+
+    /** Suspends until this connection reaches a terminal state, so reconnect supervisors can react. */
+    public suspend fun awaitClosed() {
+        closed.await()
+    }
+
+    /**
+     * Reconciles a stream after a detected gap. The gap stays observable even when recovery fails, and a
+     * later event or reconnect retries; recovery never re-sends an execution command.
+     */
+    private suspend fun recoverHistoryFor(streamId: StreamId) {
+        val key = streamId.value
+        val started = recoveryMutex.withLock { recoveries.add(key) }
+        if (!started) return
+        scope.launch {
+            try {
+                val messages = session.history(SessionId(key))
+                mutableHistoryRecoveries.tryEmit(HistoryRecovery(streamId, messages))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Leave the gap observable; the next gap or reconnect retries.
+            } finally {
+                recoveryMutex.withLock { recoveries.remove(key) }
+            }
         }
     }
 
     override fun close() {
         reader.cancel()
         socket.cancel()
+        closed.complete(Unit)
     }
 
     private inline fun <reified T> RelayResponse.decodeResult(): T {
@@ -224,6 +261,12 @@ public data class SequenceGap(
     val streamId: StreamId,
     val expectedSequence: Long,
     val receivedSequence: Long,
+)
+
+/** A history snapshot pulled after a sequence gap so the caller can reconcile its view. */
+public data class HistoryRecovery(
+    val streamId: StreamId,
+    val messages: List<Message>,
 )
 
 @kotlinx.serialization.Serializable

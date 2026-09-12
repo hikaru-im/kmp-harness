@@ -88,19 +88,19 @@ class HarnessRelayService(
             sendRelayError(session.id, request, ErrorCodeConstants.HOST_NOT_FOUND)
             return
         }
-        if (request.method == "session.events.subscribe" || request.method == "session.events.unsubscribe") {
+        if (request.method == SUBSCRIBE_METHOD || request.method == UNSUBSCRIBE_METHOD) {
             val stream: String? = (request.payload as? JsonPrimitive)?.contentOrNull
             if (stream.isNullOrBlank()) {
                 sendRelayError(session.id, request, ErrorCodeConstants.METHOD_FORBIDDEN)
-            } else if (request.method.endsWith("subscribe")) {
+                return
+            }
+            if (request.method == SUBSCRIBE_METHOD) {
                 subscriptions.computeIfAbsent(session.id) { java.util.concurrent.ConcurrentHashMap.newKeySet() }
                     .add(RelaySubscription(principal, connection.description.hostId, connection.generation, stream))
-                sendRelayAck(session.id, request)
             } else {
                 subscriptions[session.id]?.removeIf { it.streamId == stream && it.hostId == request.hostId }
-                sendRelayAck(session.id, request)
             }
-            return
+            // 继续下发：Host 记录自己的订阅视图并回执，Relay 只负责按所有权转发。
         }
         val hostSession = sessionManager.getSession(connection.sessionId)
         if (hostSession?.isOpen != true) {
@@ -228,24 +228,6 @@ class HarnessRelayService(
         )
     }
 
-    private fun sendRelayAck(sessionId: String, request: RelayRequest) {
-        val response = RelayResponse(
-            requestId = request.requestId,
-            hostId = request.hostId,
-            correlationId = request.correlationId,
-            result = ApiResult<JsonElement>(
-                code = ApiResult.SUCCESS_CODE,
-                msg = "",
-                data = JsonPrimitive("subscribed"),
-            ),
-        )
-        messageSender.send(
-            sessionId,
-            HarnessWebSocketMessageTypes.RelayResponse,
-            HarnessProtocolJson.encodeToString(response),
-        )
-    }
-
     private fun sendRelayError(
         sessionId: String,
         request: RelayRequest,
@@ -273,6 +255,8 @@ class HarnessRelayService(
         private val FORBIDDEN_REMOTE_METHODS = setOf(
             "credentials.set", "credentials.unset", "settings.secret.set", "llm.models.discover-temporary-key",
         )
+        private const val SUBSCRIBE_METHOD = "session.events.subscribe"
+        private const val UNSUBSCRIBE_METHOD = "session.events.unsubscribe"
         private val log = LoggerFactory.getLogger(HarnessRelayService::class.java)
     }
 

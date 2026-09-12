@@ -166,12 +166,12 @@ public fun RemoteHarnessApp(
     val hosts = remote.hosts.collectAsState().value
     val scope = rememberCoroutineScope()
     LaunchedEffect(accountState.session, accountState.target) {
-        remote.disconnect()
         val session = accountState.session
-        if (session != null && accountState.target != null) {
+        if (session == null || accountState.target == null) {
+            remote.stop()
+        } else {
             try {
-                val discovered = remote.discover(session)
-                discovered.firstOrNull()?.let { remote.connect(session, it, clientId) }
+                remote.start(session, clientId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -186,10 +186,7 @@ public fun RemoteHarnessApp(
         connection = connection,
         account = account,
         availableHosts = hosts,
-        onSelectHost = { host ->
-            val session = account.state.value.session
-            if (session != null) scope.launch { remote.connect(session, host, clientId) }
-        },
+        onSelectHost = { host -> scope.launch { remote.select(host) } },
         modifier = modifier,
     )
 }
