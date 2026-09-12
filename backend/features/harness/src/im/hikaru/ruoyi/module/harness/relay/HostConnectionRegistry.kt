@@ -15,5 +15,7 @@ interface HostConnectionRegistry {
 
     fun findBySession(sessionId: String): HostConnection?
 
+    fun findAll(principal: HarnessPrincipal): List<HostConnection>
+
     fun unregister(sessionId: String): HostConnection?
 }

@@ -17,12 +17,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -42,15 +44,27 @@ import im.hikaru.harness.client.connection.TextContent
 import im.hikaru.harness.client.connection.userMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import im.hikaru.contracts.harness.relay.RelayEvent
+import im.hikaru.contracts.harness.relay.StreamId
+import im.hikaru.harness.client.connection.HistoryRecovery
+import im.hikaru.harness.client.connection.RemoteConnectionOwner
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 
 /** The first application shell shared by Desktop, Android and iOS. */
 @Composable
 public fun HarnessApp(
     connection: Connection?,
+    connectionChanges: Flow<Connection?> = flowOf<Connection?>(null),
     account: MemberAccount? = null,
     defaultTarget: BackendTenant? = null,
     availableHosts: List<HostDescription> = emptyList(),
     onSelectHost: ((HostDescription) -> Unit)? = null,
+    sessionEvents: Flow<RelayEvent> = emptyFlow(),
+    historyRecoveries: Flow<HistoryRecovery> = emptyFlow(),
+    onSubscribeSession: (suspend (SessionId) -> Unit)? = null,
+    onUnsubscribeSession: (suspend (SessionId) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var destination by remember { mutableStateOf(HarnessDestination.Harness) }
@@ -145,10 +159,62 @@ public fun HarnessApp(
                 HarnessDestination.Tenant -> TenantScreen(account, accountState)
                 HarnessDestination.Profile -> ProfileScreen(account, accountState)
                 HarnessDestination.Hosts -> HostScreen(host, availableHosts, connectionState, onSelectHost)
-                HarnessDestination.Sessions -> SessionScreen(connection)
+                HarnessDestination.Sessions ->
+                    SessionScreen(
+                        connection = connection,
+                        connectionChanges = connectionChanges,
+                        hostId = host?.hostId?.value,
+                        sessionEvents = sessionEvents,
+                        historyRecoveries = historyRecoveries,
+                        onSubscribeSession = onSubscribeSession,
+                        onUnsubscribeSession = onUnsubscribeSession,
+                    )
             }
         }
     }
+}
+
+/** Mobile entry wrapper: discovers and connects the currently authenticated Host. */
+@Composable
+public fun RemoteHarnessApp(
+    account: MemberAccount,
+    remote: RemoteConnectionOwner,
+    clientId: String,
+    modifier: Modifier = Modifier,
+) {
+    val accountState = account.state.collectAsState().value
+    val connection = remote.connection.collectAsState().value
+    val hosts = remote.hosts.collectAsState().value
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(accountState.session, accountState.target) {
+        val session = accountState.session
+        if (session == null || accountState.target == null) {
+            remote.stop()
+        } else {
+            try {
+                remote.start(session, clientId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The connection state remains observable in the shared shell.
+            }
+        }
+    }
+    DisposableEffect(remote) {
+        onDispose { remote.close() }
+    }
+    HarnessApp(
+        connection = connection,
+        connectionChanges = remote.connection,
+        account = account,
+        availableHosts = hosts,
+        onSelectHost = { host -> scope.launch { remote.select(host) } },
+        sessionEvents = remote.sessionEvents,
+        historyRecoveries = remote.historyRecoveries,
+        onSubscribeSession = { id -> remote.subscribe(StreamId(id.value)) },
+        onUnsubscribeSession = { id -> remote.unsubscribe(StreamId(id.value)) },
+        modifier = modifier,
+    )
 }
 
 public enum class HarnessDestination(
@@ -342,18 +408,36 @@ private fun HostScreen(
 }
 
 @Composable
-private fun SessionScreen(connection: Connection?) {
+private fun SessionScreen(
+    connection: Connection?,
+    connectionChanges: Flow<Connection?> = flowOf<Connection?>(null),
+    hostId: String? = null,
+    sessionEvents: Flow<RelayEvent> = emptyFlow(),
+    historyRecoveries: Flow<HistoryRecovery> = emptyFlow(),
+    onSubscribeSession: (suspend (SessionId) -> Unit)? = null,
+    onUnsubscribeSession: (suspend (SessionId) -> Unit)? = null,
+) {
     if (connection == null) {
         Text("远程会话需要登录并选择在线 Host。")
         return
     }
     val scope = rememberCoroutineScope()
+    // 回调用 rememberUpdatedState 读取，避免每次重组产生的新 lambda 重启订阅副作用。
+    val subscribeSession = rememberUpdatedState(onSubscribeSession)
+    val unsubscribeSession = rememberUpdatedState(onUnsubscribeSession)
+    // 连接被 owner 替换后 driver 会为新连接重新订阅；refresh 必须读当前连接，不能沿用启动时的那个。
+    val currentConnection = rememberUpdatedState<Connection?>(connection)
     var sessions by remember { mutableStateOf<List<SessionSummary>>(emptyList()) }
     var selected by remember { mutableStateOf<SessionId?>(null) }
+    // 切换 Host 时放弃当前选择：owner 已按 A16 清理订阅，这里保证 shell 不会把旧选择重新订阅到新 Host。
+    LaunchedEffect(hostId) {
+        if (selected != null) selected = null
+    }
     var provider by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }
     var history by remember { mutableStateOf<List<String>>(emptyList()) }
+    var liveEvents by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(connection) {
         try {
@@ -364,8 +448,35 @@ private fun SessionScreen(connection: Connection?) {
             error = "会话列表不可用"
         }
     }
+    LaunchedEffect(selected, connection) {
+        val active = selected ?: return@LaunchedEffect
+        try {
+            history = connection.session.history(active).map(::displayMessage)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            error = "历史记录不可用"
+        }
+    }
+    // 选中的 Session 是本客户端唯一请求 Relay 转发的流；driver 在离开选择时释放订阅，保证取消会话、
+    // 切换 Host 与登出之后不再收到该流的事件。history 仍是权威视图，转发事件与缺口恢复只触发刷新。
+    LaunchedEffect(selected, sessionEvents, historyRecoveries) {
+        val active = selected ?: return@LaunchedEffect
+        SessionStreamDriver(
+            events = sessionEvents,
+            recoveries = historyRecoveries,
+            subscribe = { subscribeSession.value?.invoke(it) },
+            unsubscribe = { unsubscribeSession.value?.invoke(it) },
+            refresh = { session ->
+                currentConnection.value?.session?.history(session)?.map(::displayMessage)?.let { history = it }
+            },
+            onEvent = { liveEvents = maxOf(liveEvents, it.sequence.toInt() + 1) },
+            connectionChanges = connectionChanges,
+        ).run(active)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("会话", style = MaterialTheme.typography.titleLarge)
+        if (liveEvents > 0) Text("实时事件：$liveEvents")
         OutlinedTextField(provider, { provider = it }, label = { Text("Provider") }, singleLine = true)
         OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true)
         Button(onClick = {
@@ -380,7 +491,6 @@ private fun SessionScreen(connection: Connection?) {
                     )
                     sessions = connection.session.list()
                     selected = created.id
-                    history = connection.session.history(created.id).map(::displayMessage)
                     error = null
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -391,18 +501,7 @@ private fun SessionScreen(connection: Connection?) {
         }) { Text("创建会话") }
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
             items(sessions, key = { it.id.value }) { item ->
-                TextButton(onClick = {
-                    selected = item.id
-                    scope.launch {
-                        try {
-                            history = connection.session.history(item.id).map(::displayMessage)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Throwable) {
-                            error = "历史记录不可用"
-                        }
-                    }
-                }) { Text(item.id.value) }
+                TextButton(onClick = { selected = item.id }) { Text(item.id.value) }
             }
         }
         selected?.let { id ->

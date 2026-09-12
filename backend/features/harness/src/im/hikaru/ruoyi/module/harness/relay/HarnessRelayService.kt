@@ -16,10 +16,13 @@ import im.hikaru.ruoyi.module.harness.enums.ErrorCodeConstants
 import im.hikaru.ruoyi.module.harness.websocket.HarnessProtocolJson
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.WebSocketSession
+import org.springframework.beans.factory.DisposableBean
 
 /**
  * RuoYi WebSocket Session 与 Harness Relay contract 之间的路由服务。
@@ -32,7 +35,11 @@ class HarnessRelayService(
     private val pendingRegistry: PendingRelayRegistry,
     private val sessionManager: WebSocketSessionManager,
     private val messageSender: WebSocketMessageSender,
-) : WebSocketSessionLifecycleListener {
+) : WebSocketSessionLifecycleListener, DisposableBean {
+    private val subscriptions = java.util.concurrent.ConcurrentHashMap<String, MutableSet<RelaySubscription>>()
+    private val timeoutExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "harness-relay-timeouts").apply { isDaemon = true }
+    }
 
     fun registerHost(session: WebSocketSession, request: HostRegistrationRequest) {
         val principal = HarnessPrincipal.from(session)
@@ -72,10 +79,28 @@ class HarnessRelayService(
             return
         }
 
+        if (request.method in FORBIDDEN_REMOTE_METHODS || request.method.startsWith("file.")) {
+            sendRelayError(session.id, request, ErrorCodeConstants.METHOD_FORBIDDEN)
+            return
+        }
         val connection = hostRegistry.find(principal, request.hostId)
         if (connection == null) {
             sendRelayError(session.id, request, ErrorCodeConstants.HOST_NOT_FOUND)
             return
+        }
+        if (request.method == SUBSCRIBE_METHOD || request.method == UNSUBSCRIBE_METHOD) {
+            val stream: String? = (request.payload as? JsonPrimitive)?.contentOrNull
+            if (stream.isNullOrBlank()) {
+                sendRelayError(session.id, request, ErrorCodeConstants.METHOD_FORBIDDEN)
+                return
+            }
+            if (request.method == SUBSCRIBE_METHOD) {
+                subscriptions.computeIfAbsent(session.id) { java.util.concurrent.ConcurrentHashMap.newKeySet() }
+                    .add(RelaySubscription(principal, connection.description.hostId, connection.generation, stream))
+            } else {
+                subscriptions[session.id]?.removeIf { it.streamId == stream && it.hostId == request.hostId }
+            }
+            // 继续下发：Host 记录自己的订阅视图并回执，Relay 只负责按所有权转发。
         }
         val hostSession = sessionManager.getSession(connection.sessionId)
         if (hostSession?.isOpen != true) {
@@ -98,6 +123,9 @@ class HarnessRelayService(
             sendRelayError(session.id, request, ErrorCodeConstants.DUPLICATE_REQUEST)
             return
         }
+        timeoutExecutor.schedule({
+            pendingRegistry.remove(pending)?.let { sendRelayError(it.clientSessionId, it.request, ErrorCodeConstants.REQUEST_TIMEOUT) }
+        }, 15, java.util.concurrent.TimeUnit.SECONDS)
         val currentConnection = hostRegistry.find(principal, request.hostId)
         if (currentConnection != connection) {
             val errorCode =
@@ -147,16 +175,40 @@ class HarnessRelayService(
         )
     }
 
+    fun routeEvent(session: WebSocketSession, event: im.hikaru.contracts.harness.relay.RelayEvent) {
+        val principal = HarnessPrincipal.from(session) ?: return
+        val connection = hostRegistry.findBySession(session.id) ?: return
+        if (connection.principal != principal || connection.description.hostId != event.hostId) return
+        subscriptions.forEach { (clientSession, streams) ->
+            if (streams.any {
+                it.principal == principal &&
+                    it.hostId == event.hostId &&
+                    it.hostGeneration == connection.generation &&
+                    it.streamId == event.streamId.value
+            }) {
+                messageSender.send(clientSession, HarnessWebSocketMessageTypes.RelayEvent, HarnessProtocolJson.encodeToString(event))
+            }
+        }
+    }
+
     override fun afterConnectionClosed(session: WebSocketSession, closeStatus: CloseStatus) {
         hostRegistry.unregister(session.id)?.let { connection ->
             failPending(connection, ErrorCodeConstants.HOST_DISCONNECTED)
         }
         pendingRegistry.removeByClientSession(session.id)
+        subscriptions.remove(session.id)
     }
 
     private fun failPending(connection: HostConnection, errorCode: ErrorCode) {
         pendingRegistry.removeByHost(connection).forEach { pending ->
             sendRelayError(pending.clientSessionId, pending.request, errorCode)
+        }
+        subscriptions.values.forEach { subscriptions ->
+            subscriptions.removeIf {
+                it.principal == connection.principal &&
+                    it.hostId == connection.description.hostId &&
+                    it.hostGeneration == connection.generation
+            }
         }
     }
 
@@ -200,6 +252,23 @@ class HarnessRelayService(
     }
 
     companion object {
+        private val FORBIDDEN_REMOTE_METHODS = setOf(
+            "credentials.set", "credentials.unset", "settings.secret.set", "llm.models.discover-temporary-key",
+        )
+        private const val SUBSCRIBE_METHOD = "session.events.subscribe"
+        private const val UNSUBSCRIBE_METHOD = "session.events.unsubscribe"
         private val log = LoggerFactory.getLogger(HarnessRelayService::class.java)
     }
+
+    override fun destroy() {
+        timeoutExecutor.shutdownNow()
+        subscriptions.clear()
+    }
+
+    private data class RelaySubscription(
+        val principal: HarnessPrincipal,
+        val hostId: im.hikaru.contracts.harness.identity.HostId,
+        val hostGeneration: Long,
+        val streamId: String,
+    )
 }

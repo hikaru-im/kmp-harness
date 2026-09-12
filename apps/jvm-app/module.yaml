@@ -5,6 +5,7 @@ dependencies:
   - ../../modules/agent
   - ../../modules/llm
   - ../../modules/home
+  - ../../modules/runtime
   - ../../modules/session
   - ../../modules/session-api
   - ../shared
@@ -31,7 +32,6 @@ test-dependencies:
   - ../../modules/llm-koog-openai
   - ../../modules/loader
   - ../../modules/logger
-  - ../../modules/runtime
   - ../../modules/settings
   - ../../modules/settings-file
   - ai.koog:prompt-executor-model:1.1.1

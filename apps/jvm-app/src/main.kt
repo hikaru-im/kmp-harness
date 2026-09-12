@@ -8,11 +8,17 @@ import im.hikaru.harness.client.account.MemberAccount
 import im.hikaru.harness.client.account.createAccountHttpClient
 import im.hikaru.harness.client.account.desktopAppSessionStore
 import im.hikaru.harness.client.account.platformAccountEngine
+import im.hikaru.harness.boot.HarnessHost
 import im.hikaru.harness.client.connection.Connection
+import im.hikaru.harness.desktop.connection.DesktopHostRelay
+import im.hikaru.harness.desktop.connection.HostEventStream
 import im.hikaru.harness.desktop.connection.LocalConnection
 import im.hikaru.harness.desktop.createOwnedAccount
 import im.hikaru.harness.desktop.openDesktopResources
 import im.hikaru.harness.desktop.shutdownDesktopResources
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 
@@ -35,6 +41,8 @@ fun main(args: Array<String>) {
     val harnessHost = profiledHost.host
     val connection = LocalConnection(harnessHost.gateway)
     val account = resources.account
+    val hostRelay = createDesktopHostRelay(harnessHost)
+    hostRelay.start(account)
 
     try {
         application {
@@ -46,8 +54,34 @@ fun main(args: Array<String>) {
             }
         }
     } finally {
-        runBlocking { shutdownDesktopResources(account::shutdown, profiledHost::close) }
+        runBlocking {
+            try {
+                hostRelay.close()
+            } finally {
+                shutdownDesktopResources(account::shutdown, profiledHost::close)
+            }
+        }
     }
+}
+
+/** Desktop 主动连接已配置 RuoYi 后端的 Host 侧入口；它只注册 Host 并转发本机 Session 事件。 */
+private fun createDesktopHostRelay(harnessHost: HarnessHost): DesktopHostRelay {
+    val engine = platformAccountEngine()
+    val client = createAccountHttpClient(engine)
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val eventStream = HostEventStream(harnessHost.runtime.context, harnessHost.profile.hostDescription.hostId)
+    return DesktopHostRelay(
+        client = client,
+        closeClient = {
+            eventStream.close()
+            client.close()
+            engine.close()
+        },
+        gateway = harnessHost.gateway,
+        description = harnessHost.profile.hostDescription,
+        events = eventStream.events,
+        scope = scope,
+    )
 }
 
 private fun createDesktopAccount(home: Path?): MemberAccount {

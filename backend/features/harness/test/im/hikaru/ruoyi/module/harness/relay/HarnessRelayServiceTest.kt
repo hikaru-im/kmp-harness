@@ -4,9 +4,12 @@ import im.hikaru.contracts.common.ApiResult
 import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
+import im.hikaru.contracts.harness.relay.EventId
 import im.hikaru.contracts.harness.relay.HarnessWebSocketMessageTypes
 import im.hikaru.contracts.harness.relay.HostRegistrationRequest
+import im.hikaru.contracts.harness.relay.RelayEvent
 import im.hikaru.contracts.harness.relay.RelayRequest
+import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.contracts.harness.relay.RelayResponse
 import im.hikaru.contracts.harness.relay.RequestId
 import im.hikaru.ruoyi.framework.security.core.LoginUser
@@ -143,6 +146,96 @@ class HarnessRelayServiceTest {
         val response = HarnessProtocolJson.decodeFromString<RelayResponse>(sender.messages.single().content)
         assertEquals(ErrorCodeConstants.HOST_DISCONNECTED.code, response.result.code)
     }
+
+    @Test
+    fun `sensitive remote methods are rejected before reaching host`() {
+        val hostSession = session("host", tenantId = 1, userId = 7)
+        val clientSession = session("client", tenantId = 1, userId = 7)
+        addSessions(hostSession, clientSession)
+        service.registerHost(hostSession, registration())
+        sender.messages.clear()
+
+        service.routeRequest(
+            clientSession,
+            request("sensitive").copy(method = "credentials.set"),
+        )
+
+        val response = HarnessProtocolJson.decodeFromString<RelayResponse>(sender.messages.single().content)
+        assertEquals(ErrorCodeConstants.METHOD_FORBIDDEN.code, response.result.code)
+        assertEquals("client", sender.messages.single().sessionId)
+    }
+
+    @Test
+    fun `subscribe is recorded and forwarded to the owning host`() {
+        val hostSession = session("host", tenantId = 1, userId = 7)
+        val clientSession = session("client", tenantId = 1, userId = 7)
+        addSessions(hostSession, clientSession)
+        service.registerHost(hostSession, registration())
+        sender.messages.clear()
+        val subscribe =
+            RelayRequest(
+                requestId = RequestId("subscribe-1"),
+                hostId = HostId("desktop-main"),
+                method = "session.events.subscribe",
+                payload = JsonPrimitive("session-1"),
+            )
+
+        service.routeRequest(clientSession, subscribe)
+
+        assertEquals(
+            SentMessage("host", HarnessWebSocketMessageTypes.RelayRequest, HarnessProtocolJson.encodeToString(subscribe)),
+            sender.messages.single(),
+        )
+
+        sender.messages.clear()
+        service.routeEvent(hostSession, relayEvent("session-1", sequence = 0L))
+        assertEquals("client", sender.messages.single().sessionId)
+        assertEquals(HarnessWebSocketMessageTypes.RelayEvent, sender.messages.single().type)
+    }
+
+    @Test
+    fun `events for unsubscribed streams are never broadcast`() {
+        val hostSession = session("host", tenantId = 1, userId = 7)
+        val clientSession = session("client", tenantId = 1, userId = 7)
+        addSessions(hostSession, clientSession)
+        service.registerHost(hostSession, registration())
+        sender.messages.clear()
+
+        service.routeEvent(hostSession, relayEvent("session-9", sequence = 0L))
+
+        assertTrue(sender.messages.isEmpty())
+    }
+
+    @Test
+    fun `subscribe without a stream id is rejected before the host`() {
+        val hostSession = session("host", tenantId = 1, userId = 7)
+        val clientSession = session("client", tenantId = 1, userId = 7)
+        addSessions(hostSession, clientSession)
+        service.registerHost(hostSession, registration())
+        sender.messages.clear()
+
+        service.routeRequest(
+            clientSession,
+            RelayRequest(
+                requestId = RequestId("subscribe-2"),
+                hostId = HostId("desktop-main"),
+                method = "session.events.subscribe",
+            ),
+        )
+
+        val response = HarnessProtocolJson.decodeFromString<RelayResponse>(sender.messages.single().content)
+        assertEquals(ErrorCodeConstants.METHOD_FORBIDDEN.code, response.result.code)
+    }
+
+    private fun relayEvent(stream: String, sequence: Long) =
+        RelayEvent(
+            eventId = EventId("event-" + sequence),
+            hostId = HostId("desktop-main"),
+            streamId = StreamId(stream),
+            sequence = sequence,
+            event = "assistant/chunk",
+            payload = JsonPrimitive("chunk"),
+        )
 
     private fun addSessions(vararg sessions: WebSocketSession) {
         sessions.forEach(sessionManager::addSession)
