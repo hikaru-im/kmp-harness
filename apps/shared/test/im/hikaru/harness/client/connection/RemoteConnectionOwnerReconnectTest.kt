@@ -4,6 +4,7 @@ import im.hikaru.contracts.common.ApiResult
 import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
+import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.harness.client.account.AppSession
 import im.hikaru.harness.client.account.BackendTenant
 import im.hikaru.harness.client.account.MemberIdentity
@@ -81,6 +82,33 @@ class RemoteConnectionOwnerReconnectTest {
         }
     }
 
+    @Test
+    fun subscriptionsAreRememberedForReconnectAndDroppedOnLogout() = runBlocking {
+        val client = HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })
+        val owner =
+            RemoteConnectionOwner(
+                client = client,
+                closeClient = { client.close() },
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            )
+        try {
+            owner.subscribe(StreamId("session-1"))
+            owner.subscribe(StreamId("session-2"))
+            assertEquals(
+                setOf(StreamId("session-1"), StreamId("session-2")),
+                owner.subscribedStreams(),
+                "a subscription must be remembered so a reconnect can rebuild it",
+            )
+
+            owner.unsubscribe(StreamId("session-1"))
+            assertEquals(setOf(StreamId("session-2")), owner.subscribedStreams())
+
+            owner.stop()
+            assertTrue(owner.subscribedStreams().isEmpty(), "logging out must drop the subscriptions")
+        } finally {
+            owner.close()
+        }
+    }
     private fun session() =
         AppSession(
             identity = MemberIdentity(target = BackendTenant("https://example.com", 1L), userId = 7L),

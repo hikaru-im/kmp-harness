@@ -2,6 +2,7 @@ package im.hikaru.harness.client.connection
 
 import im.hikaru.contracts.common.ApiResult
 import im.hikaru.contracts.harness.identity.HostDescription
+import im.hikaru.contracts.harness.relay.RelayEvent
 import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.harness.client.account.AppSession
 import io.ktor.client.HttpClient
@@ -16,6 +17,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +66,25 @@ public class RemoteConnectionOwner(
     public val connection: StateFlow<RemoteConnection?> = mutableConnection.asStateFlow()
     public val hosts: StateFlow<List<HostDescription>> = mutableHosts.asStateFlow()
     public val status: StateFlow<RemoteConnectionStatus> = mutableStatus.asStateFlow()
+
+    /**
+     * Events of the currently connected Host, already narrowed by the Host and the Relay to the streams
+     * this client subscribed to. Empty while no connection is online.
+     */
+    public val sessionEvents: Flow<RelayEvent> =
+        flow {
+            mutableConnection.collectLatest { connection ->
+                connection?.events?.collect { emit(it) }
+            }
+        }
+
+    /** History snapshots pulled after a detected sequence gap, so the shell can reconcile its view. */
+    public val historyRecoveries: Flow<HistoryRecovery> =
+        flow {
+            mutableConnection.collectLatest { connection ->
+                connection?.historyRecoveries?.collect { emit(it) }
+            }
+        }
 
     /** Streams rebuilt after a reconnect. Returned as a snapshot so callers cannot mutate the scope. */
     public suspend fun subscribedStreams(): Set<StreamId> = mutex.withLock { subscriptions.toSet() }

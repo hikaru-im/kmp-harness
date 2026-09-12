@@ -39,6 +39,19 @@ polled:
   `session.events.unsubscribe` to the owning Host, so the Host learns what to publish. An
   event for an unsubscribed stream is never broadcast.
 
+### Client subscription
+
+Selecting or creating a Session is what makes a client subscribe:
+
+- `SessionStreamDriver` subscribes the selected Session, consumes the forwarded events and the gap
+  recoveries, and refreshes the screen from the authoritative history instead of trusting the event
+  body.
+- The subscription is released when the selection ends, including when the surrounding coroutine is
+  cancelled by cancelling the Session, switching Host, or logging out.
+- The subscription is exactly what the Host and the Relay filter on, so a stream no client subscribed
+  to is never published, and a sequence gap is repaired through history instead of being treated as a
+  contiguous stream.
+
 ### Reconnect and history recovery
 
 `RemoteConnectionOwner` is the only place that reconnects. It re-discovers the Host,
@@ -46,6 +59,10 @@ re-handshakes, rebuilds the subscriptions of the current identity scope, and re-
 after a detected gap, using bounded exponential backoff. `session.create` and
 `session.prompt` are never replayed on a new connection, because their outcome is uncertain
 after a drop; an uncertain result surfaces as unknown and the caller refreshes history instead.
+
+The shell drives every remote Session through `SessionStreamDriver`, so this is a reachable runtime
+path rather than a library-only one: the driver is the caller of `subscribe`/`unsubscribe` and the
+consumer of the forwarded events and the gap recoveries.
 
 ## Security policy
 
@@ -68,7 +85,8 @@ Passed:
 - `./kotlin test -p jvm -m harness-protocol` (11 tests)
 - `./kotlin test -p jvm -m harness` (12 tests, including subscribe forwarding, unsubscribed-stream
   isolation, and missing-stream rejection at the Relay)
-- `./kotlin test -p jvm -m shared` (24 tests, including sequence tracking and owner reconnect)
+- `./kotlin test -p jvm -m shared` (27 tests, including sequence tracking, owner reconnect, the
+  session stream driver, and subscription lifecycle)
 - `./kotlin test -p jvm -m jvm-app` (32 tests; 5 live-provider tests skipped without
   `HARNESS_OPENAI_LIVE_API_KEY`)
 - `./kotlin task :shared:compileAndroidDebug :shared:compileIosSimulatorArm64Debug :shared:compileIosArm64Debug :android-app:compileAndroidDebug :ios-app:compileIosSimulatorArm64Debug :ios-app:compileIosArm64Debug :harness:compileJvm :jvm-app:compileJvm`
@@ -95,7 +113,7 @@ as the A19 real-environment exercise.
 | A13 | Passed (code + tests) | Host registration, discovery, and handshake paths; `shared` connection tests |
 | A14 | Passed (code + tests) | Identity scoping and generation guards; `harness` relay tests |
 | A15 | Passed (code + tests) | Sensitive-method rejection retained on client, Relay, and Host adapter |
-| A16 | Passed (code + tests) | Subscription isolation and sequence gap handling; `harness` and `shared` tests |
+| A16 | Passed (code + tests) | The shell subscribes the selected Session and consumes forwarded events and gap recoveries; subscription isolation, sequence gaps, and cleanup covered by `harness` and `shared` tests |
 | A17 | Passed (code + tests) | Reconnect, re-handshake, subscription rebuild, history recovery, no command replay |
 | A18 | Partially verified | Android/iOS Kotlin compilation passes; device and simulator runtime blocked |
 | A19 | Not run | Needs a real backend, Member login, isolated database, device, and provider |
