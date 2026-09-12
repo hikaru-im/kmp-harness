@@ -1,0 +1,75 @@
+schema: comet.native.children.v2
+acceptance_index:
+  A1:
+    source: brief.md
+    text: "A1: 交付记录固定上游 b4877d495c3479bf3632f4117a3c62b62c32d209、逐路径同步/保留/排除结论与许可证来源；实际 diff 不覆盖 Harness 内核、管理后台目录形态或既有无关文档改动。"
+  A2:
+    source: brief.md
+    text: "A2: 公共契约统一使用 im.hikaru.contracts；产品源码没有旧 im.hikaru.ruoyi.contracts 引用、同 FQCN 重复定义或并存 FileInfo；契约序列化测试通过且 Harness WebSocket/Relay contract 保留。"
+  A3:
+    source: brief.md
+    text: "A3: 签到只经在线 API 执行，不能进入 sync 白名单或被旧队列重放；地址/个人资料有效同步仍可用，旧签到同步请求稳定拒绝且不产生签到副作用。"
+  A4:
+    source: brief.md
+    text: "A4: 合并后的后端能以测试配置启动并处理 Member 登录、刷新和租户校验；Admin 既有认证及 Harness raw WebSocket、生命周期通知和租户上下文回归通过。"
+  A5:
+    source: brief.md
+    text: "A5: 密码登录成功建立 Member 身份；并发令牌过期只进行一次有效刷新；刷新失效进入未登录状态；网络失败与协程取消可区分，取消不被吞为业务成功或认证失败。"
+  A6:
+    source: brief.md
+    text: "A6: 登录可在安全存储可用的平台重启恢复；存储与 RuoYi 独立，令牌不出现在普通 JSON、Room、日志或提交内容中；Desktop 安全存储不可用时明确提示仅本次会话登录并不落明文，退出后无法恢复。当前环境缺少可执行的真实安全存储平台（无运行中的 Secret Service、无 Windows/macOS 主机、无 Android 设备或模拟器、无 Apple SDK/Xcode）时，该平台重启恢复子句以 Desktop 侧登录态持久化与登出语义测试，加上交付文档逐项如实记录未运行的平台项、原因与复验条件为满足；平台条件具备时仍以真实平台重启恢复为准，未运行的平台项不得记为通过。"
+  A7:
+    source: brief.md
+    text: "A7: 后端地址、租户或账号切换时，旧请求、刷新和订阅结果不能写入新身份，旧令牌不能发送到新地址/租户，缓存和未提交同步任务不会跨身份读取或执行。"
+  A8:
+    source: brief.md
+    text: "A8: 断网或服务端登出失败时仍清除本地登录态、取消账号相关工作并关闭远程连接；再次启动不会恢复已登出的会话，本地 Host 和 Agent 数据保持可用。"
+  A9:
+    source: brief.md
+    text: "A9: 客户端 Koin、业务数据库与 Harness Runtime/Session 数据边界独立；apps/shared 不依赖 Runtime Service，Mobile 不装 Host；已有 harness-sessions.db 可恢复原事件，数据库实例不共享文件且不使用破坏性迁移。"
+  A10:
+    source: brief.md
+    text: "A10: Desktop 无网络、无账号且未配置模型时能显示本地 Harness 入口；登录/登出不重建或关闭本地 Host，--home/--patch 仍有效，关闭窗口释放 Host、客户端作用域和数据库句柄。"
+  A11:
+    source: brief.md
+    text: "A11: HarnessApp 提供账号、租户、个人资料、Host 选择与连接状态；未登录远程操作进入登录流程，登录后返回原目标；首期导航不显示地址、签到、积分或支付入口。"
+  A12:
+    source: brief.md
+    text: "A12: 应用通过同一类型化 Connection 暴露 host.describe 与 session.list/create/history/prompt/cancel；本地 create→prompt→history 与事件日志派生结果一致，模型必须显式选择，缺失模型稳定报错。"
+  A13:
+    source: brief.md
+    text: "A13: Desktop 与 Mobile 都主动连接已配置的 RuoYi 后端；客户端能发现同身份在线 Host，完成兼容性/能力握手，连接失败与无在线 Host 状态可观察，协议不兼容时不进入会话调用。"
+  A14:
+    source: brief.md
+    text: "A14: 跨 tenantId、userType 或 userId 的 Host 发现、注册替换、请求、响应与订阅访问均拒绝；payload 不能覆盖登录身份，旧 Host generation 的迟到响应不能完成当前请求。"
+  A15:
+    source: brief.md
+    text: "A15: 远程 Credentials 写入/删除、secret Settings 写入、临时 API Key 模型发现和 Desktop 文件操作在到达敏感服务前拒绝，敏感值不出现在返回数据、事件或日志中。"
+  A16:
+    source: brief.md
+    text: "A16: Relay 事件只发给拥有该订阅的客户端连接；取消、切 Host、登出与断线清理订阅；重复/乱序事件按 sequence 处理，缺口可检测并通过 history 恢复，不按用户或租户广播。"
+  A17:
+    source: brief.md
+    text: "A17: 请求超时、Host 替换、Host/客户端断线均以稳定结果结束 pending 并释放资源；重连重新握手/订阅及恢复历史，未确定结果的 prompt/create 不自动重发或进入 Outbox。"
+  A18:
+    source: brief.md
+    text: "A18: Android 与 iOS 入口装配同一 HarnessApp 及各自网络/安全存储适配，Desktop、Android、iOS 编译目标全部通过；缺少 Apple SDK/Xcode 或设备时，iOS 编译、iOS 模拟器与 Android 生命周期检查必须在交付文档中逐项标注为未运行（blocked），不得标为通过，并写明复验条件。"
+  A19:
+    source: brief.md
+    text: "A19: 实际后端、Desktop 和 Android 客户端的登录→发现 Host→创建会话→显式选模型→prompt→流式事件→history→cancel 远程演练在具备真实后端、设备与模型凭据时执行并记录脱敏证据；当前环境不具备时，交付文档必须逐项记录未运行项、原因与复验前提，fixture 或编译结果不得冒充真实 E2E。"
+  A20:
+    source: brief.md
+    text: "A20: 交付文档包含依赖与数据库兼容说明、启动/部署/回滚和上游后续同步步骤，并逐项区分通过、失败、跳过及阻塞的检查；没有凭据/设备/Apple 环境的运行验收保持未完成。"
+children:
+  - name: ruoyi-foundation
+    depends_on: []
+    covers: [A1, A2, A3, A4, A5, A6, A7, A8, A9]
+  - name: ruoyi-app-shell
+    depends_on: [ruoyi-foundation]
+    covers: [A10, A11, A12]
+  - name: ruoyi-remote-platform
+    depends_on: [ruoyi-app-shell]
+    covers: [A13, A14, A15, A16, A17, A18, A19, A20]
+  - name: ruoyi-foundation-acceptance-repair
+    depends_on: [ruoyi-remote-platform]
+    covers: [A4, A6]
