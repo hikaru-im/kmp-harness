@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"/home/hikaru/IdeaProjects/kmp-harness/.agents/skills/comet/scripts/comet-hook-router.mjs\" --platform \"codex\" --project-root \"/home/hikaru/IdeaProjects/kmp-harness\""
+            "command": "node \"/Volumes/Data/IdeaProjects/kmp-harness/.agents/skills/comet/scripts/comet-hook-router.mjs\" --platform \"codex\" --project-root \"/Volumes/Data/IdeaProjects/kmp-harness\""
           }
         ]
       }
