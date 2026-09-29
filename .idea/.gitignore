@@ -8,3 +8,9 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+
+# 由 IDE 生成的文件
+/*.iml
+/modules.xml
+/xcode.xml
+/inspectionProfiles/
