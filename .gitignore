@@ -15,6 +15,9 @@ shared test caches/
 local.properties
 keystore.properties
 
+# machine-local tool settings
+.claude/settings.local.json
+
 /references/
 # >>> Comet managed project state >>>
 !/.comet/
