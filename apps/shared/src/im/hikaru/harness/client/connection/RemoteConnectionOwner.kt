@@ -2,9 +2,11 @@ package im.hikaru.harness.client.connection
 
 import im.hikaru.contracts.common.ApiResult
 import im.hikaru.contracts.harness.identity.HostDescription
+import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.contracts.harness.relay.RelayEvent
 import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.harness.client.account.AppSession
+import im.hikaru.harness.client.account.MemberIdentity
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -16,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
@@ -38,6 +41,8 @@ public enum class RemoteConnectionStatus {
     DISCONNECTED,
 }
 
+public data class RemoteDiscoveryState(val refreshing: Boolean = false, val error: String? = null)
+
 /**
  * Owns the remote client connection for one authenticated account scope.
  *
@@ -56,16 +61,26 @@ public class RemoteConnectionOwner(
     private val mutableConnection = MutableStateFlow<RemoteConnection?>(null)
     private val mutableHosts = MutableStateFlow<List<HostDescription>>(emptyList())
     private val mutableStatus = MutableStateFlow(RemoteConnectionStatus.IDLE)
+    private val mutableDiscovery = MutableStateFlow(RemoteDiscoveryState())
+    private val mutableIdentity = MutableStateFlow<MemberIdentity?>(null)
+    private val mutableSelectedHost = MutableStateFlow<HostDescription?>(null)
+    private val discoveryMutex = Mutex()
+    private val refreshMutex = Mutex()
     private val subscriptions = linkedSetOf<StreamId>()
     private var session: AppSession? = null
     private var clientId: String? = null
     private var desiredHostId: String? = null
     private var supervisor: Job? = null
     private var closed = false
+    private var generation = 0L
 
     public val connection: StateFlow<RemoteConnection?> = mutableConnection.asStateFlow()
     public val hosts: StateFlow<List<HostDescription>> = mutableHosts.asStateFlow()
     public val status: StateFlow<RemoteConnectionStatus> = mutableStatus.asStateFlow()
+    public val discovery: StateFlow<RemoteDiscoveryState> = mutableDiscovery.asStateFlow()
+    public val identity: StateFlow<MemberIdentity?> = mutableIdentity.asStateFlow()
+    /** Selected target survives transport reconnects; stop/logout clears its ownership. */
+    public val selectedHost: StateFlow<HostDescription?> = mutableSelectedHost.asStateFlow()
 
     /**
      * Events of the currently connected Host, already narrowed by the Host and the Relay to the streams
@@ -90,15 +105,54 @@ public class RemoteConnectionOwner(
     public suspend fun subscribedStreams(): Set<StreamId> = mutex.withLock { subscriptions.toSet() }
 
     public suspend fun discover(session: AppSession): List<HostDescription> {
-        val response = client.get {
-            url(session.identity.target.baseUrl.trimEnd('/') + "/app-api/harness/hosts")
-            header(HttpHeaders.Authorization, "Bearer " + session.accessToken)
-            header("tenant-id", session.identity.target.tenantId)
-        }.body<ApiResult<List<HostDescription>>>()
-        if (!response.isSuccess) throw RemoteConnectionException(response.msg ?: "Host discovery failed", response.code)
-        val result = response.data.orEmpty()
-        mutex.withLock { if (!closed) mutableHosts.value = result }
-        return result
+        val version = mutex.withLock {
+            if (closed || this.session != session) throw CancellationException("Account scope changed")
+            generation
+        }
+        return discoveryMutex.withLock {
+            mutex.withLock {
+                if (closed || generation != version || this.session != session) throw CancellationException("Account scope changed")
+                mutableDiscovery.value = RemoteDiscoveryState(refreshing = true)
+            }
+            try {
+                val response = client.get {
+                    url(session.identity.target.baseUrl.trimEnd('/') + "/app-api/harness/hosts")
+                    header(HttpHeaders.Authorization, "Bearer " + session.accessToken)
+                    header("tenant-id", session.identity.target.tenantId)
+                }.body<ApiResult<List<HostDescription>>>()
+                currentCoroutineContext().ensureActive()
+                if (!response.isSuccess) throw RemoteConnectionException("Host discovery failed", response.code)
+                val result = response.data.orEmpty()
+                mutex.withLock {
+                    if (closed || generation != version || this.session != session) throw CancellationException("Account scope changed")
+                    mutableHosts.value = result
+                    mutableDiscovery.value = RemoteDiscoveryState()
+                }
+                result
+            } catch (cancelled: CancellationException) {
+                mutex.withLock { if (generation == version && !closed) mutableDiscovery.value = RemoteDiscoveryState() }
+                throw cancelled
+            } catch (failure: Exception) {
+                mutex.withLock {
+                    if (generation == version && !closed) mutableDiscovery.value = RemoteDiscoveryState(error = "无法发现远程 Host，请重试。")
+                }
+                throw failure
+            }
+        }
+    }
+
+    /** Coalesces repeated page actions and never changes the active transport state. */
+    public suspend fun refresh(expectedSession: AppSession? = null) {
+        if (!refreshMutex.tryLock()) return
+        try {
+            val identity = mutex.withLock {
+                if (closed || mutableDiscovery.value.refreshing || (expectedSession != null && session != expectedSession)) return
+                session ?: return
+            }
+            discover(identity)
+        } finally {
+            refreshMutex.unlock()
+        }
     }
 
     /**
@@ -110,25 +164,33 @@ public class RemoteConnectionOwner(
         mutex.withLock {
             check(!closed) { "Remote connection owner is closed" }
             this.session = session
+            mutableIdentity.value = session.identity
             this.clientId = clientId
-            supervisor = scope.launch { supervise() }
+            val version = generation
+            supervisor = scope.launch { supervise(version) }
         }
     }
 
     /** Stops the loop, closes the connection and forgets the old identity scope. */
     public suspend fun stop() {
-        val previous = mutex.withLock { supervisor.also { supervisor = null } }
-        previous?.cancelAndJoin()
-        mutex.withLock {
+        val previous = mutex.withLock {
+            generation += 1
+            val previous = supervisor
+            supervisor = null
             mutableConnection.value?.close()
             mutableConnection.value = null
             mutableHosts.value = emptyList()
             subscriptions.clear()
             session = null
+            mutableIdentity.value = null
             clientId = null
             desiredHostId = null
+            mutableSelectedHost.value = null
+            mutableDiscovery.value = RemoteDiscoveryState()
             if (!closed) mutableStatus.value = RemoteConnectionStatus.IDLE
+            previous
         }
+        previous?.cancelAndJoin()
     }
 
     /**
@@ -138,12 +200,28 @@ public class RemoteConnectionOwner(
      * carried over to the new one: [connectTo] rebuilds only what this identity scope still owns, and
      * the shell re-registers its current selection once the new connection is online.
      */
-    public suspend fun select(host: HostDescription) {
-        mutex.withLock {
+    public suspend fun select(host: HostDescription, expectedSession: AppSession? = null) {
+        val (previous, version) = mutex.withLock {
+            if (closed || (expectedSession != null && session != expectedSession)) return
+            if (host.protocolVersion.major != ProtocolVersion.Current.major) return
+            if (session != null && mutableHosts.value.none { it == host }) return
+            if (mutableConnection.value != null && desiredHostId == host.hostId.value) return
             desiredHostId = host.hostId.value
+            mutableSelectedHost.value = host
             subscriptions.clear()
+            generation += 1
+            val previous = supervisor
+            supervisor = null
+            mutableConnection.value?.close()
+            mutableConnection.value = null
+            mutableDiscovery.value = RemoteDiscoveryState()
+            if (session != null) mutableStatus.value = RemoteConnectionStatus.CONNECTING
+            previous to generation
         }
-        mutex.withLock { mutableConnection.value?.close() }
+        previous?.cancelAndJoin()
+        mutex.withLock {
+            if (!closed && version == generation && session != null) supervisor = scope.launch { supervise(version) }
+        }
     }
 
     public suspend fun subscribe(streamId: StreamId) {
@@ -178,21 +256,29 @@ public class RemoteConnectionOwner(
         }
     }
 
-    private suspend fun supervise() {
+    private suspend fun supervise(version: Long) {
         var attempt = 0
         while (currentCoroutineContext().isActive) {
-            val identity = mutex.withLock { session to clientId }
+            val identity = mutex.withLock { if (generation != version || closed) return; session to clientId }
             val activeSession = identity.first ?: return
             val activeClientId = identity.second ?: return
             try {
-                mutex.withLock { mutableStatus.value = RemoteConnectionStatus.DISCOVERING }
+                mutex.withLock {
+                    if (generation != version || closed) return
+                    mutableStatus.value = RemoteConnectionStatus.DISCOVERING
+                }
                 val discovered = discover(activeSession)
                 val preferred = mutex.withLock { desiredHostId }
-                val host =
-                    (preferred?.let { id -> discovered.firstOrNull { it.hostId.value == id } })
-                        ?: discovered.firstOrNull()
-                        ?: throw RemoteConnectionException("No online Host for this identity")
-                connectTo(activeSession, host, activeClientId)
+                val host = if (preferred != null) {
+                    discovered.firstOrNull { it.hostId.value == preferred }
+                        ?: throw RemoteConnectionException("Selected Host is unavailable")
+                } else {
+                    discovered.firstOrNull { it.protocolVersion.major == ProtocolVersion.Current.major }
+                        ?: throw RemoteConnectionException("No compatible Host for this identity")
+                }
+                if (host.protocolVersion.major != ProtocolVersion.Current.major)
+                    throw RemoteConnectionException("Host protocol is incompatible")
+                connectTo(activeSession, host, activeClientId, version)
                 attempt = 0
                 val active = mutex.withLock { mutableConnection.value } ?: continue
                 active.awaitClosed()
@@ -202,23 +288,38 @@ public class RemoteConnectionOwner(
                 // Fall through to a bounded retry; the failure stays observable through status.
             }
             if (!currentCoroutineContext().isActive) return
+            mutex.withLock {
+                if (closed || generation != version) return
+                mutableConnection.value?.close()
+                mutableConnection.value = null
+            }
             val delayMillis =
                 policy.nextDelay(attempt) ?: run {
                     mutex.withLock {
+                        if (closed || generation != version) return
                         mutableConnection.value?.close()
                         mutableConnection.value = null
                         mutableStatus.value = RemoteConnectionStatus.DISCONNECTED
+                        if (mutableDiscovery.value.error == null) mutableDiscovery.value = RemoteDiscoveryState(error = "无法连接远程 Host，请确认 Host 在线后重试。")
                     }
                     return
                 }
             attempt += 1
-            mutex.withLock { mutableStatus.value = RemoteConnectionStatus.RECONNECTING }
+            mutex.withLock {
+                if (closed || generation != version) return
+                mutableStatus.value = RemoteConnectionStatus.RECONNECTING
+            }
             delay(delayMillis)
         }
     }
 
-    private suspend fun connectTo(session: AppSession, host: HostDescription, clientId: String) {
-        mutex.withLock { mutableStatus.value = RemoteConnectionStatus.CONNECTING }
+    private suspend fun connectTo(session: AppSession, host: HostDescription, clientId: String, version: Long) {
+        mutex.withLock {
+            if (closed || generation != version || this.session != session) return
+            desiredHostId = host.hostId.value
+            mutableSelectedHost.value = host
+            mutableStatus.value = RemoteConnectionStatus.CONNECTING
+        }
         val created = RemoteConnection.connect(
             client = client,
             baseUrl = session.identity.target.baseUrl,
@@ -229,7 +330,7 @@ public class RemoteConnectionOwner(
             scope = scope,
         )
         val streams = mutex.withLock {
-            if (closed) {
+            if (closed || generation != version || this.session != session) {
                 created.close()
                 return
             }
@@ -253,6 +354,7 @@ public class RemoteConnectionOwner(
     override fun close() {
         if (closed) return
         closed = true
+        generation += 1
         val previous = supervisor
         supervisor = null
         previous?.cancel()
@@ -260,6 +362,9 @@ public class RemoteConnectionOwner(
         mutableConnection.value = null
         mutableHosts.value = emptyList()
         mutableStatus.value = RemoteConnectionStatus.IDLE
+        mutableDiscovery.value = RemoteDiscoveryState()
+        mutableIdentity.value = null
+        mutableSelectedHost.value = null
         subscriptions.clear()
         closeClient()
         scope.coroutineContext[Job]?.cancel()

@@ -1,16 +1,19 @@
 package im.hikaru.harness.runtime
 
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.withContext
-import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.CoroutineContext
 
 /**
- * Runtime 的单写入者生命周期通道。
+ * Runtime 的单写入者状态通道。
  *
- * 所有 suspend mutation 都按调用顺序串行执行；同一条生命周期调用链中的
- * provide / dispose / reconcile 可以重入，而不会再次等待同一把 Mutex。
+ * 与旧实现的区别：
+ *
+ * - 临界区只允许同步状态提交；block 不是 suspend，编译期保证内部没有挂起点；
+ * - 因此其它协程不可能在临界区内运行，也就不需要任何协程上下文元素来识别“同一条
+ *   调用链的重入”；
+ * - 锁不可重入：block 不得再次调用 mutate。若需要嵌套，调用方必须先把外层
+ *   临界区提交完，再在锁外发起新的 mutate。
+ *
+ * 所有可能挂起的用户回调、生命周期 cleanup、join 等待与 io，都必须移到锁外执行。
  */
 internal class RuntimeMutationLane {
 
@@ -18,65 +21,14 @@ internal class RuntimeMutationLane {
         Mutex()
 
     suspend fun <T> run(
-        block: suspend () -> T,
+        block: () -> T,
     ): T {
-        if (
-            currentCoroutineContext()[MutationMarker]
-                ?.lane === this
-        ) {
-            return block()
-        }
-
         mutex.lock()
 
         return try {
-            val outcome: MutationOutcome<T> =
-                withContext(
-                    MutationMarker(this)
-                ) {
-                    try {
-                        MutationOutcome.Success(
-                            block()
-                        )
-                    } catch (error: Throwable) {
-                        MutationOutcome.Failure(
-                            error
-                        )
-                    }
-                }
-
-            when (outcome) {
-                is MutationOutcome.Success ->
-                    outcome.value
-
-                is MutationOutcome.Failure ->
-                    throw outcome.error
-            }
+            block()
         } finally {
             mutex.unlock()
         }
-    }
-
-    /**
-     * 异常先作为值穿过 withContext 边界，再在调用方 Context 中重新抛出。
-     * 这样不会被 coroutine stack-trace recovery 复制，也不会丢失 suppressed errors。
-     */
-    private sealed interface MutationOutcome<out T> {
-
-        data class Success<T>(
-            val value: T,
-        ) : MutationOutcome<T>
-
-        data class Failure(
-            val error: Throwable,
-        ) : MutationOutcome<Nothing>
-    }
-
-    private class MutationMarker(
-        val lane: RuntimeMutationLane,
-    ) : AbstractCoroutineContextElement(Key) {
-
-        companion object Key :
-            CoroutineContext.Key<MutationMarker>
     }
 }

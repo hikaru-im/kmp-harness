@@ -114,6 +114,12 @@ public class HostRelayConnection private constructor(
                     val input = json.decodeFromJsonElement(SessionId.serializer(), request.payload ?: error("missing payload"))
                     encode(gateway.invoke(SessionHistoryEndpoint, input))
                 }
+                SessionDescendantsEndpoint.method, SessionChildHistoryEndpoint.method ->
+                    invokeSessionDescendantsRead(gateway, request.method, request.payload, json)
+                SessionBackgroundProcessesEndpoint.method, SessionBackgroundOutputEndpoint.method ->
+                    invokeSessionBackgroundProcessesRead(gateway, request.method, request.payload, json)
+                SessionBackgroundInputEndpoint.method, SessionBackgroundCloseInputEndpoint.method, SessionBackgroundCancelEndpoint.method ->
+                    invokeSessionBackgroundProcessesMutation(gateway, request.method, request.payload, json)
                 SessionPromptEndpoint.method -> {
                     val input = json.decodeFromJsonElement(SessionPromptRequest.serializer(), request.payload ?: error("missing payload"))
                     val prompt = gateway.invoke(SessionPromptEndpoint, input)
@@ -147,7 +153,7 @@ public class HostRelayConnection private constructor(
                 }
                 else -> ApiResult(404, "Harness endpoint unavailable")
             }
-        } catch (_: CancellationException) { throw CancellationException() }
+        } catch (error: CancellationException) { throw error }
         catch (_: Throwable) { ApiResult(500, "Harness endpoint failed") }
     }
 

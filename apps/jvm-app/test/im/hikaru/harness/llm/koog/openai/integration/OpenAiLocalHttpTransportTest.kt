@@ -685,6 +685,7 @@ private fun responsesResponse(): List<String> =
                 put("created_at", 1)
                 put("id", "resp-local")
                 put("model", "gpt-4o-mini")
+                put("instructions", "fixture instructions")
                 putJsonArray("output") {}
                 put("parallel_tool_calls", false)
                 put("status", "completed")

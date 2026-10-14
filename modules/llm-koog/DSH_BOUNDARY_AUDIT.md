@@ -48,7 +48,8 @@
    三类默认 Ktor transport 行为；其他 Provider 和外部 live engine 仍待各自验收）；
 4. 版本化 replay codec 的成功、篡改、provider/model mismatch 和 content mismatch 测试；
 5. 测试凭据 live text/tool 请求与资源关闭；生产 file-backed Responses 已使用测试凭据到达外部 HTTP 200，
-   随后由 Koog #2211 阻塞；当前连接没有 Chat Completions 渠道，text/tool 成功路径仍未验收；
+   该外部连接曾由 Koog 1.1.1 的 #2211 阻塞；Koog 1.3.0 scripted fixture 已验证字符串 `response.instructions`
+   可以通过 Responses client 解析，当前连接没有 Chat Completions 渠道，text/tool 成功路径仍未验收；
 6. 日志、异常、settings、replay state 和测试产物的 secret audit；live harness 已加入 chunk/异常/非凭据文件
    扫描与临时目录清理，已随本次外部 Responses 请求执行通过。
 

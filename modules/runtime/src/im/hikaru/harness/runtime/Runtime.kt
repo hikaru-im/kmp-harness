@@ -8,6 +8,8 @@ import im.hikaru.harness.runtime.plugin.InstallResult
 import im.hikaru.harness.runtime.plugin.SimplePlugin
 import im.hikaru.harness.runtime.service.ServiceKey
 import im.hikaru.harness.runtime.service.ServiceSlot
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withContext
 
 /**
  * 整个 Plugin Runtime 的核心管理器。
@@ -123,8 +125,8 @@ class Runtime {
      *   ↓
      * 再次递归 refresh
      */
-    private var isReconciling =
-        false
+    private var reconcileSignal:
+            CompletableDeferred<Unit>? = null
 
     init {
 
@@ -155,18 +157,23 @@ class Runtime {
 
             pendingRefresh +=
                 dependents
-
-            reconcile()
         }
 
         /**
-         * Context Scope dispose 时，Runtime 负责先移除并停止
-         * 这个 Context 子树中管理的全部 Fiber。
+         * Context Scope dispose 时，Runtime 先在锁内同步认领并移除
+         * 这个 Context 子树中管理的全部 Fiber，再把停止动作交给锁外执行。
          */
         core.bindContextDisposingHandler { disposingContext ->
-            disposePluginsUnder(
+            claimFibersUnder(
                 disposingContext
             )
+        }
+
+        /**
+         * 每次同步状态提交结束后，在锁外处理待刷新队列。
+         */
+        core.bindPostMutationHandler {
+            reconcileIfIdle()
         }
     }
 
@@ -205,25 +212,74 @@ class Runtime {
         config: C,
         parent: Context = context,
     ): InstallResult<C> {
-        return core.mutate {
-            installNow(
-                plugin = plugin,
-                config = config,
-                parent = parent,
-            )
+
+        val prepared =
+            core.mutate {
+                prepareInstall(
+                    plugin = plugin,
+                    config = config,
+                    parent = parent,
+                )
+            }
+
+        val fiber =
+            prepared.fiber
+
+        if (fiber == null) {
+            val error =
+                prepared.error!!
+
+            try {
+                prepared.orphan?.dispose()
+            } catch (rollbackError: Throwable) {
+                if (rollbackError !== error) {
+                    error.addSuppressed(
+                        rollbackError
+                    )
+                }
+            }
+
+            throw error
         }
+
+        var failure: Throwable? =
+            null
+
+        if (!core.isInsideOperation()) {
+            try {
+                reconcile()
+            } catch (error: Throwable) {
+                failure =
+                    error
+            }
+        }
+
+        return InstallResult(
+            fiber = fiber,
+            failure = failure,
+        )
     }
 
-    private suspend fun <C : Any> installNow(
+    /**
+     * 安装准备的结果。
+     */
+    private class InstallPreparation<C : Any>(
+        val fiber: Fiber<C>?,
+        val orphan: Context?,
+        val error: Throwable?,
+    )
+
+    /**
+     * 在锁内同步完成 Fiber 的创建、登记与依赖索引。
+     *
+     * 真正的 apply 由随后的 reconcile 在锁外执行。
+     */
+    private fun <C : Any> prepareInstall(
         plugin: Plugin<C>,
         config: C,
         parent: Context,
-    ): InstallResult<C> {
+    ): InstallPreparation<C> {
 
-        /**
-         * Plugin 必须安装到当前 Runtime
-         * 自己的 Context Tree。
-         */
         check(parent.root === context) {
             "Parent context does not belong to this Runtime"
         }
@@ -235,10 +291,6 @@ class Runtime {
         val instanceId =
             nextFiberId++
 
-        /**
-         * 每一个 Fiber
-         * 都有自己的 Context。
-         */
         val pluginContext =
             parent.child(
                 ownerId = instanceId,
@@ -253,55 +305,27 @@ class Runtime {
                     context = pluginContext,
                 )
             } catch (error: Throwable) {
-                try {
-                    pluginContext.dispose()
-                } catch (rollbackError: Throwable) {
-                    if (rollbackError !== error) {
-                        error.addSuppressed(
-                            rollbackError
-                        )
-                    }
-                }
-
-                throw error
+                return InstallPreparation(
+                    fiber = null,
+                    orphan = pluginContext,
+                    error = error,
+                )
             }
 
         mutableFibers +=
             fiber
 
-        /**
-         * required / optional dependencies
-         * 全部建立 ServiceSlot index。
-         */
         registerDependencies(
             fiber
         )
 
-        /**
-         * 新安装 Plugin 至少检查一次。
-         *
-         * 即使：
-         *
-         * inject == emptySet()
-         *
-         * 也需要从 Pending -> Active。
-         */
         pendingRefresh +=
             fiber
 
-        var failure: Throwable? =
-            null
-
-        try {
-            reconcile()
-        } catch (error: Throwable) {
-            failure =
-                error
-        }
-
-        return InstallResult(
+        return InstallPreparation(
             fiber = fiber,
-            failure = failure,
+            orphan = null,
+            error = null,
         )
     }
 
@@ -336,45 +360,45 @@ class Runtime {
     suspend fun uninstall(
         fiber: Fiber<*>,
     ) {
-        core.mutate {
-            uninstallNow(fiber)
-        }
-    }
 
-    private suspend fun uninstallNow(
-        fiber: Fiber<*>,
-    ) {
+        val managed =
+            core.mutate {
+                check(fiber.context.root === context) {
+                    "Plugin does not belong to this Runtime"
+                }
 
-        check(fiber.context.root === context) {
-            "Plugin does not belong to this Runtime"
-        }
+                if (fiber !in mutableFibers) {
+                    check(
+                        fiber.state == FiberState.Disposed &&
+                            fiber.context.isDisposed
+                    ) {
+                        "Fiber is not managed by this Runtime"
+                    }
 
-        if (fiber !in mutableFibers) {
-            check(
-                fiber.state == FiberState.Disposed &&
-                    fiber.context.isDisposed
-            ) {
-                "Fiber is not managed by this Runtime"
+                    false
+                } else {
+                    true
+                }
             }
 
+        if (!managed) {
             return
         }
 
-        /**
-         * Fiber Context dispose 会通过 RuntimeCore 回调：
-         *
-         * - 从 Runtime 移除当前 Plugin
-         * - 递归卸载它下面的 descendant Plugin
-         * - 停止 lifecycle
-         * - 清理 child Context 和 Context-owned effects
-         */
-        fiber.context.dispose()
+        val nested =
+            core.isInsideOperation()
 
-        /**
-         * 如果 stop() 过程中产生了新的刷新任务，
-         * 确保它们被处理。
-         */
-        reconcile()
+        withContext(
+            RuntimeOperationMarker(core)
+        ) {
+            fiber.context.dispose()
+
+            if (nested) {
+                reconcileIfIdle()
+            } else {
+                reconcile()
+            }
+        }
     }
 
     /**
@@ -386,23 +410,22 @@ class Runtime {
     suspend fun retry(
         fiber: Fiber<*>,
     ): Boolean {
-        return core.mutate {
-            retryNow(fiber)
-        }
-    }
 
-    private suspend fun retryNow(
-        fiber: Fiber<*>,
-    ): Boolean {
-        check(fiber.context.root === context) {
-            "Plugin does not belong to this Runtime"
-        }
+        core.mutate {
+            check(fiber.context.root === context) {
+                "Plugin does not belong to this Runtime"
+            }
 
-        check(fiber in mutableFibers) {
-            "Fiber is not managed by this Runtime"
+            check(fiber in mutableFibers) {
+                "Fiber is not managed by this Runtime"
+            }
         }
 
-        return fiber.retry()
+        return withContext(
+            RuntimeOperationMarker(core)
+        ) {
+            fiber.retry()
+        }
     }
 
     /**
@@ -412,9 +435,10 @@ class Runtime {
      * 先统一 unregister 很重要：Plugin stop 导致 Service 消失时，
      * 即将销毁的 sibling / descendant 不会重新进入 refresh queue。
      */
-    private suspend fun disposePluginsUnder(
+    private fun claimFibersUnder(
         disposingContext: Context,
-    ) {
+    ): List<suspend () -> Unit> {
+
         val targets =
             mutableFibers
                 .filter { fiber ->
@@ -424,7 +448,7 @@ class Runtime {
                 }
 
         if (targets.isEmpty()) {
-            return
+            return emptyList()
         }
 
         for (fiber in targets) {
@@ -437,45 +461,17 @@ class Runtime {
             targets.toSet()
         )
 
-        val stopOrder =
-            targets.sortedWith(
+        return targets
+            .sortedWith(
                 compareByDescending<Fiber<*>> { fiber ->
                     fiber.context.depth
                 }.thenByDescending { fiber ->
                     fiber.id
                 }
             )
-
-        var failure: Throwable? =
-            null
-
-        for (fiber in stopOrder) {
-            try {
-                fiber.stop()
-            } catch (error: Throwable) {
-                if (failure == null) {
-                    failure =
-                        error
-                } else if (error !== failure) {
-                    failure.addSuppressed(error)
-                }
+            .map { fiber ->
+                suspend { fiber.stop() }
             }
-        }
-
-        try {
-            reconcile()
-        } catch (error: Throwable) {
-            if (failure == null) {
-                failure =
-                    error
-            } else if (error !== failure) {
-                failure.addSuppressed(error)
-            }
-        }
-
-        failure?.let { error ->
-            throw error
-        }
     }
 
     /**
@@ -499,29 +495,12 @@ class Runtime {
         service: T,
     ): Disposable {
 
-        return core.mutate {
-            replaceNow(
-                key = key,
-                service = service,
-            )
-        }
-    }
-
-    private suspend fun <T : Any> replaceNow(
-        key: ServiceKey<T>,
-        service: T,
-    ): Disposable {
-
         val current =
             context.binding(key)
                 ?: error(
                     "Service '${key.name}' is not provided"
                 )
 
-        /**
-         * Runtime Root 不应该强行替换
-         * Plugin 自己拥有的 Service。
-         */
         check(current.ownerId == null) {
             "Service '${key.name}' is owned by plugin ${current.ownerId}"
         }
@@ -625,59 +604,153 @@ class Runtime {
     }
 
     /**
-     * 处理定向刷新队列。
+     * 在锁外处理定向刷新队列。
      *
-     * 不再扫描全部 fibers。
+     * 同一 Runtime 同时只有一个 drain 循环；其它调用者在锁内登记后等待该轮结束。
      */
     private suspend fun reconcile() {
 
-        /**
-         * 已经有人在处理 queue。
-         *
-         * 新的受影响 Plugin
-         * 已经被加入 pendingRefresh，
-         * 当前 while 后续自然会处理。
-         */
-        if (isReconciling) {
-            return
-        }
+        while (true) {
 
-        isReconciling =
-            true
+            var signal: CompletableDeferred<Unit>? =
+                null
 
-        try {
+            val isRunner =
+                core.mutate {
+                    if (reconcileSignal == null) {
+                        val created =
+                            CompletableDeferred<Unit>()
 
-            while (pendingRefresh.isNotEmpty()) {
+                        reconcileSignal =
+                            created
 
-                /**
-                 * 取最早进入队列的 Plugin。
-                 */
-                val fiber =
-                    pendingRefresh.first()
+                        signal =
+                            created
 
-                pendingRefresh.remove(
-                    fiber
-                )
-
-                /**
-                 * 等待期间可能已经被 uninstall。
-                 */
-                if (fiber !in mutableFibers) {
-                    continue
+                        true
+                    } else {
+                        false
+                    }
                 }
 
-                refresh(
-                    fiber
+            if (isRunner) {
+                drain(
+                    signal!!
                 )
+
+                return
+            }
+
+            val active =
+                core.mutate {
+                    reconcileSignal
+                }
+
+            active?.await()
+
+            val remaining =
+                core.mutate {
+                    pendingRefresh.isNotEmpty()
+                }
+
+            if (!remaining) {
+                return
+            }
+        }
+    }
+
+    /**
+     * 只在当前没有 drain 循环时立刻接管队列。
+     *
+     * 与 reconcile 不同，这里不等待正在进行的 drain，
+     * 因此不会和“正在进行、且等待本次提交”的生命周期操作形成等待环。
+     */
+    private suspend fun reconcileIfIdle() {
+
+        var signal: CompletableDeferred<Unit>? =
+            null
+
+        val isRunner =
+            core.mutate {
+                if (reconcileSignal == null) {
+                    val created =
+                        CompletableDeferred<Unit>()
+
+                    reconcileSignal =
+                        created
+
+                    signal =
+                        created
+
+                    true
+                } else {
+                    false
+                }
+            }
+
+        if (isRunner) {
+            drain(
+                signal!!
+            )
+        }
+    }
+
+    /**
+     * 锁外逐个执行刷新；每个 refresh 携带操作标记，
+     * 使其内部触发的同步提交不再递归等待刷新。
+     */
+    private suspend fun drain(
+        signal: CompletableDeferred<Unit>,
+    ) {
+        try {
+            while (true) {
+
+                val next =
+                    core.mutate {
+                        var chosen: Fiber<*>? =
+                            null
+
+                        while (pendingRefresh.isNotEmpty()) {
+                            val fiber =
+                                pendingRefresh.first()
+
+                            pendingRefresh.remove(
+                                fiber
+                            )
+
+                            if (fiber in mutableFibers) {
+                                chosen =
+                                    fiber
+
+                                break
+                            }
+                        }
+
+                        chosen
+                    }
+
+                if (next == null) {
+                    break
+                }
+
+                withContext(
+                    RuntimeOperationMarker(core)
+                ) {
+                    refresh(
+                        next
+                    )
+                }
             }
         } finally {
 
-            /**
-             * 无论 Plugin 生命周期是否抛异常，
-             * 都必须恢复状态。
-             */
-            isReconciling =
-                false
+            core.mutate {
+                reconcileSignal =
+                    null
+            }
+
+            signal.complete(
+                Unit
+            )
         }
     }
 

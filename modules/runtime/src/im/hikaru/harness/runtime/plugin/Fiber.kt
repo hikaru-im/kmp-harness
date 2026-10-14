@@ -1,8 +1,11 @@
 package im.hikaru.harness.runtime.plugin
 
 import im.hikaru.harness.runtime.Context
+import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.runtime.effect.EffectScope
+import im.hikaru.harness.runtime.effect.runDisposablesInReverse
 import im.hikaru.harness.runtime.service.ServiceKey
+import kotlinx.coroutines.CompletableDeferred
 
 /**
  * 一个 Plugin 实际安装到 Runtime 中以后，
@@ -329,121 +332,150 @@ class Fiber<C : Any>(
     }
 
     /**
+     * 当前正在进行的可挂起生命周期操作。
+     *
+     * 只有锁内的同步提交会设置/清除它，因此 Loading/Unloading 时必非空。
+     * 并发的 stop 会等待它，避免与进行中的 start/deactivate 竞争。
+     */
+    private var inFlight:
+            CompletableDeferred<Unit>? = null
+
+    private sealed interface StopDecision {
+
+        data object Done : StopDecision
+
+        data object Wait : StopDecision
+
+        data class Drive(
+            val pending: List<Disposable>,
+        ) : StopDecision
+    }
+
+    /**
      * 尝试启动 Plugin。
-     *
-     *
-     * 返回：
-     *
-     * true
-     *     =
-     *     成功启动
-     *
-     * false
-     *     =
-     *     required dependency 尚未满足
-     *
      *
      * 状态变化：
      *
-     * Pending
-     *    ↓
-     * Loading
-     *    ↓
-     * Active
-     *
+     * Pending → Loading → Active
      *
      * apply() 抛异常：
      *
-     * Loading
-     *    ↓
-     * Failed
+     * Loading → Failed
+     *
+     * apply 与 rollback cleanup 都在 Runtime 状态锁之外执行。
      */
     suspend fun start(): Boolean {
-        return context.mutate {
-            startNow()
-        }
-    }
 
-    private suspend fun startNow(): Boolean {
+        val proceed =
+            context.mutate {
+                check(state == FiberState.Pending) {
+                    "Plugin cannot start from state $state"
+                }
 
-        check(state == FiberState.Pending) {
-            "Plugin cannot start from state $state"
-        }
+                if (!canStart) {
+                    false
+                } else {
+                    failure =
+                        null
 
-        /**
-         * required dependency 不满足，
-         * 保持 Pending。
-         */
-        if (!canStart) {
+                    dependencySnapshot =
+                        currentDependencySnapshot()
+
+                    state =
+                        FiberState.Loading
+
+                    inFlight =
+                        CompletableDeferred()
+
+                    true
+                }
+            }
+
+        if (!proceed) {
             return false
         }
 
-        failure =
+        runStart()
+
+        return true
+    }
+
+    private suspend fun runStart() {
+
+        var startupError: Throwable? =
             null
 
-        /**
-         * 在真正 apply() 之前，
-         * 记录当前 dependency environment。
-         *
-         * Plugin 生命周期就是在这个环境下启动的。
-         */
-        dependencySnapshot =
-            currentDependencySnapshot()
-
-        state =
-            FiberState.Loading
-
         try {
-
             plugin.apply(
                 context = context,
                 config = config,
                 scope = scope,
             )
-
-            state =
-                FiberState.Active
-
-            return true
         } catch (error: Throwable) {
+            startupError =
+                error
+        }
 
-            /**
-             * Plugin 启动到一半失败，
-             * 之前产生的副作用必须全部撤销。
-             */
-            var rollbackFailure: Throwable? =
-                null
-
-            try {
-                scope.dispose()
-            } catch (cleanupError: Throwable) {
-                rollbackFailure =
-                    cleanupError
+        if (startupError == null) {
+            completeInFlight {
+                state =
+                    FiberState.Active
             }
 
-            scope =
-                EffectScope()
+            return
+        }
 
-            dependencySnapshot =
-                emptyMap()
+        /**
+         * 启动到一半失败。
+         *
+         * 先在锁内封存当前 scope，再在锁外执行 rollback cleanup。
+         */
+        val pending =
+            context.mutate {
+                val pendingScope =
+                    scope.seal()
 
+                scope =
+                    EffectScope()
+
+                dependencySnapshot =
+                    emptyMap()
+
+                pendingScope
+            }
+
+        var rollbackFailure: Throwable? =
+            null
+
+        try {
+            runDisposablesInReverse(
+                pending
+            )
+        } catch (cleanupError: Throwable) {
+            rollbackFailure =
+                cleanupError
+        }
+
+        context.mutate {
             failure =
-                error
+                startupError
 
             state =
                 FiberState.Failed
-
-            if (
-                rollbackFailure != null &&
-                rollbackFailure !== error
-            ) {
-                error.addSuppressed(
-                    rollbackFailure
-                )
-            }
-
-            throw error
         }
+
+        completeInFlight()
+
+        if (
+            rollbackFailure != null &&
+            rollbackFailure !== startupError
+        ) {
+            startupError.addSuppressed(
+                rollbackFailure
+            )
+        }
+
+        throw startupError
     }
 
     /**
@@ -453,173 +485,207 @@ class Fiber<C : Any>(
      * apply 再次失败时仍进入 Failed 并抛出本次异常。
      */
     suspend fun retry(): Boolean {
-        return context.mutate {
-            retryNow()
-        }
-    }
 
-    private suspend fun retryNow(): Boolean {
-        check(state == FiberState.Failed) {
-            "Plugin cannot retry from state $state"
-        }
-
-        failure =
-            null
-
-        state =
-            FiberState.Pending
-
-        return startNow()
-    }
-
-    /**
-     * 暂时停用 Plugin。
-     *
-     *
-     * 和 stop() 最大区别：
-     *
-     * deactivate：
-     *
-     * Active
-     *    ↓
-     * Pending
-     *
-     * 未来 dependency 恢复后
-     * 还可以重新启动。
-     *
-     *
-     * stop：
-     *
-     * 最终进入 Disposed，
-     * 永久结束。
-     */
-    suspend fun deactivate() {
         context.mutate {
-            deactivateNow()
-        }
-    }
+            check(state == FiberState.Failed) {
+                "Plugin cannot retry from state $state"
+            }
 
-    private suspend fun deactivateNow() {
-
-        if (state != FiberState.Active) {
-            return
-        }
-
-        state =
-            FiberState.Unloading
-
-        /**
-         * 撤销 Plugin 当前生命周期
-         * 产生的所有 side effects。
-         */
-        var cleanupFailure: Throwable? =
-            null
-
-        try {
-            scope.dispose()
-        } catch (error: Throwable) {
-            cleanupFailure =
-                error
-        }
-
-        /**
-         * 下一次启动需要全新的 scope。
-         */
-        scope =
-            EffectScope()
-
-        /**
-         * 上一次 dependency environment
-         * 已经失效。
-         */
-        dependencySnapshot =
-            emptyMap()
-
-        if (cleanupFailure == null) {
             failure =
                 null
 
             state =
                 FiberState.Pending
-        } else {
-            failure =
-                cleanupFailure
+        }
 
-            state =
-                FiberState.Failed
+        return start()
+    }
 
-            throw cleanupFailure
+    /**
+     * 暂时停用 Plugin。
+     *
+     * Active → Unloading → Pending
+     *
+     * cleanup 失败时：
+     *
+     * Unloading → Failed
+     */
+    suspend fun deactivate() {
+
+        val pending: List<Disposable>? =
+            context.mutate {
+                if (state != FiberState.Active) {
+                    return@mutate null
+                }
+
+                state =
+                    FiberState.Unloading
+
+                val pendingScope =
+                    scope.seal()
+
+                scope =
+                    EffectScope()
+
+                dependencySnapshot =
+                    emptyMap()
+
+                inFlight =
+                    CompletableDeferred()
+
+                pendingScope
+            }
+
+        if (pending == null) {
+            return
+        }
+
+        var cleanupFailure: Throwable? =
+            null
+
+        try {
+            runDisposablesInReverse(
+                pending
+            )
+        } catch (error: Throwable) {
+            cleanupFailure =
+                error
+        }
+
+        completeInFlight {
+            if (cleanupFailure == null) {
+                failure =
+                    null
+
+                state =
+                    FiberState.Pending
+            } else {
+                failure =
+                    cleanupFailure
+
+                state =
+                    FiberState.Failed
+            }
+        }
+
+        cleanupFailure?.let { error ->
+            throw error
         }
     }
 
     /**
      * 永久停止 Fiber。
      *
-     * stop 之后：
+     * stop 之后 state == Disposed。
      *
-     * state == Disposed
-     *
-     * Runtime 不应该再重新启动这个 Instance。
+     * 若存在正在进行的 start/deactivate，先等待它提交完成，
+     * 再执行销毁；已经 Disposed 的重复 stop 是无操作。
      */
     suspend fun stop() {
-        context.mutate {
-            stopNow()
+
+        while (true) {
+
+            val decision =
+                context.mutate {
+                    when (state) {
+
+                        FiberState.Disposed ->
+                            StopDecision.Done
+
+                        FiberState.Loading,
+                        FiberState.Unloading ->
+                            StopDecision.Wait
+
+                        else -> {
+                            if (state == FiberState.Active) {
+                                state =
+                                    FiberState.Unloading
+                            }
+
+                            val pendingScope =
+                                scope.seal()
+
+                            scope =
+                                EffectScope()
+
+                            dependencySnapshot =
+                                emptyMap()
+
+                            inFlight =
+                                CompletableDeferred()
+
+                            StopDecision.Drive(
+                                pendingScope
+                            )
+                        }
+                    }
+                }
+
+            when (decision) {
+
+                StopDecision.Done ->
+                    return
+
+                StopDecision.Wait -> {
+                    val wait =
+                        context.mutate {
+                            inFlight
+                        }
+
+                    wait?.await()
+                }
+
+                is StopDecision.Drive -> {
+
+                    var cleanupFailure: Throwable? =
+                        null
+
+                    try {
+                        runDisposablesInReverse(
+                            decision.pending
+                        )
+                    } catch (error: Throwable) {
+                        cleanupFailure =
+                            error
+                    }
+
+                    completeInFlight {
+                        failure =
+                            cleanupFailure
+
+                        state =
+                            FiberState.Disposed
+                    }
+
+                    cleanupFailure?.let { error ->
+                        throw error
+                    }
+
+                    return
+                }
+            }
         }
     }
 
-    private suspend fun stopNow() {
+    /**
+     * 在锁内提交最终状态并唤醒等待者。
+     */
+    private suspend fun completeInFlight(
+        commit: (() -> Unit)? = null,
+    ) {
+        val signal =
+            context.mutate {
+                commit?.invoke()
 
-        when (state) {
+                val current =
+                    inFlight
 
-            FiberState.Active -> {
+                inFlight =
+                    null
 
-                state =
-                    FiberState.Unloading
+                current
             }
 
-            FiberState.Pending,
-            FiberState.Failed -> {
-                // 统一在 when 后完成清理。
-            }
-
-            FiberState.Loading,
-            FiberState.Unloading -> {
-
-                error(
-                    "Plugin cannot be stopped while state is $state"
-                )
-            }
-
-            FiberState.Disposed -> {
-                // 已经永久停止，不需要重复处理。
-                return
-            }
-        }
-
-        var cleanupFailure: Throwable? =
-            null
-
-        try {
-            scope.dispose()
-        } catch (error: Throwable) {
-            cleanupFailure =
-                error
-        }
-
-        scope =
-            EffectScope()
-
-        dependencySnapshot =
-            emptyMap()
-
-        failure =
-            cleanupFailure
-
-        state =
-            FiberState.Disposed
-
-        cleanupFailure?.let { error ->
-            throw error
-        }
+        signal?.complete(Unit)
     }
 }

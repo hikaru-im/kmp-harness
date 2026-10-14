@@ -4,6 +4,7 @@ import im.hikaru.harness.llm.BlockEndChunk
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.LlmErrorCode
 import im.hikaru.harness.llm.LlmException
+import im.hikaru.harness.llm.ReasoningBlock
 import im.hikaru.harness.llm.StreamChunk
 import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.ToolCallBlock
@@ -50,6 +51,41 @@ class KoogStreamState {
         return createBlock(providerIndex, type).also { block ->
             explicitBlocksByProviderIndex[providerIndex] = block
         }
+    }
+
+    /**
+     * Koog 1.3.0 can reuse a Chat choice index for reasoning_content followed by text.
+     * The ordinary [open] path remains strict; this narrow transition first closes the
+     * reasoning block and then allocates the next Harness output block for that index.
+     */
+    internal fun openAfterReasoning(
+        providerIndex: Int?,
+        type: KoogStreamBlockType,
+    ): Pair<List<StreamChunk>, KoogStreamBlockState> {
+        if (providerIndex == null) {
+            return emptyList<StreamChunk>() to open(providerIndex, type)
+        }
+
+        val current = explicitBlocksByProviderIndex[providerIndex]
+        if (current == null || current.type != KoogStreamBlockType.REASONING) {
+            return emptyList<StreamChunk>() to open(providerIndex, type)
+        }
+
+        if (current.completed) {
+            val next = createBlock(providerIndex, type)
+            explicitBlocksByProviderIndex[providerIndex] = next
+            return emptyList<StreamChunk>() to next
+        }
+        if (!current.started) invalidState("Provider reasoning block $providerIndex changed before starting")
+        current.complete()
+        val end =
+            BlockEndChunk(
+                index = current.outputIndex,
+                block = ReasoningBlock(current.text),
+            )
+        val next = createBlock(providerIndex, type)
+        explicitBlocksByProviderIndex[providerIndex] = next
+        return listOf(end) to next
     }
 
     private fun openImplicit(type: KoogStreamBlockType): KoogStreamBlockState {

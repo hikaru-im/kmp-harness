@@ -7,6 +7,7 @@ import im.hikaru.harness.agent.AgentPluginDefinition
 import im.hikaru.harness.agent.loop.AgentLoopPluginDefinition
 import im.hikaru.harness.credentials.local.CREDENTIALS_LOCAL_PLUGIN_NAME
 import im.hikaru.harness.credentials.local.credentialsLocalPluginDefinition
+import im.hikaru.harness.exec.jvm.ExecProcessPluginDefinition
 import im.hikaru.harness.home.HarnessHome
 import im.hikaru.harness.llm.LLM_PLUGIN_NAME
 import im.hikaru.harness.llm.LlmPluginDefinition
@@ -32,6 +33,7 @@ import im.hikaru.harness.session.persistence.sessionPersistencePluginDefinition
 import im.hikaru.harness.settings.file.SETTINGS_FILE_PLUGIN_NAME
 import im.hikaru.harness.settings.file.settingsFilePluginDefinition
 import im.hikaru.harness.tools.ToolsPluginDefinition
+import im.hikaru.harness.subagent.tools.SubagentToolsPluginDefinition
 import java.nio.file.Path
 
 public const val DESKTOP_BUNDLE_NAME: String = "@hikaru-ai/harness-desktop"
@@ -53,6 +55,8 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             ToolsPluginDefinition,
             AgentLoopPluginDefinition,
             SessionApiPluginDefinition,
+            ExecProcessPluginDefinition,
+            SubagentToolsPluginDefinition,
             sessionPersistencePluginDefinition(
                 jvmSessionPersistenceDatabaseFactory(
                     defaultHarnessHome.resolve("harness-sessions.db").toFile()
@@ -81,6 +85,8 @@ public val DesktopProfileBundle: ProfileBundle =
                             Entry("tools", "tools"),
                             Entry("agent-loop", "agent-loop"),
                             Entry("session-api", "session-api"),
+                            Entry("exec-process", "exec-process"),
+                            Entry("subagent-tools", "subagent-tools"),
                             Entry("session-persistence", "session-persistence"),
                             Entry("llm-retry", "llm-retry"),
                         )

@@ -7,7 +7,7 @@
 
 本模块现在是可编译、可安装、生命周期完整的 provider-neutral Adapter：
 
-- 依赖 Koog 1.1.1 的 `prompt-executor-model`，不依赖 `koog-agents` 聚合包。
+- 依赖 Koog 1.3.0 的 `prompt-executor-model`，不依赖 `koog-agents` 聚合包。
 - `KoogProviderRoute` 和 `KoogModelRoute` 提供代码安装的 Provider route、协议能力模板与默认模型目录；
   动态模式会为每份 settings 快照重新物化实际 `LLModel` 列表。
 - `KoogLlmAdapter` 已实现 provider、model、context window、max output tokens 和 retry policy 元数据。
@@ -60,6 +60,7 @@
   安装目录、route 默认值，最后回退为 text-only。
 - Plugin apply 在 route 注册失败时会回滚并关闭刚创建的 executor，不会移除或关闭已有冲突 route。
 - `KoogStreamMapper` 已支持 provider-neutral 的 text、纯文本 reasoning、tool-call 与 stop terminal；
+  Koog 1.3.0 Chat `reasoning_content` 复用同一 choice index 时，适配层会先收尾 reasoning block 再开启文本 block；
   provider-neutral reasoning 的 id/summary/encrypted、Provider 私有 usage 和非 `stop` finish 仍按稳定错误显式
   失败；OpenAI Responses 的专属 mapper 会把 reasoning 私有字段写入 replay state。标准 input/output usage
   已支持。对 OpenAI Chat Completions，只有 OpenAI semantics 安装的
@@ -81,8 +82,8 @@ SSE、usage/finish 顺序、consumer early-stop、caller cancellation、executor
 body/path/request override headers。Responses 的 `response.completed` 负责终止，文本 terminal policy 会
 补齐没有 `TextComplete` 的开放文本 block，函数工具以权威 `ToolCallComplete` 关闭 block。它仍不是网络验收：
 生产 file-backed live harness 已覆盖 Chat 文本入口、可选 tool round trip、独立 Responses gate、临时凭据与
-非凭据文件 secret audit。测试凭据已在 Responses-only 兼容端点执行：`gpt-5.6-sol` 到达 HTTP 200 后受
-Koog #2211 的合法 string `response.instructions` 反序列化缺陷阻塞；该连接没有 Chat Completions 渠道，
+非凭据文件 secret audit。Koog 1.3.0 的离线 scripted fixture 已携带合法字符串 `response.instructions` 并通过
+Responses 解析门禁；真实外部 endpoint、外部 HTTP engine teardown 和 replay persistence 仍待单独验收；该连接没有 Chat Completions 渠道，
 所以 Chat/tool、外部 HTTP engine teardown 和 replay persistence 仍未验收，不能标记为生产可用。当前
 WSLg/niri 环境的 Compose 首帧还受到 Skiko Linux GL context 创建限制；软件渲染可
 保持进程运行，但尚未证明 niri 窗口映射。

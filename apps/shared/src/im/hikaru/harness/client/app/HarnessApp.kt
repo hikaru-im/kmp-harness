@@ -1,15 +1,20 @@
 package im.hikaru.harness.client.app
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -17,16 +22,32 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
@@ -36,23 +57,192 @@ import im.hikaru.harness.client.account.BackendTenant
 import im.hikaru.harness.client.account.MemberAccount
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.client.connection.AgentOptions
-import im.hikaru.harness.client.connection.CreateSessionOptions
-import im.hikaru.harness.client.connection.Message
+import im.hikaru.harness.client.connection.ModelMessageSource
 import im.hikaru.harness.client.connection.SessionId
-import im.hikaru.harness.client.connection.SessionSummary
-import im.hikaru.harness.client.connection.TextContent
-import im.hikaru.harness.client.connection.userMessage
+import im.hikaru.harness.client.connection.CreateSessionOptions
+import im.hikaru.harness.client.conversation.ConversationController
+import im.hikaru.harness.client.conversation.ConversationHostScope
+import im.hikaru.harness.client.conversation.ConversationState
+import im.hikaru.harness.client.conversation.CompletionCapability
+import im.hikaru.harness.client.panels.ThreadPanelScope
+import im.hikaru.harness.client.panels.ThreadPanelTab
+import im.hikaru.harness.client.panels.ThreadPanelAction
+import im.hikaru.harness.client.panels.ThreadPanelsController
+import im.hikaru.harness.client.panels.ThreadPanelsOwner
+import im.hikaru.harness.client.panels.ConnectionThreadPanelsRepository
+import im.hikaru.harness.client.panels.PanelLoad
+import im.hikaru.harness.client.panels.ThreadPanels
+import im.hikaru.harness.client.panels.ThreadPanelWidthMode
+import im.hikaru.harness.client.plugins.InstalledPluginRepository
+import im.hikaru.harness.client.plugins.InstalledPluginsController
+import im.hikaru.harness.client.plugins.InstalledPluginsState
+import im.hikaru.harness.client.plugins.InstalledPluginsAction
+import im.hikaru.harness.client.plugins.InstalledPluginsPage
+import im.hikaru.harness.client.plugins.InstalledPluginDetailPage
+import im.hikaru.harness.client.plugins.PluginsManagementNavigator
+import im.hikaru.harness.client.plugins.PluginScope
+import im.hikaru.harness.client.plugins.PluginAccountId
+import im.hikaru.harness.client.plugins.PluginId
+import im.hikaru.harness.client.plugins.PluginAccessBinding
+import im.hikaru.harness.client.plugins.LocalPluginManagementRepository
+import im.hikaru.harness.client.plugins.UnavailablePluginRepository
+import im.hikaru.harness.client.git.GitAccess
+import im.hikaru.harness.client.git.GitBackend
+import im.hikaru.harness.client.git.GitBinding
+import im.hikaru.harness.client.git.GitController
+import im.hikaru.harness.client.git.GitDiffRequest
+import im.hikaru.harness.client.git.GitDiffSnapshot
+import im.hikaru.harness.client.git.GitFailure
+import im.hikaru.harness.client.git.GitFailureKind
+import im.hikaru.harness.client.git.GitReadException
+import im.hikaru.harness.client.git.GitRead
+import im.hikaru.harness.client.git.GitRepository
+import im.hikaru.harness.client.git.GitStatusSnapshot
+import im.hikaru.harness.client.git.GitState
+import im.hikaru.harness.client.git.GitBranch
+import im.hikaru.harness.client.git.GitWorktree
+import im.hikaru.harness.client.git.ManagedWorktreeChatArchiveReceipt
+import im.hikaru.harness.client.git.SettingsGitPage
+import im.hikaru.harness.client.git.WorktreesPage
+import im.hikaru.harness.client.summary.ThreadSummaryPanel
+import im.hikaru.harness.client.summary.ThreadSummaryActivity
+import im.hikaru.harness.client.summary.ThreadSummaryActivityController
+import im.hikaru.harness.client.summary.ThreadSummaryActivityKind
+import im.hikaru.harness.client.summary.threadSummaryEnvironment
+import im.hikaru.harness.client.summary.threadSummaryScheduledTasks
+import im.hikaru.harness.client.page.SettingsFormFrame
+import im.hikaru.harness.client.page.SettingsFormSelect
+import im.hikaru.harness.ui.slot.ListSlotOutlet
+import im.hikaru.harness.ui.slot.SlotOutlet
+import im.hikaru.harness.ui.slot.UiSnapshot
+import im.hikaru.harness.ui.slot.UiSnapshotProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import im.hikaru.contracts.harness.relay.RelayEvent
 import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.harness.client.connection.HistoryRecovery
 import im.hikaru.harness.client.connection.RemoteConnectionOwner
+import im.hikaru.harness.client.connection.ConnectionDescriptionRepository
+import im.hikaru.harness.client.connection.ConnectionTransport
+import im.hikaru.harness.client.connection.ConnectionsPhase
+import im.hikaru.harness.client.connection.ConnectionsState
+import im.hikaru.harness.client.connection.RemoteConnectionStatus
+import im.hikaru.harness.client.connection.RemoteDiscoveryState
+import im.hikaru.harness.client.page.SettingsConnectionsPage
+import im.hikaru.harness.client.shell.AppShell
+import im.hikaru.harness.client.shell.AppShellNavItem
+import im.hikaru.harness.client.shell.AppShellState
+import im.hikaru.harness.client.shell.AccountMenuAction
+import im.hikaru.harness.client.shell.AccountMenuDestination
+import im.hikaru.harness.client.shell.AccountMenuState
+import im.hikaru.harness.client.shell.ConnectionIndicatorState
+import im.hikaru.harness.client.shell.SidebarState
+import im.hikaru.harness.client.shell.SidebarMode
+import im.hikaru.harness.client.page.ProjectPage
+import im.hikaru.harness.client.page.ProjectsPage
+import im.hikaru.harness.client.page.SettingsGeneralPage
+import im.hikaru.harness.client.page.SettingsAppearancePage
+import im.hikaru.harness.client.page.SettingsModelsPage
+import im.hikaru.harness.client.page.SettingsShortcutsPage
+import im.hikaru.harness.client.settings.ShortcutsRepository
+import im.hikaru.harness.client.settings.ShortcutCommand
+import im.hikaru.harness.client.settings.LocalShortcutsRepository
+import im.hikaru.harness.client.settings.LocalShortcutsEventRoot
+import im.hikaru.harness.client.settings.toShortcutInput
+import im.hikaru.harness.client.settings.ModelSettingsRepository
+import im.hikaru.harness.client.settings.GeneralSettingsRepository
+import im.hikaru.harness.client.settings.WorktreeSettings
+import im.hikaru.harness.client.settings.WorktreeSettingsRepository
+import im.hikaru.harness.client.settings.WorktreeSettingsState
+import im.hikaru.harness.client.settings.GeneralSettingsState
+import im.hikaru.harness.client.settings.CloseConfirmationPolicy
+import im.hikaru.harness.client.settings.ModelSettingsState
+import im.hikaru.harness.client.settings.ProviderConfiguration
+import im.hikaru.harness.client.settings.AppearanceRepository
+import im.hikaru.harness.client.settings.AppearanceSettings
+import im.hikaru.harness.client.settings.AppearanceState
+import im.hikaru.harness.client.settings.AppearanceMode
+import im.hikaru.harness.client.settings.MemoryAppearanceStore
+import im.hikaru.harness.client.settings.themeCustomization
+import im.hikaru.harness.ui.foundation.HarnessTheme
+import im.hikaru.harness.client.scheduled.ScheduledTasksState
+import im.hikaru.harness.client.scheduling.ScheduleCalendar
+import im.hikaru.harness.client.scheduling.ScheduleDate
+import im.hikaru.harness.client.scheduling.ScheduleEngine
+import im.hikaru.harness.client.scheduling.ScheduledExecutor
+import im.hikaru.harness.client.scheduling.ScheduledDestination
+import im.hikaru.harness.client.scheduling.ScheduledLoadPhase
+import im.hikaru.harness.client.scheduling.ScheduledManagementNavigator
+import im.hikaru.harness.client.scheduling.ScheduledManagementPage
+import im.hikaru.harness.client.scheduling.ScheduledManagementState
+import im.hikaru.harness.client.scheduling.ScheduledModelRef
+import im.hikaru.harness.client.scheduling.SystemScheduledClock
+import im.hikaru.harness.client.scheduling.ScheduledRepository
+import im.hikaru.harness.client.scheduling.ScheduledScope
+import im.hikaru.harness.client.scheduling.ScheduledStore
+import im.hikaru.harness.client.scheduling.ScheduledTarget
+import im.hikaru.harness.client.scheduling.ScheduledTaskSort
+import im.hikaru.harness.client.scheduling.ScheduledTaskStatus
+import im.hikaru.harness.client.scheduling.ScheduledValidationContext
+import im.hikaru.harness.client.scheduling.UnavailableScheduledStore
+import im.hikaru.harness.client.shell.NavigationState
+import im.hikaru.harness.client.shell.NavigatorPreferredWidth
+import im.hikaru.harness.client.shell.OverlayId
+import im.hikaru.harness.client.shell.PageId
+import im.hikaru.harness.client.projects.*
+import im.hikaru.harness.client.page.LocalProjectsPage
+import im.hikaru.harness.client.page.LocalProjectDetailPage
+import im.hikaru.harness.client.page.LocalProjectPicker
+import im.hikaru.harness.client.page.localProjectsForBinding
+import im.hikaru.harness.client.page.LocalProjectEditorDialog
+import im.hikaru.harness.client.page.message
+import im.hikaru.harness.client.shell.WorkspaceProjectNode
+import im.hikaru.harness.client.shell.WorkspaceItemNode
+import im.hikaru.harness.client.shell.RecentTaskItem
+import im.hikaru.harness.client.shell.ExploreMenuState
+import im.hikaru.harness.client.shell.RailDestination
+import im.hikaru.harness.client.shell.ThreadSurfaceState
+import im.hikaru.harness.client.shell.WorkspaceNavigatorState
+import im.hikaru.harness.client.shell.NavigatorKind
+import im.hikaru.harness.client.shell.NavigatorLayout
+import im.hikaru.harness.client.shell.PluginsNavigatorState
+import im.hikaru.harness.client.shell.toPageId
+import im.hikaru.harness.client.shell.navigatorSlug
+import im.hikaru.harness.client.shell.SettingsNavigatorModel
+import im.hikaru.harness.client.shell.SettingsSection
+import im.hikaru.harness.client.shell.SettingsNavigatorState
+import im.hikaru.harness.client.shell.pageShellSpec
+import im.hikaru.harness.client.shell.mountsNavigator
+import im.hikaru.harness.client.shell.navigatorLayout
+import im.hikaru.harness.client.shell.toggled
+import im.hikaru.harness.client.shell.toShellDestination
+import im.hikaru.harness.client.shell.railInitials
+import im.hikaru.harness.client.shell.harnessRailItems
+import im.hikaru.harness.client.shell.railDestinationPage
+import im.hikaru.harness.ui.foundation.HarnessButton
+import im.hikaru.harness.ui.foundation.HarnessButtonVariant
+import im.hikaru.harness.ui.foundation.HarnessControlSize
+import im.hikaru.harness.ui.foundation.HarnessBadge
+import im.hikaru.harness.ui.foundation.HarnessIcon
+import im.hikaru.harness.ui.foundation.HarnessIconName
+import im.hikaru.harness.ui.foundation.HarnessIconButton
+import im.hikaru.harness.ui.foundation.HarnessSurface
+import im.hikaru.harness.ui.foundation.HarnessTextField
+import im.hikaru.harness.ui.foundation.HarnessText
+import im.hikaru.harness.ui.foundation.HarnessThemeMode
+import im.hikaru.harness.ui.foundation.HarnessTokens
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 
-/** The first application shell shared by Desktop, Android and iOS. */
+/**
+ * The first application shell shared by Desktop, Android and iOS. Assembly only: it creates the
+ * navigation state, connection state and shell regions, then dispatches content on [PageId].
+ *
+ * Production routes consume scoped Connection services. Reference fixtures belong to previews.
+ */
 @Composable
 public fun HarnessApp(
     connection: Connection?,
@@ -65,15 +255,97 @@ public fun HarnessApp(
     historyRecoveries: Flow<HistoryRecovery> = emptyFlow(),
     onSubscribeSession: (suspend (SessionId) -> Unit)? = null,
     onUnsubscribeSession: (suspend (SessionId) -> Unit)? = null,
+    uiSnapshot: UiSnapshot = UiSnapshot.Empty,
+    initialDestination: HarnessDestination = HarnessDestination.Harness,
+    initialAccountMenuOpen: Boolean = false,
+    themeMode: HarnessThemeMode = HarnessThemeMode.System,
+    appearanceRepository: AppearanceRepository? = null,
+    modelSettingsRepository: ModelSettingsRepository? = null,
+    generalSettingsRepository: GeneralSettingsRepository? = null,
+    worktreeSettingsRepository: WorktreeSettingsRepository? = null,
+    shortcutsRepository: ShortcutsRepository? = null,
+    installedPluginRepository: InstalledPluginRepository = UnavailablePluginRepository,
+    remoteStatus: RemoteConnectionStatus? = null,
+    remoteSelectedHost: HostDescription? = null,
+    remoteDiscovery: RemoteDiscoveryState = RemoteDiscoveryState(),
+    onRefreshHosts: (suspend () -> Unit)? = null,
     modifier: Modifier = Modifier,
+    connectionTransport: ConnectionTransport? = null,
+    gitBackend: GitBackend? = null,
+    gitInitialCwd: String? = null,
+    scheduledStore: ScheduledStore = UnavailableScheduledStore(),
+    scheduleCalendar: ScheduleCalendar? = null,
+    scheduledExecutor: ScheduledExecutor? = null,
+    scheduledExecutorConnection: Connection? = null,
+    scheduledExecutorOwner: im.hikaru.harness.client.scheduling.ScheduledExecutorOwner? = null,
+    scheduledExecutionRecoveryEnabled: Boolean = true,
+    localProjectRepository: LocalProjectRepository = UnavailableLocalProjectRepository,
+    managedWorktreeRepository: im.hikaru.harness.client.git.ManagedWorktreeRepository? = null,
+    terminalLaunchProvider: im.hikaru.harness.client.panels.TerminalLaunchProvider =
+        im.hikaru.harness.client.panels.UnavailableTerminalLaunchProvider,
 ) {
-    var destination by remember { mutableStateOf(HarnessDestination.Harness) }
-    var pendingDestination by remember { mutableStateOf<HarnessDestination?>(null) }
-    var host by remember { mutableStateOf<HostDescription?>(null) }
-    var connectionState by remember {
-        mutableStateOf(if (connection == null) HarnessConnectionState.RequiresLogin else HarnessConnectionState.Connecting)
+    val appearance = appearanceRepository ?: remember {
+        val initial = AppearanceSettings(mode = AppearanceMode.from(themeMode))
+        AppearanceRepository(MemoryAppearanceStore(initial), initial)
+    }
+    val appearanceState by appearance.state.collectAsState()
+    val appearanceScope = rememberCoroutineScope()
+    LaunchedEffect(appearance) { if (!appearance.state.value.loaded) appearance.load() }
+    val models = modelSettingsRepository ?: remember { ModelSettingsRepository() }
+    val modelSettings by models.state.collectAsState()
+    val modelScope = rememberCoroutineScope()
+    LaunchedEffect(models) { if (!models.state.value.loaded) models.load() }
+    val general = generalSettingsRepository ?: remember { GeneralSettingsRepository() }
+    val generalState by general.state.collectAsState()
+    val generalScope = rememberCoroutineScope()
+    LaunchedEffect(general) { if (!general.state.value.loaded) general.load() }
+    val worktreeSettings = worktreeSettingsRepository ?: remember { WorktreeSettingsRepository() }
+    val worktreeSettingsState by worktreeSettings.state.collectAsState()
+    val worktreeSettingsScope = rememberCoroutineScope()
+    LaunchedEffect(worktreeSettings) { if (!worktreeSettings.state.value.loaded) worktreeSettings.load() }
+    val inheritedShortcuts = LocalShortcutsRepository.current
+    require(shortcutsRepository == null || inheritedShortcuts == null || shortcutsRepository === inheritedShortcuts) {
+        "The app and window must share one ShortcutsRepository"
+    }
+    val shortcuts = shortcutsRepository ?: inheritedShortcuts ?: remember { ShortcutsRepository() }
+    LaunchedEffect(shortcuts) { if (!shortcuts.state.value.loaded) shortcuts.load() }
+    val ownsShortcutRoot = LocalShortcutsEventRoot.current !== shortcuts.input
+    var navigation by remember { mutableStateOf(NavigationState(currentPage = initialDestination.toPageId())) }
+    var workspaceState by remember { mutableStateOf(WorkspaceNavigatorState()) }
+    // Page-owned navigators. They are separate from [workspaceState] so a Settings/Plugins/Hosts
+    // page never reuses the Workspace search, project tree or recent-task state.
+    var settingsNavigator by remember { mutableStateOf(SettingsNavigatorState()) }
+    var pluginsNavigator by remember { mutableStateOf(PluginsNavigatorState()) }
+    // The collapse mode itself is not page-owned: Codex keeps one navigator mode for the whole app, so
+    // collapsing the navigator on one page leaves it collapsed on every other page that owns one, and a
+    // page with no navigator ([NavigatorKind.None]) has nothing to collapse. Each navigator keeps its
+    // own content (search, filters, selection) — only the mode is shared, written into every navigator
+    // state below.
+    var navigatorMode by remember { mutableStateOf(SidebarMode.Expanded) }
+    // The navigator's status filter is UI state (like navigator mode); the page owns the real tasks.
+    var scheduledStatusFilter by remember { mutableStateOf<ScheduledTaskStatus?>(null) }
+    var scheduledSort by remember { mutableStateOf(ScheduledTaskSort.Automatic) }
+    // The Workspace header search action reveals its inline search row; the sidebar keeps no permanent field.
+    var navigatorSearchOpen by remember { mutableStateOf(false) }
+    var accountMenu by remember { mutableStateOf(AccountMenuState(isOpen = initialAccountMenuOpen)) }
+    // The 探索 pin menu is a separate menu from the account chip dropdown.
+    var exploreMenu by remember { mutableStateOf(ExploreMenuState()) }
+    // Destinations the user pinned from 探索, rendered in the rail's second group.
+    var pinnedRailDestinations by remember { mutableStateOf(emptySet<RailDestination>()) }
+    // The thread summary island is separate from the tabbed context panel; it survives tab changes
+    // but is only drawn on a Thread page.
+    var summaryPanelOpen by remember { mutableStateOf(false) }
+    // The Workspace Navigator is user-resizable; the drag writes this preference and the shell
+    // clamps it (navigatorResizeWidth) before laying out (navigatorWidth).
+    var navigatorWidth by remember { mutableStateOf(NavigatorPreferredWidth) }
+    var pendingPage by remember { mutableStateOf<PageId?>(null) }
+    val descriptionRepository = remember(connection) { connection?.let(::ConnectionDescriptionRepository) }
+    // A new connection must start with its own unverified description, never the prior collector value.
+    val descriptionState = key(descriptionRepository) {
+        descriptionRepository?.state?.collectAsState()?.value
     }
     val accountState = account?.state?.collectAsState()?.value ?: AccountState()
+    val accountMenuScope = rememberCoroutineScope()
     LaunchedEffect(account, defaultTarget) {
         if (account != null && defaultTarget != null && account.state.value.target == null) {
             try {
@@ -85,94 +357,1075 @@ public fun HarnessApp(
             }
         }
     }
-    LaunchedEffect(connection, accountState.session == null) {
-        if (connection == null) {
-            connectionState = if (accountState.session == null) {
-                HarnessConnectionState.RequiresLogin
-            } else {
-                HarnessConnectionState.NoHost
-            }
-            return@LaunchedEffect
+    LaunchedEffect(descriptionRepository) { descriptionRepository?.refresh() }
+    val transport = connectionTransport ?:
+        if (account == null && remoteStatus == null) ConnectionTransport.Local else ConnectionTransport.Relay
+    val phase = when {
+        transport == ConnectionTransport.Relay && accountState.session == null -> ConnectionsPhase.RequiresLogin
+        transport == ConnectionTransport.Relay && remoteStatus != null && remoteStatus != RemoteConnectionStatus.ONLINE -> when (remoteStatus) {
+            RemoteConnectionStatus.DISCOVERING -> ConnectionsPhase.Discovering
+            RemoteConnectionStatus.CONNECTING -> ConnectionsPhase.Connecting
+            RemoteConnectionStatus.RECONNECTING -> ConnectionsPhase.Reconnecting
+            RemoteConnectionStatus.DISCONNECTED -> ConnectionsPhase.Disconnected
+            else -> ConnectionsPhase.Idle
         }
-        connectionState = HarnessConnectionState.Connecting
-        try {
-            val result = connection.host.describe()
-            val description = result.data
-            if (result.isSuccess && description != null) {
-                host = description
-                connectionState =
-                    if (description.protocolVersion.major == ProtocolVersion.Current.major) {
-                        HarnessConnectionState.Online
-                    } else {
-                        HarnessConnectionState.ProtocolIncompatible
-                    }
-            } else {
-                connectionState = HarnessConnectionState.Disconnected
+        else -> descriptionState?.phase ?: ConnectionsPhase.Idle
+    }
+    val host = descriptionState?.host?.takeIf { phase == ConnectionsPhase.Online || phase == ConnectionsPhase.Incompatible }
+    val connectionState = when (phase) {
+        ConnectionsPhase.Online -> if (transport == ConnectionTransport.Local) HarnessConnectionState.Local else HarnessConnectionState.Online
+        ConnectionsPhase.Discovering, ConnectionsPhase.Connecting, ConnectionsPhase.Reconnecting -> HarnessConnectionState.Connecting
+        ConnectionsPhase.RequiresLogin -> HarnessConnectionState.RequiresLogin
+        ConnectionsPhase.Disconnected -> HarnessConnectionState.Disconnected
+        ConnectionsPhase.Incompatible -> HarnessConnectionState.ProtocolIncompatible
+        ConnectionsPhase.Idle -> HarnessConnectionState.NoHost
+    }
+    var connectionActionError by remember(connection, accountState.session) { mutableStateOf<String?>(null) }
+    val currentSession by rememberUpdatedState(accountState.session)
+    val connectionsScope = rememberCoroutineScope()
+    val connectionsState = ConnectionsState(
+        scope = accountState.session?.identity,
+        transport = transport, phase = phase, currentHost = host,
+        hosts = if (transport == ConnectionTransport.Local) listOfNotNull(host) else availableHosts,
+        refreshing = descriptionState?.refreshing == true || remoteDiscovery.refreshing,
+        error = connectionActionError ?: remoteDiscovery.error ?: descriptionState?.error,
+        refreshUnavailableReason = when {
+            transport == ConnectionTransport.Local && connection != null -> null
+            transport == ConnectionTransport.Relay && accountState.session == null -> "请先登录后发现远程 Host。"
+            transport == ConnectionTransport.Relay && onRefreshHosts != null -> null
+            else -> "当前没有可刷新的连接服务。"
+        },
+        selectionUnavailableReason = when {
+            transport == ConnectionTransport.Local -> "本机模式不支持切换远程 Host。"
+            accountState.session == null -> "请先登录后连接远程 Host。"
+            onSelectHost == null -> "当前未接入远程 Host 连接服务。"
+            else -> null
+        },
+    )
+    val refreshConnections: () -> Unit = {
+        if (connectionsState.canRefresh) {
+            val capturedSession = accountState.session
+            connectionsScope.launch {
+                connectionActionError = null
+                try {
+                    if (transport == ConnectionTransport.Relay) onRefreshHosts?.invoke() else descriptionRepository?.refresh()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    if (currentSession == capturedSession) connectionActionError = "无法刷新连接，请重试。"
+                }
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            connectionState = HarnessConnectionState.Disconnected
         }
     }
-
-    MaterialTheme {
-        Column(
-            modifier = modifier.fillMaxSize().padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Harness", style = MaterialTheme.typography.headlineSmall)
-            NavigationBar(
-                current = destination,
-                onSelect = { selected ->
-                    if (selected.requiresConnection && connection == null) {
-                        pendingDestination = selected
-                        destination = HarnessDestination.Account
-                    } else {
-                        destination = selected
+    val selectConnection: (HostDescription) -> Unit = { candidate ->
+        if (connectionsState.canSelect) onSelectHost?.invoke(candidate)
+    }
+    val page = navigation.currentPage
+    val conversationScope = rememberCoroutineScope()
+    val conversation = remember { ConversationController(conversationScope) }
+    val conversationState by conversation.state.collectAsState()
+    val generationCounter = remember { longArrayOf(0L) }
+    val conversationIdentity = accountState.session?.identity.takeIf { transport == ConnectionTransport.Relay }
+    val connectionGeneration = remember(connection, transport, conversationIdentity) { ++generationCounter[0] }
+    var lastLocalHost by remember(transport) { mutableStateOf<HostDescription?>(null) }
+    LaunchedEffect(host, transport) {
+        if (transport == ConnectionTransport.Local && host != null) lastLocalHost = host
+    }
+    val selectedConversationHost = when (transport) {
+        ConnectionTransport.Local -> host ?: lastLocalHost
+        ConnectionTransport.Relay -> if (accountState.session != null) remoteSelectedHost ?: host else null
+    }
+    val conversationHost = selectedConversationHost?.let {
+        ConversationHostScope(it.hostId, connectionGeneration, conversationIdentity)
+    }
+    DisposableEffect(conversation) { onDispose { conversation.close() } }
+    val verifiedConversationConnection = connection.takeIf {
+        phase == ConnectionsPhase.Online && host?.hostId == conversationHost?.hostId
+    }
+    val localProjects = remember(conversationScope, localProjectRepository) {
+        LocalProjectsController(conversationScope, localProjectRepository)
+    }
+    val projectBinding = verifiedConversationConnection?.let { verified ->
+        conversationHost?.let { scoped -> LocalProjectBinding(verified,
+            LocalProjectScope(scoped.hostId, scoped.generation), transport) }
+    }
+    val observedProjects = localProjects.state.collectAsState().value
+    val localProjectsState = localProjectsForBinding(observedProjects, projectBinding)
+    DisposableEffect(localProjects) { onDispose { localProjects.close() } }
+    LaunchedEffect(localProjects, projectBinding) { localProjects.bind(projectBinding) }
+    var projectEditorOpen by remember(projectBinding) { mutableStateOf(false) }
+    var editingProject by remember(projectBinding) { mutableStateOf<LocalProject?>(null) }
+    var projectPreparationError by remember(projectBinding) { mutableStateOf<String?>(null) }
+    // `settings.worktrees.row.newChat`: a working directory bound for the next Home creation. It only
+    // records the pending directory; nothing is created or written until the user sends a message.
+    var pendingWorktreeChat by remember(conversationHost?.hostId, conversationHost?.identity, transport) {
+        mutableStateOf<String?>(null)
+    }
+    // A temporary disconnect changes binding/generation but must keep the unsent association guard.
+    var pendingProjectAssociation by remember(conversationHost?.hostId, conversationHost?.identity, transport) {
+        mutableStateOf<Pair<ValidatedLocalProjectTarget, im.hikaru.harness.client.connection.SessionSummary>?>(null)
+    }
+    var retryingProjectAssociation by remember(conversationHost?.hostId, conversationHost?.identity, transport) { mutableStateOf(false) }
+    suspend fun attachProjectSession(target: ValidatedLocalProjectTarget, summary: im.hikaru.harness.client.connection.SessionSummary): Boolean {
+        val job = localProjects.attachCreatedSession(target, summary) ?: return false
+        try {
+            job.join()
+        } catch (cancelled: CancellationException) {
+            job.cancel()
+            withContext(NonCancellable) { job.join() }
+            throw cancelled
+        }
+        val current = localProjects.state.value
+        val attached = localProjects.isBoundTo(target.binding) && current.mutationFailure == null &&
+            current.snapshot?.memberships?.any { it.projectId == target.projectId && it.session == summary } == true
+        if (attached && pendingProjectAssociation?.let { it.first.projectId == target.projectId && it.second == summary } == true)
+            pendingProjectAssociation = null
+        return attached
+    }
+    val saveProject: (CreateLocalProject) -> Unit = { request ->
+        val capturedBinding = projectBinding
+        val job = localProjects.create(request)
+        if (job != null) conversationScope.launch {
+            job.join()
+            if (capturedBinding != null && localProjects.isBoundTo(capturedBinding)) {
+                localProjects.state.value.snapshot?.createReceipts?.firstOrNull { it.request == request }?.let { receipt ->
+                    localProjects.select(receipt.projectId)
+                    projectEditorOpen = false
+                }
+            }
+        }
+    }
+    val gitScope = rememberCoroutineScope()
+    val effectiveGitBackend = gitBackend ?: UnavailableAppGitBackend
+    val git = remember(gitScope, effectiveGitBackend) { GitController(gitScope, effectiveGitBackend) }
+    val observedGitState = key(git) { git.state.collectAsState().value }
+    DisposableEffect(git) { onDispose { git.close() } }
+    val gitBinding = conversationHost?.takeIf { verifiedConversationConnection != null }?.let {
+        GitBinding(
+            identity = it.identity,
+            hostId = it.hostId,
+            generation = it.generation,
+            access = if (transport == ConnectionTransport.Local && gitBackend != null) GitAccess.LocalReadOnly
+                else GitAccess.RemoteUnavailable,
+        )
+    }
+    // Do not render the old host's snapshot during the frame before the binding effect runs.
+    val gitState = observedGitState.takeIf { it.binding == gitBinding } ?: GitState(binding = gitBinding)
+    val managedWorktrees = remember(gitScope, managedWorktreeRepository) {
+        managedWorktreeRepository?.let { im.hikaru.harness.client.git.ManagedWorktreeController(gitScope, it) }
+    }
+    DisposableEffect(managedWorktrees) { onDispose { managedWorktrees?.close() } }
+    val managedRepository = (gitState.repository as? GitRead.Ready<GitRepository>)?.value
+        ?.takeIf { it.binding == gitBinding && gitBinding?.access == GitAccess.LocalReadOnly }
+    LaunchedEffect(managedWorktrees, managedRepository) { managedWorktrees?.bind(managedRepository) }
+    // An applied archive/unarchive changes which chats are live. Re-read the session list so an
+    // archived chat leaves Recent (and a restored one returns) without a manual refresh; a retired
+    // chat that is still selected is deselected by the same call.
+    val managedArchiveReceipt: ManagedWorktreeChatArchiveReceipt? = managedWorktrees?.state
+        ?.collectAsState()?.value?.archiveReceipt
+    LaunchedEffect(managedArchiveReceipt) {
+        val applied = managedArchiveReceipt as? ManagedWorktreeChatArchiveReceipt.Applied ?: return@LaunchedEffect
+        conversation.invalidateSessions(
+            retired = if (applied.request.desiredArchived) SessionId(applied.request.key.id) else null,
+        )
+    }
+    LaunchedEffect(git, gitBinding, gitInitialCwd) {
+        git.bind(gitBinding)
+        if (gitBinding?.access == GitAccess.LocalReadOnly && git.state.value.selectedCwd == null) {
+            git.selectRepository(gitInitialCwd)
+        }
+    }
+    val gitSessionCwds = if (gitBinding?.access == GitAccess.LocalReadOnly &&
+        conversationState.host == conversationHost && conversationState.connected) {
+        conversationState.sessions.mapNotNull { it.cwd?.takeIf(String::isNotBlank) }.distinct()
+    } else emptyList()
+    val gitCwdChoices = if (gitBinding?.access == GitAccess.LocalReadOnly) {
+        (gitSessionCwds + listOfNotNull(gitInitialCwd?.takeIf(String::isNotBlank))).distinct()
+    } else emptyList()
+    val gitThreadCwd = (page as? PageId.Thread)?.threadId?.let { threadId ->
+        if (gitBinding?.access == GitAccess.LocalReadOnly && conversationState.host == conversationHost &&
+            conversationState.connected) {
+            conversationState.sessions.firstOrNull { it.id.value == threadId }?.cwd?.takeIf(String::isNotBlank)
+        } else null
+    }
+    LaunchedEffect(git, gitBinding, gitThreadCwd) {
+        if (gitBinding?.access == GitAccess.LocalReadOnly && gitThreadCwd != null) {
+            git.selectRepository(gitThreadCwd)
+        }
+    }
+    // The summary island reads its own HEAD-based numbers only while it is open, and only after the
+    // selected repository and status are real. It never starts IO for a closed panel.
+    val summaryLoad = threadSummaryEnvironment(gitState)
+    LaunchedEffect(git, summaryPanelOpen, page, gitState.repository, gitState.status) {
+        if (!summaryPanelOpen || page !is PageId.Thread) return@LaunchedEffect
+        if (gitState.repository is GitRead.Loading || gitState.repository is GitRead.Unselected) return@LaunchedEffect
+        if (gitState.repository !is GitRead.Ready || gitState.status !is GitRead.Ready) return@LaunchedEffect
+        if (gitState.summaryStats is GitRead.Ready || gitState.summaryStats is GitRead.Loading) return@LaunchedEffect
+        git.refreshSummaryStats()
+    }
+    val pluginScope = conversationHost?.takeIf { verifiedConversationConnection != null }?.let {
+        PluginScope(it.hostId, it.generation, it.identity?.let { identity -> PluginAccountId(identity.toString()) })
+    }
+    val pluginAccess = pluginScope?.let { scope ->
+        verifiedConversationConnection?.let { PluginAccessBinding(scope, it, transport) }
+    }
+    val managedPlugins = installedPluginRepository as? LocalPluginManagementRepository
+    val plugins = remember(installedPluginRepository) {
+        InstalledPluginsController(conversationScope, installedPluginRepository)
+    }
+    val observedPluginsState = key(plugins) { plugins.state.collectAsState().value }
+    val pluginsState = observedPluginsState.takeIf { it.scope == pluginScope }
+        ?: InstalledPluginsState(scope = pluginScope)
+    DisposableEffect(plugins, managedPlugins) {
+        onDispose {
+            managedPlugins?.bindAccess(null)
+            plugins.close()
+        }
+    }
+    LaunchedEffect(plugins, pluginAccess, page) {
+        managedPlugins?.bindAccess(pluginAccess)
+        plugins.bind(pluginScope)
+        if (page is PageId.PluginDetail) plugins.select(PluginId(page.pluginId))
+        else plugins.back()
+    }
+    LaunchedEffect(verifiedConversationConnection, conversationHost) {
+        val previousHost = conversation.state.value.host
+        val changedOwner = previousHost != null && (conversationHost == null ||
+            previousHost.hostId != conversationHost.hostId || previousHost.identity != conversationHost.identity)
+        conversation.bind(
+            connection = verifiedConversationConnection,
+            host = conversationHost,
+            completionCapability = if (transport == ConnectionTransport.Local) CompletionCapability.LocalIdle
+                else CompletionCapability.DeliveryAcknowledgedOnly,
+        )
+        if (changedOwner && navigation.currentPage is PageId.Thread) {
+            navigation = navigation.copy(currentPage = PageId.Home, backStack = emptyList())
+        } else {
+            conversation.select((navigation.currentPage as? PageId.Thread)?.threadId?.let(::SessionId))
+        }
+    }
+    LaunchedEffect(page) {
+        when (page) {
+            PageId.Home -> conversation.select(null)
+            is PageId.Thread -> conversation.select(SessionId(page.threadId))
+            else -> conversation.select(null)
+        }
+    }
+    LaunchedEffect(conversationState.selectedSessionId) {
+        val created = conversationState.selectedSessionId
+        if (navigation.currentPage == PageId.Home && created != null) {
+            navigation = navigation.navigate(PageId.Thread(created.value))
+        }
+    }
+    // Fence projections before the asynchronous bind effect runs; keep shell IDs factual.
+    val latestConversationHost by rememberUpdatedState(conversationHost)
+    val latestVerifiedConversationConnection by rememberUpdatedState(verifiedConversationConnection)
+    val currentConversationSessions = if (verifiedConversationConnection != null && conversationHost != null &&
+        conversationState.host == conversationHost && conversationState.connected) conversationState.sessions else emptyList()
+    val recentTasks = currentConversationSessions.sortedWith(
+        compareByDescending<im.hikaru.harness.client.connection.SessionSummary> { it.createdAt }.thenBy { it.id.value },
+    ).map { summary -> RecentTaskItem(id = summary.id.value, title = summary.id.value) }
+    val modelChoices = if (transport == ConnectionTransport.Local && modelSettings.snapshot.available &&
+        modelSettings.loadError == null && !modelSettings.loading) {
+        modelSettings.snapshot.providers.filter { it.active }.flatMap { provider ->
+            provider.models.map { model -> ConversationModelChoice(provider.id, model.id, provider.displayName + " / " + model.name) }
+        }
+    } else emptyList()
+    val localSchedulingAllowed = transport == ConnectionTransport.Local && verifiedConversationConnection != null
+    val schedulingUnavailableReason = when {
+        transport == ConnectionTransport.Relay -> "远程 Host 未提供持久化定时任务服务，本机存储不能用于 Relay。"
+        verifiedConversationConnection == null -> "当前 Host 尚未通过连接验证，定时任务存储不可用。"
+        scheduleCalendar == null -> "当前平台未提供定时任务日历服务，无法校验或保存任务。"
+        else -> null
+    }
+    // The default argument creates an unavailable adapter; retain it across recompositions.
+    val suppliedScheduledStore = if (scheduledStore is UnavailableScheduledStore) remember { scheduledStore }
+        else scheduledStore
+    val blockedScheduledStore = remember(schedulingUnavailableReason) {
+        UnavailableScheduledStore(schedulingUnavailableReason ?: "定时任务存储不可用。")
+    }
+    val effectiveScheduledStore = if (schedulingUnavailableReason == null) suppliedScheduledStore
+        else blockedScheduledStore
+    val effectiveScheduleCalendar = scheduleCalendar ?: UnavailableAppScheduleCalendar
+    val scheduledScope = conversationHost?.let { ScheduledScope(it.hostId, it.identity, it.generation) }
+    val scheduledConnected = verifiedConversationConnection != null
+    val scheduledOwnerState = scheduledExecutorOwner?.let { key(it) { it.state.collectAsState().value } }
+    val suppliedScheduledExecutor = scheduledOwnerState?.executor ?: scheduledExecutor
+    val executorState = suppliedScheduledExecutor?.let { key(it) { it.state.collectAsState().value } }
+    val recoveryBinding = scheduledScope?.takeIf {
+        localSchedulingAllowed && scheduledExecutorConnection != null &&
+            scheduledExecutorConnection === verifiedConversationConnection && scheduledOwnerState?.binding == it
+    }
+    // This binding survives executor replacement. Losing a verified connection permanently fences
+    // the factory owner, so recovery cannot restore admission through an old connection.
+    DisposableEffect(scheduledExecutorOwner, recoveryBinding) {
+        onDispose { if (recoveryBinding != null) scheduledExecutorOwner?.invalidate() }
+    }
+    val effectiveScheduledExecutor = suppliedScheduledExecutor?.takeIf {
+        localSchedulingAllowed && scheduledExecutorConnection != null &&
+            scheduledExecutorConnection === verifiedConversationConnection &&
+            executorState?.scope == scheduledScope
+    }
+    // Initial describe/loading does not revoke the app-owned executor. Once a verified owner has
+    // used it, losing that binding immediately stops further claims, even off the scheduling page.
+    DisposableEffect(effectiveScheduledExecutor) {
+        onDispose { effectiveScheduledExecutor?.invalidate() }
+    }
+    val scheduledRepository = remember(conversationHost, verifiedConversationConnection,
+        effectiveScheduledStore, effectiveScheduleCalendar, effectiveScheduledExecutor) {
+        ScheduledRepository(effectiveScheduledStore, ScheduleEngine(effectiveScheduleCalendar), effectiveScheduledExecutor)
+    }
+    val observedScheduledState = key(scheduledRepository) { scheduledRepository.state.collectAsState().value }
+    DisposableEffect(scheduledRepository) { onDispose { scheduledRepository.clear() } }
+    val scheduledSessions = if (localSchedulingAllowed && conversationState.host == conversationHost &&
+        conversationState.connected) conversationState.sessions else emptyList()
+    val scheduledCwds = if (localSchedulingAllowed) {
+        (scheduledSessions.mapNotNull { it.cwd?.takeIf(String::isNotBlank) } +
+            listOfNotNull(gitInitialCwd?.takeIf(String::isNotBlank))).distinct()
+    } else emptyList()
+    val scheduledContext = ScheduledValidationContext(
+        targets = if (localSchedulingAllowed) listOf(ScheduledTarget.Cron(ScheduledDestination.Projectless)) +
+            scheduledCwds.map { ScheduledTarget.Cron(ScheduledDestination.Cwd(it)) } +
+            scheduledSessions.map { ScheduledTarget.Heartbeat(it.id) } else emptyList(),
+        models = if (localSchedulingAllowed) modelChoices.map { ScheduledModelRef(it.providerId, it.modelId) }.distinct()
+            else emptyList(),
+    )
+    // A new controller is empty immediately; the old owner is fenced and cleared on disposal.
+    val scheduledBindingReady = observedScheduledState.scope == scheduledScope &&
+        observedScheduledState.connected == scheduledConnected && observedScheduledState.context == scheduledContext
+    val scheduledState = if (scheduledBindingReady) observedScheduledState else ScheduledManagementState(
+        scope = scheduledScope, connected = scheduledConnected, context = scheduledContext,
+        phase = if (scheduledScope == null) ScheduledLoadPhase.Unbound else ScheduledLoadPhase.NotLoaded,
+    )
+    LaunchedEffect(scheduledRepository, scheduledScope, scheduledContext, scheduledConnected) {
+        if (scheduledScope == null) scheduledRepository.clear()
+        else {
+            scheduledRepository.bind(scheduledScope, scheduledContext, scheduledConnected)
+            if (scheduledConnected && scheduledRepository.state.value.phase == ScheduledLoadPhase.NotLoaded) {
+                scheduledRepository.load()
+            }
+        }
+    }
+    LaunchedEffect(scheduledRepository) { scheduledRepository.observeExecution() }
+    val scheduledQuery = (page as? PageId.ScheduledTasks)?.query.orEmpty()
+    val scheduledTasks = ScheduledTasksState(mode = navigatorMode, query = scheduledQuery)
+    // One clock read per scheduling snapshot/revision; the navigator row and the detail page label the
+    // durable instants against this same "now".
+    val scheduledNow = remember(scheduledState.effective?.revision, scheduledState.phase) {
+        SystemScheduledClock.nowEpochMillis()
+    }
+    val onScheduledQueryChange: (String) -> Unit = { query ->
+        navigation = navigation.copy(currentPage = PageId.ScheduledTasks(query))
+    }
+    // The summary island's 定时任务 section lists only tasks durably bound to the open conversation.
+    val threadScheduledTasks = threadSummaryScheduledTasks(
+        scheduledState.effective?.tasks.orEmpty(),
+        (page as? PageId.Thread)?.threadId?.let { SessionId(it) },
+    )
+    val schedulingActionScope = rememberCoroutineScope()
+    var selectedNewModel by remember(conversationHost?.hostId, conversationHost?.identity) { mutableStateOf<ConversationModelChoice?>(null) }
+    val effectiveNewModel = selectedNewModel?.let { chosen ->
+        modelChoices.firstOrNull { it.providerId == chosen.providerId && it.modelId == chosen.modelId }
+    }
+    val historicalModel = conversationState.history.mapNotNull { it.source as? ModelMessageSource }.lastOrNull()?.let {
+        ConversationModelChoice(it.provider, it.model, it.provider + " / " + it.model)
+    }
+    val modelReason = when {
+        page is PageId.Thread -> "当前会话暂不支持更换模型。"
+        transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
+        modelSettings.loading -> "正在读取本机模型目录。"
+        modelChoices.isEmpty() -> "请先在设置中配置本机模型与 Provider。"
+        else -> null
+    }
+    val composerSessionId = (page as? PageId.Thread)?.threadId?.let(::SessionId)
+    val composerBindingReady = conversationState.host == conversationHost &&
+        conversationState.selectedSessionId == composerSessionId
+    val composerState = if (composerBindingReady) conversationState else
+        ConversationState(host = conversationHost, selectedSessionId = composerSessionId)
+    fun composerIsCurrent(): Boolean = navigation.currentPage == page &&
+        conversation.state.value.host == conversationHost &&
+        conversation.state.value.selectedSessionId == composerSessionId
+    val submitReason = when {
+        !composerBindingReady -> "正在切换会话…"
+        !conversationState.connected -> "请连接可用的 Host 后发送消息。"
+        pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
+        page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "所选项目尚未加载，请刷新项目后再发送。"
+        page == PageId.Home && localProjectsState.mutation != null -> "正在保存项目变更，请稍候。"
+        page == PageId.Home && transport == ConnectionTransport.Local && effectiveNewModel == null -> "请选择本机目录中的模型。"
+        else -> null
+    }
+    val liveComposer: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (page == PageId.Home && transport == ConnectionTransport.Local) LocalProjectPicker(localProjectsState,
+            onSelect = { localProjects.select(it); projectPreparationError = null; pendingWorktreeChat = null },
+            onManage = { navigation = navigation.navigate(PageId.Projects()) },
+            enabled = conversationState.action == im.hikaru.harness.client.conversation.ConversationAction.Idle && localProjectsState.mutation == null,
+            currentBinding = projectBinding)
+        projectPreparationError?.let { HarnessText(it, Modifier.semantics { testTag = "local-project-prepare-error" }, color = HarnessTokens.Colors.Danger) }
+        pendingProjectAssociation?.let { pending ->
+            val pendingName = localProjectsState.snapshot?.project(pending.first.projectId)?.name ?: pending.first.projectId.value
+            HarnessText("会话已创建，项目「$pendingName」关联待确认；消息尚未发送。",
+                Modifier.semantics { testTag = "local-project-attach-pending" }, color = HarnessTokens.Colors.Danger)
+            HarnessButton("重试项目关联", {
+                if (!retryingProjectAssociation) {
+                    retryingProjectAssociation = true
+                    conversationScope.launch {
+                        try {
+                            projectPreparationError = null
+                            when (val validated = localProjects.revalidateCreatedSessionTarget(pending.first)) {
+                                is LocalProjectRootResult.Failed -> projectPreparationError = validated.failure.message()
+                                is LocalProjectRootResult.Ready -> attachProjectSession(validated.target, pending.second)
+                            }
+                        } finally { retryingProjectAssociation = false }
                     }
-                },
-            )
-            HorizontalDivider()
-            when (destination) {
-                HarnessDestination.Harness -> HarnessHome(
-                    host = host,
-                    status = connectionState,
-                    onSessions = {
-                        if (connection == null) {
-                            pendingDestination = HarnessDestination.Sessions
-                            destination = HarnessDestination.Account
-                        } else {
-                            destination = HarnessDestination.Sessions
-                        }
-                    },
-                )
-                HarnessDestination.Account -> AccountScreen(
-                    account = account,
-                    state = accountState,
-                    onLoggedIn = {
-                        val target = pendingDestination
-                        pendingDestination = null
-                        destination = target ?: HarnessDestination.Account
-                    },
-                )
-                HarnessDestination.Tenant -> TenantScreen(account, accountState)
-                HarnessDestination.Profile -> ProfileScreen(account, accountState)
-                HarnessDestination.Hosts -> HostScreen(host, availableHosts, connectionState, onSelectHost)
-                HarnessDestination.Sessions ->
-                    SessionScreen(
-                        connection = connection,
-                        connectionChanges = connectionChanges,
-                        hostId = host?.hostId?.value,
-                        sessionEvents = sessionEvents,
-                        historyRecoveries = historyRecoveries,
-                        onSubscribeSession = onSubscribeSession,
-                        onUnsubscribeSession = onUnsubscribeSession,
+                }
+            }, enabled = projectBinding != null && localProjects.isBoundTo(projectBinding) &&
+                localProjectsState.mutation == null && !retryingProjectAssociation &&
+                conversationState.action == im.hikaru.harness.client.conversation.ConversationAction.Idle &&
+                !conversationState.cancelling, testTag = "local-project-attach-retry")
+            localProjectsState.mutationFailure?.let { HarnessText(it.message(), color = HarnessTokens.Colors.Danger) }
+        }
+        pendingWorktreeChat?.takeIf { page == PageId.Home }?.let { directory ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HarnessText("将在该工作树目录新建聊天：$directory",
+                    Modifier.weight(1f).semantics { testTag = "local-worktree-chat-pending" },
+                    color = HarnessTokens.Colors.TextMuted)
+                HarnessButton("取消", { pendingWorktreeChat = null }, testTag = "local-worktree-chat-cancel")
+            }
+        }
+        LiveConversationComposer(
+            state = composerState, onDraftChange = { if (composerIsCurrent()) conversation.updateDraft(it) },
+            onSubmit = {
+                if (submitReason == null && composerIsCurrent()) {
+                    var target: ValidatedLocalProjectTarget? = null
+                    val expectedProjectId = localProjectsState.selectedProjectId
+                    val expectedProjectBinding = projectBinding
+                    // `settings.worktrees.row.newChat` binds a working directory instead of a project.
+                    val worktreeDirectory = pendingWorktreeChat?.takeIf { page == PageId.Home }
+                    val useProject = page == PageId.Home && expectedProjectId != null && worktreeDirectory == null
+                    projectPreparationError = null
+                    conversation.submit(
+                        agentOptions = if (page == PageId.Home) AgentOptions(provider = effectiveNewModel?.providerId, model = effectiveNewModel?.modelId) else AgentOptions(),
+                        prepareCreation = if (worktreeDirectory != null) ({ CreateSessionOptions(cwd = worktreeDirectory) })
+                            else if (!useProject) null else ({
+                                if (expectedProjectBinding == null || !localProjects.isBoundTo(expectedProjectBinding) ||
+                                    localProjects.state.value.selectedProjectId != expectedProjectId) null
+                                else when (val result = localProjects.prepareSelectedRoot()) {
+                                    is LocalProjectRootResult.Ready -> { target = result.target; CreateSessionOptions(cwd = result.target.root.path) }
+                                    is LocalProjectRootResult.Failed -> {
+                                        if (projectBinding != null && localProjects.isBoundTo(projectBinding)) projectPreparationError = result.failure.message()
+                                        null
+                                    }
+                                }
+                            }),
+                        onSessionCreated = if (worktreeDirectory != null) ({ pendingWorktreeChat = null; true })
+                            else if (!useProject) null else ({ summary ->
+                                target?.let { captured ->
+                                    pendingProjectAssociation = captured to summary
+                                    attachProjectSession(captured, summary)
+                                } ?: false
+                            }),
                     )
+                }
+            },
+            onCancel = { if (composerIsCurrent()) conversation.cancel() }, models = modelChoices,
+            selectedModel = if (page is PageId.Thread) historicalModel else effectiveNewModel,
+            onModelSelect = { selectedNewModel = it }, modelUnavailableReason = modelReason,
+            submitUnavailableReason = submitReason,
+        )
+        }
+    }
+    // Fixed Codex rail: 主页 / 定时任务 / 项目 / 插件 / 探索 plus the account chip, then the
+    // destinations the user pinned from 探索. Host and Settings are entries in the account panel,
+    // so they are not rail slots.
+    val navItems = harnessRailItems(page, railInitials(host?.displayName ?: "Harness"), pinnedRailDestinations)
+    val navigator =
+        workspaceState.copy(
+            workspaceId = host?.hostId?.value,
+            workspaceLabel = host?.displayName ?: "工作区",
+            // The shell reads the Workspace navigator from this argument, not from
+            // [AppShellState.workspace], so the app-wide collapse mode has to be carried here: without
+            // it the shell always saw the page's own default (Expanded) and 首页/会话 could not collapse
+            // at all — the titlebar control and ⌘B flipped a mode the shell never read.
+            mode = navigatorMode,
+        )
+    val threadSurfaceState = threadSurface(page, recentTasks)
+    val liveProjectSessions = currentConversationSessions
+    val projectNodes = localProjectsState.projects.map { project ->
+        val ids = localProjectsState.snapshot?.memberships.orEmpty().filter { it.projectId == project.id }.map { it.session.id }.toSet()
+        WorkspaceProjectNode(project.id.value, project.name, children = liveProjectSessions.filter { it.id in ids }.map { summary ->
+            WorkspaceItemNode(summary.id.value, summary.cwd?.substringAfterLast('/')?.takeIf(String::isNotBlank) ?: summary.id.value)
+        })
+    }
+    val visibleRecentTasks = recentTasks
+    val accountMenuState =
+        accountMenu.copy(
+            identityLabel =
+                when {
+                    account == null -> "本地模式"
+                    accountState.session == null -> "未登录"
+                    else -> accountState.session.identity.userId.toString()
+                },
+            modeLabel =
+                when {
+                    account == null -> "本地 Harness"
+                    accountState.session == null -> "远程账号未登录"
+                    else -> "远程账号"
+                },
+            connectionLabel = connectionState.label,
+            hostLabel = host?.displayName ?: "当前没有选中的 Host",
+            availableHostCount = availableHosts.size,
+            isLoggedIn = accountState.session != null,
+            canLogin = account != null,
+        )
+    val selectPage: (PageId) -> Unit = { target ->
+        if (target.requiresConnection() && connection == null) {
+            pendingPage = target
+            navigation = navigation.navigate(PageId.Account)
+        } else {
+            navigation = navigation.navigate(target)
+        }
+    }
+    val pluginAction: (InstalledPluginsAction) -> Unit = { action ->
+        when (action) {
+            is InstalledPluginsAction.Select -> selectPage(PageId.PluginDetail(action.id.value))
+            InstalledPluginsAction.Back -> selectPage(PageId.Plugins)
+            else -> plugins.dispatch(action)
+        }
+    }
+    val toggleSidebar: () -> Unit = {
+        // One mode for the whole app, so the flip does not depend on which navigator the current page
+        // happens to own. A page with no navigator has no toggle at all and is left alone.
+        if (pageShellSpec(navigation.currentPage).mountsNavigator) {
+            navigatorMode = navigatorMode.toggled()
+        }
+    }
+    // The window draws these in its title bar, but only the page knows which navigator it carries and
+    // what it is called, so the page hands the window the actions (null = draw no control).
+    val titleStrip = LocalHarnessTitleStrip.current
+    val currentShellSpec = pageShellSpec(navigation.currentPage)
+    val navigatorCollapsed = navigatorMode == SidebarMode.Collapsed
+    // Every page that mounts a navigator can collapse it (首页, 会话, 插件, 定时任务, 设置 are all
+    // collapsible in the reference); a page that mounts none has nothing to collapse and draws nothing.
+    val navigatorToggleVisible = currentShellSpec.mountsNavigator
+    // 新聊天 takes the same slot once the navigator is away on the 首页: with the navigator up the live
+    // bar has no such control at all, and on every other page it never has one.
+    val newChatVisible = page == PageId.Home && navigatorCollapsed
+    SideEffect {
+        titleStrip?.navigatorToggle = toggleSidebar.takeIf { navigatorToggleVisible }
+        titleStrip?.newChat = ({ selectPage(PageId.Home) }).takeIf { newChatVisible }
+        // Drawn once per pane while the tab strips are hidden (隐藏标签页).
+        titleStrip?.content = { HarnessPaneTitle(pageTitle(page)) }
+    }
+    val back: () -> Unit = { navigation = navigation.back() }
+    val shortcutBlocked by rememberUpdatedState(projectEditorOpen || accountMenu.isOpen || exploreMenu.isOpen || navigation.overlay != OverlayId.None)
+    val shortcutConsumer by rememberUpdatedState<(ShortcutCommand) -> Boolean>({ command ->
+        when (command) {
+            ShortcutCommand.Settings -> { selectPage(PageId.Settings(SettingsSection.General)); true }
+            ShortcutCommand.ShowKeyboardShortcuts -> { selectPage(PageId.Settings(SettingsSection.Shortcuts)); true }
+            ShortcutCommand.ToggleSidebar -> {
+                // The chord does what the titlebar control does, so a page that mounts no navigator
+                // does not answer it.
+                if (navigatorToggleVisible) { toggleSidebar(); true } else false
+            }
+            ShortcutCommand.NavigateBack -> {
+                if (navigation.backStack.isEmpty()) false else { back(); true }
+            }
+            ShortcutCommand.ManageTasks -> { selectPage(PageId.ScheduledTasks()); true }
+            ShortcutCommand.CloseWindow -> false // The desktop root owns the sole close consumer.
+        }
+    })
+    val shortcutOwner = remember(shortcuts) { Any() }
+    DisposableEffect(shortcuts) {
+        shortcuts.input.attachApp(shortcutOwner, { shortcutBlocked }, { shortcutConsumer(it) })
+        onDispose { shortcuts.input.detachApp(shortcutOwner) }
+    }
+    val runtimeState =
+        AppShellState(
+            sidebar = SidebarState(mode = navigatorMode),
+            navigatorPreferredWidth = navigatorWidth,
+            destination = page.toShellDestination(),
+            selectedNavigationId = navItems.firstOrNull { it.selected }?.id,
+            navigation = navigation,
+            // Every navigator carries the same mode; the content below it stays page-owned. The
+            // Workspace one is the very object handed to AppShell as its `navigator` argument (that,
+            // not this field, is what the shell lays out), so both name one navigator and one mode.
+            workspace = navigator,
+            settingsNavigator = settingsNavigator.copy(mode = navigatorMode, selectedSlug = (page as? PageId.Settings)?.section?.navigatorSlug() ?: settingsNavigator.selectedSlug),
+            pluginsNavigator = pluginsNavigator.copy(mode = navigatorMode, enabledOnly = pluginsState.enabledOnly),
+            scheduledTasksNavigator = scheduledTasks,
+            accountMenu = accountMenuState,
+            exploreMenu = exploreMenu,
+            pinnedRailDestinations = pinnedRailDestinations,
+            thread = threadSurfaceState,
+            connection = connectionState.toIndicatorState(),
+        )
+    val composer: (@Composable () -> Unit)? =
+        if (page is PageId.Thread) liveComposer else null
+    val panelScope = if (page is PageId.Thread && conversationHost != null)
+        ThreadPanelScope(conversationHost.hostId, SessionId(page.threadId)) else null
+    val panelOwner = panelScope?.let { scoped ->
+        verifiedConversationConnection?.let { verified ->
+            conversationHost?.let { currentHost -> ThreadPanelsOwner(verified, currentHost, scoped.conversationId) }
+        }
+    }
+    val panelController = remember(conversationScope) {
+        ThreadPanelsController(conversationScope, ConnectionThreadPanelsRepository())
+    }
+    // Always read snapshot state, including the frame before the binding effect runs.
+    val observedPanels = panelController.state.collectAsState().value
+    DisposableEffect(panelController) { onDispose { panelController.close() } }
+    LaunchedEffect(panelController, panelOwner) { panelController.bind(panelOwner) }
+    // Hide the old owner's panel before the binding effect publishes the next snapshot.
+    val panels = if (panelController.isBoundTo(panelOwner)) observedPanels else null
+    val ptyController = remember(conversationScope, terminalLaunchProvider) {
+        im.hikaru.harness.client.panels.PtyTerminalController(conversationScope, terminalLaunchProvider)
+    }
+    val observedPty = ptyController.state.collectAsState().value
+    DisposableEffect(ptyController) { onDispose { ptyController.close() } }
+    LaunchedEffect(ptyController, panelOwner) { ptyController.bind(panelOwner) }
+    val ptyState = if (ptyController.isBoundTo(panelOwner)) observedPty else null
+    // The summary island reads background activity independently of the tabbed context panel, so
+    // opening it never opens a tab, starts a process, or spawns an agent.
+    val summaryActivityController = remember(conversationScope) {
+        ThreadSummaryActivityController(conversationScope, ConnectionThreadPanelsRepository())
+    }
+    val observedSummaryActivity = summaryActivityController.state.collectAsState().value
+    DisposableEffect(summaryActivityController) { onDispose { summaryActivityController.close() } }
+    LaunchedEffect(summaryActivityController, panelOwner) { summaryActivityController.bind(panelOwner) }
+    val summaryActivity = if (summaryActivityController.isBoundTo(panelOwner)) observedSummaryActivity else null
+    LaunchedEffect(summaryActivityController, summaryPanelOpen, page, panelOwner) {
+        if (summaryPanelOpen && page is PageId.Thread && panelOwner != null) summaryActivityController.refresh()
+    }
+    val onOpenSummaryActivity: (ThreadSummaryActivity) -> Unit = { activity ->
+        panels?.let { state ->
+            when (activity.kind) {
+                ThreadSummaryActivityKind.Subagent -> {
+                    panelController.dispatch(ThreadPanelAction.OpenTab(state.scope, ThreadPanelTab.Subagents))
+                    // Best effort: deep-select only when the panel already knows the child row.
+                    (state.subagents as? PanelLoad.Ready)?.value?.children
+                        ?.firstOrNull { it.key.sessionId.value == activity.id }
+                        ?.let { panelController.dispatch(ThreadPanelAction.SelectChild(it.key)) }
+                }
+                ThreadSummaryActivityKind.Process -> {
+                    panelController.dispatch(ThreadPanelAction.OpenTab(state.scope, ThreadPanelTab.BackgroundOutput))
+                    state.terminalInventory.firstOrNull { it.key.processId == activity.id }
+                        ?.let { panelController.dispatch(ThreadPanelAction.SelectTerminal(it.key)) }
+                }
+            }
+        }
+    }
+    val contextPanel: (@Composable () -> Unit)? = panels?.takeIf { it.openTabs.isNotEmpty() }?.let { state ->
+        { ThreadPanels(state, onAction = panelController::dispatch,
+            onRefreshOverview = { panelController.refreshOverview() },
+            onRefreshDetail = { panelController.refreshDetail() },
+            onRefreshTerminal = { panelController.refreshTerminal() },
+            onTerminalInput = { key, input -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Input, input) },
+            onTerminalEof = { key -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Eof) },
+            onTerminalCancel = { key -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Cancel) },
+            ptyController = ptyController, ptyState = ptyState) }
+    }
+    val defaultRoot: @Composable () -> Unit = {
+        val shellDensity = LocalDensity.current
+        var shellWidthPx by remember { mutableStateOf<Int?>(null) }
+        val dismissFloatingPluginsNavigator: () -> Unit = {
+            shellWidthPx?.let { widthPx ->
+                val availableWidth = with(shellDensity) { widthPx.toDp() }
+                if (navigatorLayout(navigatorMode, availableWidth) ==
+                    NavigatorLayout.Floating
+                ) {
+                    navigatorMode = SidebarMode.Collapsed
+                }
+            }
+        }
+        // Expose plugin content on route entry, including the initial route after measurement.
+        // Mode, refreshes and later resizes are not keys: an explicitly opened drawer stays open.
+        LaunchedEffect(page, shellWidthPx != null) {
+            if (pageShellSpec(page).navigator == NavigatorKind.Plugins) {
+                dismissFloatingPluginsNavigator()
+            }
+        }
+        // Desktop owns the fixture tabs and the split workspace; each surface renders this page.
+        AppShell(
+            state = runtimeState,
+            themeMode = appearanceState.settings.mode.themeMode(),
+            navItems = navItems,
+            onNavSelect = { item ->
+                item.destination
+                    ?.let(::railDestinationPage)
+                    ?.let(selectPage)
+            },
+            onOpenAccountMenu = {
+                exploreMenu = exploreMenu.close()
+                accountMenu = accountMenu.open()
+            },
+            onDismissAccountMenu = { accountMenu = accountMenu.close() },
+            // The 探索 pin menu and the account dropdown are mutually exclusive menus.
+            onOpenExploreMenu = {
+                accountMenu = accountMenu.close()
+                exploreMenu = exploreMenu.open()
+            },
+            onDismissExploreMenu = { exploreMenu = exploreMenu.close() },
+            onOpenExploreDestination = { exploreMenu = exploreMenu.close(); selectPage(it) },
+            onTogglePinRailDestination = { destination ->
+                pinnedRailDestinations =
+                    if (destination in pinnedRailDestinations) pinnedRailDestinations - destination
+                    else pinnedRailDestinations + destination
+            },
+            onAccountMenuAction = { action ->
+                accountMenu = accountMenu.close()
+                when (action) {
+                    AccountMenuAction.Settings -> selectPage(AccountMenuDestination.Settings.toPageId())
+                    AccountMenuAction.Profile -> selectPage(PageId.Account)
+                    AccountMenuAction.Login -> selectPage(PageId.Account)
+                    AccountMenuAction.Logout -> {
+                        account?.let { currentAccount ->
+                            accountMenuScope.launch { currentAccount.logout() }
+                        }
+                    }
+                }
+            },
+            navigator = navigator,
+            projectNodes = projectNodes,
+            recentTasks = visibleRecentTasks,
+            onToggleSidebar = toggleSidebar,
+            onNavigatorResize = { navigatorWidth = it },
+            onNewTask = { selectPage(PageId.Home) },
+            onNavigatorSearch = { query -> workspaceState = workspaceState.withSearchQuery(query) },
+            onSettingsSearch = { query -> settingsNavigator = settingsNavigator.copy(query = query) },
+            onSettingsSelect = { item ->
+                // Use the measured shell width and the same layout rule as AppShell. Selecting
+                // a page dismisses a floating drawer; a pushed navigator keeps the user's mode.
+                shellWidthPx?.let { widthPx ->
+                    val availableWidth = with(shellDensity) { widthPx.toDp() }
+                    if (navigatorLayout(navigatorMode, availableWidth) ==
+                        NavigatorLayout.Floating
+                    ) {
+                        navigatorMode = SidebarMode.Collapsed
+                    }
+                }
+                selectPage(item.toPageId())
+            },
+            onSettingsBack = {
+                navigation = if (navigation.backStack.isEmpty()) navigation.navigate(PageId.Home) else navigation.back()
+            },
+            navigatorSearchOpen = navigatorSearchOpen,
+            onToggleNavigatorSearch = { navigatorSearchOpen = !navigatorSearchOpen },
+            onToggleProject = { projectId -> navigation = navigation.toggleProject(projectId) },
+            onSelectNode = { node -> selectPage(PageId.Thread(node.id)) },
+            onSelectRecent = { task -> selectPage(PageId.Thread(task.id)) },
+            onPluginEnabledFilterChange = if (pluginsState.canSearch) ({ enabled ->
+                dismissFloatingPluginsNavigator()
+                plugins.dispatch(InstalledPluginsAction.SetEnabledOnly(enabled))
+            }) else null,
+            scheduledTasks = scheduledTasks,
+            scheduledNavigatorContent = {
+                ScheduledManagementNavigator(
+                    state = scheduledState,
+                    query = scheduledQuery,
+                    onQueryChange = onScheduledQueryChange,
+                    onNew = { if (scheduledBindingReady) scheduledRepository.beginCreate() },
+                    onSelect = { id -> if (scheduledBindingReady) scheduledRepository.selectTask(id) },
+                    onRetry = { if (scheduledBindingReady) schedulingActionScope.launch { scheduledRepository.load() } },
+                    calendar = scheduleCalendar,
+                    nowEpochMillis = scheduledNow,
+                    statusFilter = scheduledStatusFilter,
+                    onStatusFilterChange = { scheduledStatusFilter = it },
+                    sort = scheduledSort,
+                    onSortChange = { scheduledSort = it },
+                )
+            },
+            pluginsNavigatorContent = pluginsState?.let { pluginState ->
+                @Composable {
+                    PluginsManagementNavigator(
+                        state = pluginState,
+                        onQueryChange = { pluginAction(InstalledPluginsAction.Search(it)) },
+                        // Choosing a filter finishes the compact drawer action, exactly as the previous
+                        // filter callback did; the pushed column ignores the dismissal.
+                        onSetEnabledOnly = { enabled ->
+                            if (pluginState.canSearch) {
+                                dismissFloatingPluginsNavigator()
+                                pluginAction(InstalledPluginsAction.SetEnabledOnly(enabled))
+                            }
+                        },
+                        onSelect = { pluginAction(InstalledPluginsAction.Select(it)) },
+                        onRetry = { pluginAction(InstalledPluginsAction.Refresh) },
+                    )
+                }
+            },
+            onOpenProjectContext = { projectId -> selectPage(PageId.Project(projectId)) },
+            modifier = modifier.onSizeChanged { shellWidthPx = it.width },
+            composer = composer,
+            contextPanel = contextPanel,
+            contextPanelWidthMode = ThreadPanelWidthMode.Regular,
+            onDismissContextPanel = { panels?.let { state ->
+                state.openTabs.forEach { tab -> panelController.dispatch(ThreadPanelAction.CloseTab(state.scope, tab)) }
+            } },
+            summaryPanel = if (summaryPanelOpen && page is PageId.Thread) {
+                {
+                    ThreadSummaryPanel(
+                        load = summaryLoad,
+                        onOpenReview = { selectPage(PageId.Settings(SettingsSection.Git)) },
+                        onRefresh = { git.refreshSummaryStats() },
+                        onClose = { summaryPanelOpen = false },
+                        subagents = summaryActivity?.subagents.orEmpty(),
+                        processes = summaryActivity?.processes.orEmpty(),
+                        onOpenActivity = onOpenSummaryActivity,
+                        processesStopping = summaryActivity?.stoppingProcesses == true,
+                        processesNotice = summaryActivity?.stopNotice,
+                        onStopProcesses = { summaryActivityController.stopAllProcesses() },
+                        scheduledTasks = threadScheduledTasks,
+                        scheduledLoading = scheduledState.phase == ScheduledLoadPhase.Loading,
+                        scheduledError = scheduledState.phase == ScheduledLoadPhase.Error,
+                        onOpenScheduled = if (scheduledBindingReady) {
+                            { id ->
+                                scheduledRepository.selectTask(id)
+                                selectPage(PageId.ScheduledTasks())
+                            }
+                        } else null,
+                        onRetryScheduled = if (scheduledBindingReady) {
+                            { schedulingActionScope.launch { scheduledRepository.load() } }
+                        } else null,
+                    )
+                }
+            } else {
+                null
+            },
+            onDismissSummaryPanel = { summaryPanelOpen = false },
+            content = {
+                when (val current = page) {
+                    PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = liveComposer)
+
+                    PageId.Library -> LibraryPlaceholderPage()
+
+                    is PageId.Projects -> LocalProjectsPage(localProjectsState, current.query,
+                        onQueryChange = { navigation = navigation.copy(currentPage = PageId.Projects(it)) },
+                        onCreate = { editingProject = null; projectEditorOpen = true },
+                        onRefresh = { localProjects.refresh() },
+                        onOpen = { selectPage(PageId.Project(it.value)) })
+
+                    is PageId.Project -> LocalProjectDetailPage(localProjectsState, LocalProjectId(current.projectId), liveProjectSessions,
+                        onBindDirectory = { editingProject = it; projectEditorOpen = true },
+                        onStart = { localProjects.select(it); selectPage(PageId.Home) },
+                        onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
+                        onRefresh = { localProjects.refresh() })
+
+                    is PageId.ScheduledTasks ->
+                        if (scheduledBindingReady) {
+                            Column(Modifier.fillMaxSize().semantics { testTag = "scheduled-page" }) {
+                                schedulingUnavailableReason?.let { reason ->
+                                    HarnessText(reason, Modifier.padding(HarnessTokens.Spacing.Four)
+                                        .semantics { testTag = "scheduled-service-unavailable" },
+                                        color = HarnessTokens.Colors.TextMuted)
+                                }
+                                ScheduledManagementPage(
+                                    repository = scheduledRepository,
+                                    onRecoverExecution = if (scheduledExecutionRecoveryEnabled && recoveryBinding != null &&
+                                        scheduledOwnerState?.invalidated == false && scheduledOwnerState.stopped == false &&
+                                        scheduledOwnerState.busy == false && executorState?.accepting == false) {
+                                        { schedulingActionScope.launch { scheduledExecutorOwner?.recover(recoveryBinding) } }
+                                    } else null,
+                                    executionRecoveryBusy = recoveryBinding != null && scheduledOwnerState?.busy == true,
+                                    executionRecoveryError = scheduledOwnerState?.error.takeIf { recoveryBinding != null },
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                    query = current.query,
+                                    onQueryChange = onScheduledQueryChange,
+                                    calendar = scheduleCalendar,
+                                    nowEpochMillis = scheduledNow,
+                                    onOpenRun = { id ->
+                                        if (scheduledBindingReady && scheduledConnected && localSchedulingAllowed) {
+                                            selectPage(PageId.Thread(id.value))
+                                        }
+                                    },
+                                )
+                            }
+                        } else HarnessText("正在绑定当前 Host…", Modifier.semantics { testTag = "scheduled-binding-loading" })
+
+                    is PageId.Thread -> LiveThreadSurface(state = conversationState, onRetry = { conversation.refresh() })
+
+
+                    PageId.Plugins -> InstalledPluginsPage(pluginsState, pluginAction)
+                    is PageId.PluginDetail -> InstalledPluginDetailPage(pluginsState, pluginAction)
+
+
+                    PageId.Account ->
+                        AccountScreen(
+                            account = account,
+                            state = accountState,
+                            status = connectionState,
+                            host = host,
+                            onOpenSettings = { selectPage(PageId.Settings()) },
+                            onLoggedIn = {
+                                val target = pendingPage
+                                pendingPage = null
+                                navigation = navigation.navigate(target ?: PageId.Home)
+                            },
+                        )
+
+                    is PageId.Settings -> SettingsScreen(
+                        page.section, appearanceState,
+                        onAppearanceChange = { candidate -> appearanceScope.launch { appearance.save(candidate) } },
+                        onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
+                        modelSettings = modelSettings,
+                        onModelsRefresh = { modelScope.launch { models.load() } },
+                        onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
+                        onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
+                        onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
+                        generalState = generalState,
+                        onClosePolicyChange = { policy -> generalScope.launch { general.save(general.state.value.settings.copy(closeConfirmation = policy)) } },
+                        onGeneralRetry = { generalScope.launch { general.retry() } },
+                        worktreeSettingsState = worktreeSettingsState,
+                        onSaveWorktreeSettings = { next -> worktreeSettingsScope.launch { worktreeSettings.save(next) } },
+                        onOpenPlugins = { selectPage(PageId.Plugins) },
+                        connectionsState = connectionsState,
+                        onConnectionsRefresh = refreshConnections,
+                        onConnectionSelect = selectConnection,
+                        shortcutsRepository = shortcuts,
+                        pluginsState = pluginsState,
+                        onPluginAction = pluginAction,
+                        git = git,
+                        gitState = gitState,
+                        gitBindingReady = observedGitState.binding == gitBinding,
+                        gitUnavailableReason = if (transport == ConnectionTransport.Local && gitBackend == null)
+                            "当前未注入本机 Git 只读服务，无法读取仓库。" else gitState.unavailableReason,
+                        gitCwdChoices = gitCwdChoices,
+                        managedWorktrees = managedWorktrees,
+                        liveSessions = conversationState.sessions,
+                        onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
+                        onNewChatInWorktree = { path -> pendingWorktreeChat = path; selectPage(PageId.Home) },
+                    )
+                }
+            },
+        )
+    }
+    val shortcutFocus = remember { FocusRequester() }
+    var shortcutHasFocus by remember { mutableStateOf(false) }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(windowFocused) { if (!windowFocused && ownsShortcutRoot) shortcuts.input.releaseAll() }
+    LaunchedEffect(shortcuts, ownsShortcutRoot) { if (ownsShortcutRoot && !shortcutHasFocus) shortcutFocus.requestFocus() }
+    val shortcutModifier = if (ownsShortcutRoot) Modifier.fillMaxSize()
+        .focusRequester(shortcutFocus).onFocusChanged {
+            shortcutHasFocus = it.hasFocus
+            if (!it.hasFocus) shortcuts.input.releaseAll()
+        }
+        .onPreviewKeyEvent { shortcuts.input.preview(it.toShortcutInput()) }
+        .onKeyEvent { shortcuts.input.dispatch(it.toShortcutInput()) }.focusable() else Modifier.fillMaxSize()
+    CompositionLocalProvider(LocalShortcutsRepository provides shortcuts, LocalShortcutsEventRoot provides shortcuts.input) {
+        Box(shortcutModifier) {
+            HarnessTheme(appearanceState.settings.mode.themeMode(), appearanceState.settings.themeCustomization()) {
+                UiSnapshotProvider(uiSnapshot) {
+                    SlotOutlet(
+                        key = ClientUiSlots.Root,
+                        props = RootProps(render = defaultRoot),
+                        fallback = defaultRoot,
+                    )
+                    if (projectEditorOpen) key(projectBinding) {
+                        LocalProjectEditorDialog(localProjectsState, editingProject,
+                            onDismiss = { projectEditorOpen = false }, onCreate = saveProject,
+                            onRetryCreate = { localProjectsState.pendingCreate?.let(saveProject) },
+                            onBind = { id, directory ->
+                                val capturedBinding = projectBinding
+                                val job = localProjects.bindDirectory(id, directory)
+                                if (job != null) conversationScope.launch {
+                                    job.join()
+                                    if (capturedBinding != null && localProjects.isBoundTo(capturedBinding) && localProjects.state.value.mutationFailure == null) projectEditorOpen = false
+                                }
+                            })
+                    }
+                }
             }
         }
     }
 }
+
+private fun PageId.requiresConnection(): Boolean = this is PageId.Thread
+
+/** No calendar dates or time-zone success are fabricated when a platform adapter is absent. */
+private object UnavailableAppScheduleCalendar : ScheduleCalendar {
+    override fun isValidZone(zoneId: String): Boolean = false
+    private fun unavailable(): Nothing = throw UnsupportedOperationException("当前平台未提供定时任务日历服务。")
+    override fun dateAt(epochMillis: Long, zoneId: String): ScheduleDate = unavailable()
+    override fun plusDays(date: ScheduleDate, days: Int): ScheduleDate = unavailable()
+    override fun resolve(date: ScheduleDate, hour: Int, minute: Int, zoneId: String): Long = unavailable()
+}
+
+/** Until a real local read adapter is injected, every attempted read fails explicitly. */
+private object UnavailableAppGitBackend : GitBackend {
+    private fun unavailable(): Nothing = throw GitReadException(
+        GitFailure(GitFailureKind.Unavailable, "当前未注入本机 Git 只读服务，无法读取仓库。"),
+    )
+    override suspend fun discover(binding: GitBinding, cwd: String): GitRepository = unavailable()
+    override suspend fun status(repository: GitRepository): GitStatusSnapshot = unavailable()
+    override suspend fun branches(repository: GitRepository): List<GitBranch> = unavailable()
+    override suspend fun worktrees(repository: GitRepository): List<GitWorktree> = unavailable()
+    override suspend fun diff(repository: GitRepository, request: GitDiffRequest): GitDiffSnapshot = unavailable()
+}
+
+/**
+ * The rail 资料库 placeholder. Codex's Library is a file product this client does not implement, so
+ * the page states that plainly instead of showing fabricated file data.
+ */
+@Composable
+private fun LibraryPlaceholderPage() {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .semantics { testTag = "library-page" }.padding(HarnessTokens.Spacing.Four),
+        verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
+    ) {
+        HarnessText("资料库", style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { testTag = "library-title" })
+        HarnessText("资料库是 Codex 的文件库；该能力当前未接入。", color = HarnessTokens.Colors.TextMuted,
+            modifier = Modifier.semantics { testTag = "library-unavailable" })
+        HarnessText("本页面为占位，不显示任何示例文件。", color = HarnessTokens.Colors.TextMuted)
+    }
+}
+
+/**
+ * A pane's own title bar, drawn in the window's title strip while the tab strips are hidden
+ * (Codex 隐藏标签页): the page title at the measured 16px / 24px line, weight 430, in the title-bar's
+ * own text ink (`rgb(26, 28, 31)` on the live bar — [HarnessColors.ChromeText], which is lighter than
+ * the app's body [HarnessColors.Text]). Codex draws the project chip before the title and the chat
+ * actions after it; this client has neither yet, so the segment carries the title alone rather than
+ * inventing controls.
+ */
+@Composable
+private fun HarnessPaneTitle(title: String) {
+    HarnessText(
+        title,
+        color = HarnessTokens.Colors.ChromeText,
+        style = MaterialTheme.typography.bodyLarge.copy(fontSize = HarnessTokens.Text.Md, fontWeight = FontWeight.Medium),
+        maxLines = 1,
+    )
+}
+
+private fun pageTitle(page: PageId): String =
+    when (page) {
+        PageId.Home -> "主页"
+        PageId.Library -> "资料库"
+        is PageId.Projects -> "项目"
+        is PageId.Project -> "项目"
+        is PageId.Thread -> page.threadId
+        is PageId.ScheduledTasks -> "定时任务"
+        PageId.Plugins -> "插件"
+        is PageId.PluginDetail -> page.pluginId
+        PageId.Account -> "账号"
+        is PageId.Settings -> "设置"
+    }
+
+private fun threadSurface(
+    page: PageId,
+    recentTasks: List<RecentTaskItem>,
+): ThreadSurfaceState? =
+    if (page is PageId.Thread) {
+        ThreadSurfaceState(
+            threadId = page.threadId,
+            title =
+                recentTasks.firstOrNull { it.id == page.threadId }?.title
+                    ?: pageTitle(page),
+        )
+    } else {
+        null
+    }
 
 /** Mobile entry wrapper: discovers and connects the currently authenticated Host. */
 @Composable
@@ -185,6 +1438,11 @@ public fun RemoteHarnessApp(
     val accountState = account.state.collectAsState().value
     val connection = remote.connection.collectAsState().value
     val hosts = remote.hosts.collectAsState().value
+    val remoteStatus = remote.status.collectAsState().value
+    val discovery = remote.discovery.collectAsState().value
+    val ownerIdentity = remote.identity.collectAsState().value
+    val selectedHost = remote.selectedHost.collectAsState().value
+    val ownerMatchesAccount = ownerIdentity != null && ownerIdentity == accountState.session?.identity
     val scope = rememberCoroutineScope()
     LaunchedEffect(accountState.session, accountState.target) {
         val session = accountState.session
@@ -204,11 +1462,15 @@ public fun RemoteHarnessApp(
         onDispose { remote.close() }
     }
     HarnessApp(
-        connection = connection,
+        connection = connection.takeIf { ownerMatchesAccount },
         connectionChanges = remote.connection,
         account = account,
-        availableHosts = hosts,
-        onSelectHost = { host -> scope.launch { remote.select(host) } },
+        availableHosts = hosts.takeIf { ownerMatchesAccount }.orEmpty(),
+        onSelectHost = { host -> scope.launch { remote.select(host, accountState.session) } },
+        remoteStatus = remoteStatus.takeIf { ownerMatchesAccount } ?: RemoteConnectionStatus.IDLE,
+        remoteSelectedHost = selectedHost.takeIf { ownerMatchesAccount },
+        remoteDiscovery = discovery.takeIf { ownerMatchesAccount } ?: RemoteDiscoveryState(),
+        onRefreshHosts = { remote.refresh(accountState.session) },
         sessionEvents = remote.sessionEvents,
         historyRecoveries = remote.historyRecoveries,
         onSubscribeSession = { id -> remote.subscribe(StreamId(id.value)) },
@@ -225,8 +1487,27 @@ public enum class HarnessDestination(
     Account("账号"),
     Tenant("租户"),
     Profile("资料"),
-    Hosts("Host"),
     Sessions("会话", requiresConnection = true),
+    ScheduledTasks("定时任务"),
+    Settings("设置"),
+    PluginInventory("插件"),
+
+    ;
+
+    public companion object {
+        public fun fromLaunchValue(value: String): HarnessDestination = when (value.lowercase()) {
+            "home", "harness", "conversation" -> Harness
+            "account", "login" -> Account
+            "tenant" -> Tenant
+            "profile" -> Profile
+            "no-host" -> Harness
+            "session", "sessions", "conversation-session" -> Sessions
+            "scheduled", "scheduled-tasks" -> ScheduledTasks
+            "settings" -> Settings
+            "plugin", "plugins", "inventory" -> PluginInventory
+            else -> error("Unknown Desktop destination: $value")
+        }
+    }
 }
 
 public enum class HarnessConnectionState(public val label: String) {
@@ -239,54 +1520,61 @@ public enum class HarnessConnectionState(public val label: String) {
     ProtocolIncompatible("协议不兼容"),
 }
 
-@Composable
-private fun NavigationBar(
-    current: HarnessDestination,
-    onSelect: (HarnessDestination) -> Unit,
-) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        HarnessDestination.entries.forEach { destination ->
-            TextButton(onClick = { onSelect(destination) }) {
-                Text(if (destination == current) "[${destination.label}]" else destination.label)
-            }
-        }
-    }
+private fun HarnessDestination.toShellDestination() = when (this) {
+        HarnessDestination.Harness,
+        HarnessDestination.Sessions -> im.hikaru.harness.client.shell.ShellDestination.Conversation
+        HarnessDestination.ScheduledTasks -> im.hikaru.harness.client.shell.ShellDestination.ScheduledTasks
+    HarnessDestination.Account -> im.hikaru.harness.client.shell.ShellDestination.Account
+    HarnessDestination.Tenant,
+    HarnessDestination.Profile -> im.hikaru.harness.client.shell.ShellDestination.Settings
+    HarnessDestination.Settings -> im.hikaru.harness.client.shell.ShellDestination.Settings
+    HarnessDestination.PluginInventory -> im.hikaru.harness.client.shell.ShellDestination.PluginInventory
 }
 
-@Composable
-private fun HarnessHome(
-    host: HostDescription?,
-    status: HarnessConnectionState,
-    onSessions: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Harness 首页", style = MaterialTheme.typography.titleLarge)
-        Text("连接状态：${status.label}")
-        if (host != null) {
-            Text(host.displayName)
-            Text("Host ID：${host.hostId.value}")
-        } else {
-            Text("本地 Harness 可在无账号和无网络时使用。")
-        }
-        Button(onClick = onSessions, enabled = status == HarnessConnectionState.Online || status == HarnessConnectionState.Local) {
-            Text("打开会话")
-        }
+/** Compatibility adapter: the legacy launch destination maps onto the shared page model. */
+private fun HarnessDestination.toPageId(): im.hikaru.harness.client.shell.PageId =
+    when (this) {
+        HarnessDestination.Harness -> im.hikaru.harness.client.shell.PageId.Home
+        HarnessDestination.Sessions -> im.hikaru.harness.client.shell.PageId.Home
+        HarnessDestination.ScheduledTasks -> im.hikaru.harness.client.shell.PageId.ScheduledTasks()
+        HarnessDestination.Account -> im.hikaru.harness.client.shell.PageId.Account
+        HarnessDestination.Tenant,
+        HarnessDestination.Profile,
+        HarnessDestination.Settings -> im.hikaru.harness.client.shell.PageId.Settings()
+        HarnessDestination.PluginInventory -> im.hikaru.harness.client.shell.PageId.Plugins
     }
+
+private val HarnessDestination.icon: HarnessIconName
+    get() = when (this) {
+        HarnessDestination.Harness -> HarnessIconName.Host
+        HarnessDestination.Account -> HarnessIconName.User
+        HarnessDestination.Tenant -> HarnessIconName.Host
+        HarnessDestination.Profile -> HarnessIconName.User
+        HarnessDestination.Sessions -> HarnessIconName.Menu
+        HarnessDestination.ScheduledTasks -> HarnessIconName.Clock
+        HarnessDestination.Settings -> HarnessIconName.Settings
+        HarnessDestination.PluginInventory -> HarnessIconName.Plug
+    }
+
+private fun HarnessConnectionState.toIndicatorState() = when (this) {
+    HarnessConnectionState.Connecting -> ConnectionIndicatorState.Connecting
+    HarnessConnectionState.Online -> ConnectionIndicatorState.Online
+    HarnessConnectionState.Local -> ConnectionIndicatorState.Local
+    HarnessConnectionState.NoHost -> ConnectionIndicatorState.NoHost
+    HarnessConnectionState.RequiresLogin -> ConnectionIndicatorState.RequiresLogin
+    HarnessConnectionState.Disconnected -> ConnectionIndicatorState.Disconnected
+    HarnessConnectionState.ProtocolIncompatible -> ConnectionIndicatorState.Incompatible
 }
 
 @Composable
 private fun AccountScreen(
     account: MemberAccount?,
     state: AccountState,
+    status: HarnessConnectionState,
+    host: HostDescription?,
+    onOpenSettings: () -> Unit,
     onLoggedIn: () -> Unit,
 ) {
-    if (account == null) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("本地模式无需登录", style = MaterialTheme.typography.titleLarge)
-            Text("连接本地 Harness 不需要远程账号。")
-        }
-        return
-    }
     val scope = rememberCoroutineScope()
     var mobile by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -294,7 +1582,26 @@ private fun AccountScreen(
     var loading by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("账号", style = MaterialTheme.typography.titleLarge)
-        if (state.session == null) {
+        HarnessSurface(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Four),
+                horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                HarnessBadge(status.label, color = status.toBadgeColor())
+                Column(modifier = Modifier.weight(1f)) {
+                    HarnessText("连接状态", color = HarnessTokens.Colors.Text)
+                    HarnessText(host?.displayName ?: "当前没有选中的 Host", color = HarnessTokens.Colors.TextMuted)
+                }
+            }
+        }
+        // The account panel is the shell overflow: Host and Settings open from here instead of owning
+        // a fixed rail slot.
+        AccountEntryRow(HarnessIconName.Settings, "设置", onOpenSettings)
+        if (account == null) {
+            Text("本地模式无需登录。")
+            Text("连接本地 Harness 不需要远程账号。")
+        } else if (state.session == null) {
             Text("选择租户后登录远程 Harness。")
             OutlinedTextField(mobile, { mobile = it }, label = { Text("手机号") }, singleLine = true)
             OutlinedTextField(password, { password = it }, label = { Text("密码") }, singleLine = true)
@@ -325,6 +1632,33 @@ private fun AccountScreen(
             Button(onClick = { scope.launch { account.logout() } }) { Text("退出登录") }
         }
     }
+}
+
+@Composable
+private fun AccountEntryRow(
+    icon: HarnessIconName,
+    label: String,
+    onClick: () -> Unit,
+) {
+    HarnessSurface(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Four),
+            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HarnessIcon(icon, tint = HarnessTokens.Colors.TextMuted)
+            HarnessText(label, modifier = Modifier.weight(1f), color = HarnessTokens.Colors.Text)
+        }
+    }
+}
+
+@Composable
+private fun HarnessConnectionState.toBadgeColor() = when (this) {
+    HarnessConnectionState.Online,
+    HarnessConnectionState.Local -> HarnessTokens.Colors.Success
+    HarnessConnectionState.Disconnected,
+    HarnessConnectionState.ProtocolIncompatible -> HarnessTokens.Colors.Danger
+    else -> HarnessTokens.Colors.Accent
 }
 
 @Composable
@@ -388,156 +1722,110 @@ private fun ProfileScreen(account: MemberAccount?, state: AccountState) {
 }
 
 @Composable
-private fun HostScreen(
-    host: HostDescription?,
-    availableHosts: List<HostDescription>,
-    status: HarnessConnectionState,
-    onSelectHost: ((HostDescription) -> Unit)?,
+private fun SettingsScreen(
+    section: SettingsSection,
+    appearanceState: AppearanceState,
+    onAppearanceChange: (AppearanceSettings) -> Unit,
+    onAppearanceRetry: () -> Unit,
+    modelSettings: ModelSettingsState,
+    onModelsRefresh: () -> Unit,
+    onProviderSave: (ProviderConfiguration, Long) -> Unit,
+    onProviderRemove: (String, Long) -> Unit,
+    onCredentialSet: (String, String) -> Unit,
+    generalState: GeneralSettingsState,
+    onClosePolicyChange: (CloseConfirmationPolicy) -> Unit,
+    onGeneralRetry: () -> Unit,
+    worktreeSettingsState: WorktreeSettingsState,
+    onSaveWorktreeSettings: (WorktreeSettings) -> Unit,
+    onOpenPlugins: () -> Unit,
+    connectionsState: ConnectionsState,
+    onConnectionsRefresh: () -> Unit,
+    onConnectionSelect: (HostDescription) -> Unit,
+    shortcutsRepository: ShortcutsRepository,
+    pluginsState: InstalledPluginsState,
+    onPluginAction: (InstalledPluginsAction) -> Unit,
+    git: GitController,
+    gitState: GitState,
+    gitBindingReady: Boolean,
+    gitUnavailableReason: String?,
+    gitCwdChoices: List<String>,
+    managedWorktrees: im.hikaru.harness.client.git.ManagedWorktreeController?,
+    liveSessions: List<im.hikaru.harness.client.connection.SessionSummary>,
+    onOpenSession: (im.hikaru.harness.client.connection.SessionSummary) -> Unit,
+    onNewChatInWorktree: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Host", style = MaterialTheme.typography.titleLarge)
-        Text("连接状态：${status.label}")
-        Text(host?.displayName ?: "未选择 Host")
-        host?.let { Text("Host ID：${it.hostId.value}") }
-        availableHosts.forEach { candidate ->
-            TextButton(onClick = { onSelectHost?.invoke(candidate) }) {
-                Text(candidate.displayName)
+    Box(Modifier.fillMaxWidth().semantics { testTag = "settings-content-" + section.navigatorSlug() }) {
+      when (section) {
+        SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins)
+        SettingsSection.Appearance -> SettingsAppearancePage(appearanceState, onAppearanceChange, onAppearanceRetry)
+        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet)
+        SettingsSection.Connections -> SettingsConnectionsPage(connectionsState, onConnectionsRefresh, onConnectionSelect)
+        SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository)
+        SettingsSection.Plugins -> InstalledPluginsPage(pluginsState, onPluginAction)
+        SettingsSection.Git, SettingsSection.Worktrees -> BoundGitSettingsPage(
+            git, gitState, gitBindingReady, gitUnavailableReason, gitCwdChoices,
+            worktrees = section == SettingsSection.Worktrees,
+            managedWorktrees = managedWorktrees,
+            worktreeSettings = worktreeSettingsState,
+            onSaveWorktreeSettings = onSaveWorktreeSettings,
+            liveSessions = liveSessions,
+            onOpenSession = onOpenSession,
+            onNewChatInWorktree = onNewChatInWorktree,
+        )
+        else -> {
+            val label = SettingsNavigatorModel.item(section.navigatorSlug())?.label ?: section.name
+            Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three)) {
+                HarnessText(label, style = MaterialTheme.typography.headlineSmall)
+                HarnessText("此设置页面正在实现。", color = HarnessTokens.Colors.TextMuted)
             }
         }
+      }
     }
 }
 
+/** Render controller-owned pages only after the current verified Host binding has been applied. */
 @Composable
-private fun SessionScreen(
-    connection: Connection?,
-    connectionChanges: Flow<Connection?> = flowOf<Connection?>(null),
-    hostId: String? = null,
-    sessionEvents: Flow<RelayEvent> = emptyFlow(),
-    historyRecoveries: Flow<HistoryRecovery> = emptyFlow(),
-    onSubscribeSession: (suspend (SessionId) -> Unit)? = null,
-    onUnsubscribeSession: (suspend (SessionId) -> Unit)? = null,
+private fun BoundGitSettingsPage(
+    controller: GitController,
+    state: GitState,
+    bindingReady: Boolean,
+    unavailableReason: String?,
+    cwdChoices: List<String>,
+    worktrees: Boolean,
+    managedWorktrees: im.hikaru.harness.client.git.ManagedWorktreeController?,
+    worktreeSettings: WorktreeSettingsState,
+    onSaveWorktreeSettings: (WorktreeSettings) -> Unit,
+    liveSessions: List<im.hikaru.harness.client.connection.SessionSummary>,
+    onOpenSession: (im.hikaru.harness.client.connection.SessionSummary) -> Unit,
+    onNewChatInWorktree: (String) -> Unit,
 ) {
-    if (connection == null) {
-        Text("远程会话需要登录并选择在线 Host。")
+    val title = if (worktrees) "Worktrees" else "Git"
+    val tag = if (worktrees) "worktrees-page" else "git-page"
+    if (!bindingReady || unavailableReason != null) {
+        SettingsFormFrame(title, tag) {
+            HarnessText(
+                unavailableReason ?: "正在绑定当前 Host…",
+                Modifier.semantics { testTag = if (unavailableReason == null) "git-binding-loading" else "git-unavailable" },
+                color = HarnessTokens.Colors.TextMuted,
+            )
+        }
         return
     }
-    val scope = rememberCoroutineScope()
-    // 回调用 rememberUpdatedState 读取，避免每次重组产生的新 lambda 重启订阅副作用。
-    val subscribeSession = rememberUpdatedState(onSubscribeSession)
-    val unsubscribeSession = rememberUpdatedState(onUnsubscribeSession)
-    // 连接被 owner 替换后 driver 会为新连接重新订阅；refresh 必须读当前连接，不能沿用启动时的那个。
-    val currentConnection = rememberUpdatedState<Connection?>(connection)
-    var sessions by remember { mutableStateOf<List<SessionSummary>>(emptyList()) }
-    var selected by remember { mutableStateOf<SessionId?>(null) }
-    // 切换 Host 时放弃当前选择：owner 已按 A16 清理订阅，这里保证 shell 不会把旧选择重新订阅到新 Host。
-    LaunchedEffect(hostId) {
-        if (selected != null) selected = null
-    }
-    var provider by remember { mutableStateOf("") }
-    var model by remember { mutableStateOf("") }
-    var prompt by remember { mutableStateOf("") }
-    var history by remember { mutableStateOf<List<String>>(emptyList()) }
-    var liveEvents by remember { mutableStateOf(0) }
-    var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(connection) {
-        try {
-            sessions = connection.session.list()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            error = "会话列表不可用"
-        }
-    }
-    LaunchedEffect(selected, connection) {
-        val active = selected ?: return@LaunchedEffect
-        try {
-            history = connection.session.history(active).map(::displayMessage)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            error = "历史记录不可用"
-        }
-    }
-    // 选中的 Session 是本客户端唯一请求 Relay 转发的流；driver 在离开选择时释放订阅，保证取消会话、
-    // 切换 Host 与登出之后不再收到该流的事件。history 仍是权威视图，转发事件与缺口恢复只触发刷新。
-    LaunchedEffect(selected, sessionEvents, historyRecoveries) {
-        val active = selected ?: return@LaunchedEffect
-        SessionStreamDriver(
-            events = sessionEvents,
-            recoveries = historyRecoveries,
-            subscribe = { subscribeSession.value?.invoke(it) },
-            unsubscribe = { unsubscribeSession.value?.invoke(it) },
-            refresh = { session ->
-                currentConnection.value?.session?.history(session)?.map(::displayMessage)?.let { history = it }
-            },
-            onEvent = { liveEvents = maxOf(liveEvents, it.sequence.toInt() + 1) },
-            connectionChanges = connectionChanges,
-        ).run(active)
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("会话", style = MaterialTheme.typography.titleLarge)
-        if (liveEvents > 0) Text("实时事件：$liveEvents")
-        OutlinedTextField(provider, { provider = it }, label = { Text("Provider") }, singleLine = true)
-        OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true)
-        Button(onClick = {
-            scope.launch {
-                try {
-                    val created = connection.session.create(
-                        options = CreateSessionOptions(),
-                        agentOptions = AgentOptions(
-                            provider = provider.trim().takeIf(String::isNotEmpty),
-                            model = model.trim().takeIf(String::isNotEmpty),
-                        ),
-                    )
-                    sessions = connection.session.list()
-                    selected = created.id
-                    error = null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Throwable) {
-                    error = failure.message ?: "会话创建失败"
-                }
-            }
-        }) { Text("创建会话") }
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-            items(sessions, key = { it.id.value }) { item ->
-                TextButton(onClick = { selected = item.id }) { Text(item.id.value) }
+    Column(Modifier.fillMaxSize()) {
+        if (state.binding?.access == GitAccess.LocalReadOnly && cwdChoices.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Four),
+                verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+            ) {
+                HarnessText("会话目录 / 本机初始目录", color = HarnessTokens.Colors.TextMuted)
+                im.hikaru.harness.client.git.GitSessionDirectoryPicker(controller, state, bindingReady, cwdChoices)
             }
         }
-        selected?.let { id ->
-            OutlinedTextField(prompt, { prompt = it }, label = { Text("消息") }, singleLine = false)
-            Row {
-                Button(onClick = {
-                    scope.launch {
-                        try {
-                            val receipt = connection.session.prompt(
-                                id,
-                                userMessage(prompt),
-                            )
-                            receipt.awaitIdle()
-                            history = connection.session.history(id).map(::displayMessage)
-                            prompt = ""
-                            error = null
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: Throwable) {
-                            error = failure.message ?: "消息发送失败"
-                        }
-                    }
-                }, enabled = prompt.isNotBlank()) { Text("发送") }
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { scope.launch { connection.session.cancel(id) } }) { Text("取消") }
-            }
-            history.forEach { Text(it) }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (worktrees) WorktreesPage(controller, Modifier.fillMaxSize(), managedController = managedWorktrees,
+                worktreeSettings = worktreeSettings, onSaveWorktreeSettings = onSaveWorktreeSettings,
+                sessions = liveSessions, onOpenSession = onOpenSession, onNewChatInWorktree = onNewChatInWorktree)
+            else SettingsGitPage(controller, Modifier.fillMaxSize())
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
-
-private fun displayMessage(message: Message): String =
-    message.content.joinToString("") { block ->
-        when (block) {
-            is TextContent -> block.text
-            else -> "[内容]"
-        }
-    }

@@ -8,20 +8,13 @@ package im.hikaru.harness.runtime.effect
  * 插件启动过程中创建的资源，
  * 都把对应的清理操作放进这个 Scope。
  *
- * 例如：
+ * 为了不把 Runtime 的同步状态提交锁跨用户 cleanup 持有，
+ * 释放被拆成两步：
  *
- * Fiber
- *      │
- *      └── EffectScope
- *             ├── close database
- *             ├── unregister listener
- *             └── stop coroutine
+ * 1. seal()：在锁内同步封存，标记已释放并取出反序待释放清单；
+ * 2. runDisposablesInReverse()：在锁外执行真正的 cleanup。
  *
- * 插件停止时：
- *
- * EffectScope.dispose()
- *
- * 会统一释放这些资源。
+ * 这样 cleanup 内部即使等待其他协程，也不会和锁形成等待环。
  */
 class EffectScope {
 
@@ -55,14 +48,7 @@ class EffectScope {
     }
 
     /**
-     * 为了使用起来更自然，
-     * 再提供一个接收 lambda 的版本。
-     *
-     * 以后插件可以直接写：
-     *
-     * scope.add {
-     *     server.close()
-     * }
+     * lambda 形式的注册。
      */
     fun add(
         dispose: suspend () -> Unit,
@@ -75,71 +61,65 @@ class EffectScope {
     }
 
     /**
-     * 释放当前 Scope 管理的全部资源。
+     * 同步封存：标记关闭并按注册反序取出待释放清单。
      *
-     * 注意这里按照“注册顺序的反方向”释放。
-     *
-     * 例如创建顺序：
-     *
-     * Database
-     *    ↓
-     * Repository
-     *    ↓
-     * Agent
-     *
-     * 销毁顺序应该是：
-     *
-     * Agent
-     *    ↓
-     * Repository
-     *    ↓
-     * Database
-     *
-     * 也就是：
-     *
-     * A → B → C 创建
-     * C → B → A 销毁
-     *
-     * Cordis 的 Effect 也是这个思想。
+     * 重复封存返回空清单，因此释放是幂等的。
      */
-    suspend fun dispose() {
+    internal fun seal(): List<Disposable> {
 
         if (isDisposed) {
-            return
+            return emptyList()
         }
 
         isDisposed =
             true
 
-        // 先复制出来，避免 dispose 过程中修改原列表。
         val pending =
             disposables.toList().asReversed()
 
-        // 提前清空，避免重复 dispose。
         disposables.clear()
 
-        var failure: Throwable? =
-            null
+        return pending
+    }
 
-        for (disposable in pending) {
-            try {
-                disposable.dispose()
-            } catch (error: Throwable) {
-                /**
-                 * 一个 cleanup 失败不能阻止其他资源继续释放。
-                 * 全部尝试完成后，再把第一个失败交还给调用方。
-                 */
-                if (failure == null) {
-                    failure =
-                        error
-                } else if (error !== failure) {
-                    failure.addSuppressed(error)
-                }
+    /**
+     * 释放当前 Scope 管理的全部资源。
+     */
+    suspend fun dispose() {
+        runDisposablesInReverse(
+            seal()
+        )
+    }
+}
+
+/**
+ * 在锁外按给定顺序释放 Disposable。
+ *
+ * 一个 cleanup 失败不能阻止其他资源继续释放，
+ * 全部尝试完成后把第一个失败交还给调用方，
+ * 其余不同实例的错误作为 suppressed 追加一次。
+ */
+internal suspend fun runDisposablesInReverse(
+    pending: List<Disposable>,
+) {
+
+    var failure: Throwable? =
+        null
+
+    for (disposable in pending) {
+        try {
+            disposable.dispose()
+        } catch (error: Throwable) {
+            if (failure == null) {
+                failure =
+                    error
+            } else if (error !== failure) {
+                failure.addSuppressed(error)
             }
         }
+    }
 
-        failure?.let { error ->
-            throw error
-        }
+    failure?.let { error ->
+        throw error
     }
 }

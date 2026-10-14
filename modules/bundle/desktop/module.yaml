@@ -10,8 +10,10 @@ dependencies:
   - ../../boot
   - ../../credentials
   - ../../credentials-local
+  - ../../exec-jvm
   - ../../home
   - ../../llm
+  - ../../llm-koog
   - ../../llm-koog-openai
   - ../../llm-retry
   - ../../loader
@@ -24,4 +26,5 @@ dependencies:
   - ../../session-persistence
   - ../../settings
   - ../../settings-file
+  - ../../subagent-tools
   - ../../tools

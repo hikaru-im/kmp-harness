@@ -2,6 +2,7 @@ package im.hikaru.harness.runtime
 
 import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.runtime.effect.EffectScope
+import im.hikaru.harness.runtime.effect.runDisposablesInReverse
 import im.hikaru.harness.runtime.event.BailEventKey
 import im.hikaru.harness.runtime.event.EventKey
 import im.hikaru.harness.runtime.event.EventOptions
@@ -269,7 +270,7 @@ class Context internal constructor(
      * 让 Fiber 与 Runtime 复用当前 Context Tree 的串行 mutation lane。
      */
     internal suspend fun <T> mutate(
-        block: suspend () -> T,
+        block: () -> T,
     ): T {
         return core.mutate(block)
     }
@@ -942,15 +943,21 @@ class Context internal constructor(
         key: ServiceKey<T>,
         service: T,
     ): Disposable {
-        return mutate {
-            provideNow(
-                key = key,
-                service = service,
-            )
-        }
+
+        val disposable =
+            mutate {
+                provideNow(
+                    key = key,
+                    service = service,
+                )
+            }
+
+        core.flush()
+
+        return disposable
     }
 
-    private suspend fun <T : Any> provideNow(
+    private fun <T : Any> provideNow(
         key: ServiceKey<T>,
         service: T,
     ): Disposable {
@@ -983,44 +990,25 @@ class Context internal constructor(
                         disposed = true
 
                         /**
-                         * 精确删除当前 Binding。
-                         *
-                         * 使用 Binding Identity 删除，
-                         * 而不是直接 remove(key)。
-                         *
-                         * 这样旧 Disposable
-                         * 就不会误删后来 replace 的新 Service。
+                         * 使用 Binding Identity 精确删除，
+                         * 不会误删后来 replace 的新 Service。
                          */
                         val removed =
                             core.services.remove(
                                 binding
                             )
 
-                        /**
-                         * Service 真正消失后，
-                         * 通知 Runtime 刷新 dependency。
-                         */
                         if (removed) {
                             core.notifyServiceChanged(slot)
                         }
                     }
                 }
+
+                core.flush()
             }
 
-        /**
-         * provide 本身就是当前 Context 创建的 effect。
-         * 调用方仍然可以提前 dispose；Context 最终销毁时再次调用是幂等的。
-         */
         effect(disposable)
 
-        /**
-         * Service 已经出现。
-         *
-         * 通知 Runtime：
-         *
-         * 某些 Pending Plugin
-         * 可能已经可以启动。
-         */
         core.notifyServiceChanged(slot)
 
         return disposable
@@ -1161,15 +1149,21 @@ class Context internal constructor(
         key: ServiceKey<T>,
         service: T,
     ): Disposable {
-        return mutate {
-            replaceNow(
-                key = key,
-                service = service,
-            )
-        }
+
+        val disposable =
+            mutate {
+                replaceNow(
+                    key = key,
+                    service = service,
+                )
+            }
+
+        core.flush()
+
+        return disposable
     }
 
-    private suspend fun <T : Any> replaceNow(
+    private fun <T : Any> replaceNow(
         key: ServiceKey<T>,
         service: T,
     ): Disposable {
@@ -1204,14 +1198,12 @@ class Context internal constructor(
                         }
                     }
                 }
+
+                core.flush()
             }
 
         effect(disposable)
 
-        /**
-         * Binding Identity 已经改变，
-         * 立即通知 Runtime。
-         */
         core.notifyServiceChanged(slot)
 
         return disposable
@@ -1230,33 +1222,33 @@ class Context internal constructor(
      * 重复 dispose 是安全的。
      */
     suspend fun dispose() {
-        mutate {
-            disposeNow()
-        }
-    }
 
-    private suspend fun disposeNow() {
-        if (disposing || isDisposed) {
+        val plan =
+            mutate {
+                beginDispose()
+            }
+
+        if (plan == null) {
             return
         }
-
-        disposing =
-            true
 
         var failure: Throwable? =
             null
 
-        try {
-            core.notifyContextDisposing(this)
-        } catch (error: Throwable) {
-            failure =
-                error
+        for (action in plan.runtimeActions) {
+            try {
+                action()
+            } catch (error: Throwable) {
+                if (failure == null) {
+                    failure =
+                        error
+                } else if (error !== failure) {
+                    failure.addSuppressed(error)
+                }
+            }
         }
 
-        val pendingChildren =
-            children.toList().asReversed()
-
-        for (child in pendingChildren) {
+        for (child in plan.children) {
             try {
                 child.dispose()
             } catch (error: Throwable) {
@@ -1270,7 +1262,9 @@ class Context internal constructor(
         }
 
         try {
-            effects.dispose()
+            runDisposablesInReverse(
+                plan.effectsPending
+            )
         } catch (error: Throwable) {
             if (failure == null) {
                 failure =
@@ -1280,6 +1274,54 @@ class Context internal constructor(
             }
         }
 
+        mutate {
+            endDispose()
+        }
+
+        core.flush()
+
+        failure?.let { error ->
+            throw error
+        }
+    }
+
+    /**
+     * 锁内同步认领：标记 disposing，取出 child 与 effect 的反序清单，
+     * 并让 Runtime 同步移除子树 Fiber，返回锁外停止动作。
+     */
+    private class DisposePlan(
+        val children: List<Context>,
+        val effectsPending: List<Disposable>,
+        val runtimeActions: List<suspend () -> Unit>,
+    )
+
+    private fun beginDispose(): DisposePlan? {
+
+        if (disposing || isDisposed) {
+            return null
+        }
+
+        disposing =
+            true
+
+        val pendingChildren =
+            children.toList().asReversed()
+
+        val effectsPending =
+            effects.seal()
+
+        val runtimeActions =
+            core.notifyContextDisposing(this)
+
+        return DisposePlan(
+            children = pendingChildren,
+            effectsPending = effectsPending,
+            runtimeActions = runtimeActions,
+        )
+    }
+
+    private fun endDispose() {
+
         children.clear()
         parent?.children?.remove(this)
 
@@ -1288,10 +1330,6 @@ class Context internal constructor(
 
         isDisposed =
             true
-
-        failure?.let { error ->
-            throw error
-        }
     }
 
     /**

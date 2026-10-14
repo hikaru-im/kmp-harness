@@ -43,6 +43,7 @@ import im.hikaru.harness.session.SessionException
 import im.hikaru.harness.session.SessionErrorCode
 import im.hikaru.harness.session.SessionHeader
 import im.hikaru.harness.session.SessionId
+import im.hikaru.harness.session.SessionHandle
 import im.hikaru.harness.session.SessionStore
 import im.hikaru.harness.session.SessionSurfaceOperation
 import im.hikaru.harness.session.StepEndEvent
@@ -54,6 +55,9 @@ import im.hikaru.harness.session.sessions
 import im.hikaru.harness.tools.ToolCallEvent
 import im.hikaru.harness.tools.ToolResultEvent
 import im.hikaru.harness.tools.ToolSessionEvents
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -107,6 +111,9 @@ data class SessionEventRow(
 
 @Dao
 interface SessionPersistenceDao {
+    @Query("SELECT * FROM harness_sessions ORDER BY created_at ASC, session_id ASC")
+    suspend fun listSessions(): List<SessionRow>
+
     @Query("SELECT * FROM harness_sessions WHERE session_id = :sessionId LIMIT 1")
     suspend fun findSession(sessionId: String): SessionRow?
 
@@ -158,10 +165,55 @@ object SessionPersistenceMigrations {
     val all: Array<Migration> = emptyArray()
 }
 
+/** Why a durable chat cannot be restored as a quiescent, read-only live Session. */
+enum class SessionQuiescentRejection {
+    /** This persistence implementation has no quiescent restore capability. */
+    UNSUPPORTED,
+
+    NOT_FOUND,
+    INVALID,
+    OPEN_TURN,
+    PENDING_RETRY,
+    PENDING_INBOX,
+}
+
+/**
+ * Read-only result of [SessionPersistence.loadQuiescent].
+ *
+ * [Loaded] publishes a live Session built from the exact durable events; nothing was repaired,
+ * flushed, drained or started. [Rejected] names why the snapshot is not safely restorable.
+ */
+sealed interface SessionQuiescentLoad {
+    val id: SessionId
+
+    data class Loaded(override val id: SessionId, val handle: SessionHandle) : SessionQuiescentLoad {
+        /** The exact live Session published from the durable events. */
+        val session: Session get() = handle.session
+    }
+
+    data class Rejected(override val id: SessionId, val reason: SessionQuiescentRejection) : SessionQuiescentLoad
+}
+
 interface SessionPersistence : Disposable {
+    /** Durable headers only; null means this implementation has no catalog capability. */
+    suspend fun listHeaders(): List<SessionHeader>? = null
+
+    /** Validated durable events without restoring a live Session; null means unsupported. */
+    suspend fun readEvents(id: SessionId): List<SessionEventEnvelope>? = null
+
     suspend fun flush(session: Session)
     suspend fun load(id: SessionId): Session
     suspend fun inbox(id: SessionId, agentId: AgentId = AgentId(id.value)): InboxSnapshot
+
+    /**
+     * Restores a durable Session as a quiescent, read-only live Session.
+     *
+     * Unlike [load] this never repairs an open turn, never flushes, never drains the inbox and
+     * never resumes a pending retry. A snapshot with incomplete history, an open turn, pending
+     * inbox items or a pending llm retry is rejected instead of being made restorable.
+     */
+    suspend fun loadQuiescent(id: SessionId): SessionQuiescentLoad =
+        SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.UNSUPPORTED)
 }
 
 /** Test-only platform bridge; production launchers should inject their own factory. */
@@ -216,6 +268,40 @@ private class RoomSessionPersistence(
     }
     private var disposed = false
 
+    override suspend fun listHeaders(): List<SessionHeader> = mutex.withLock {
+        val coroutineContext = currentCoroutineContext()
+        coroutineContext.ensureActive()
+        check(!disposed) { "Session persistence is disposed" }
+        val rows = database.dao.listSessions()
+        val headers = rows.map { row ->
+            coroutineContext.ensureActive()
+            try {
+                row.toHeader()
+            } catch (error: IllegalArgumentException) {
+                throw SessionException(
+                    "Persisted Session '${row.sessionId}' has an invalid header",
+                    SessionErrorCode.INVALID_HEADER,
+                    error,
+                )
+            }
+        }
+        coroutineContext.ensureActive()
+        headers
+    }
+
+    override suspend fun readEvents(id: SessionId): List<SessionEventEnvelope> = mutex.withLock {
+        val coroutineContext = currentCoroutineContext()
+        coroutineContext.ensureActive()
+        check(!disposed) { "Session persistence is disposed" }
+        val snapshot = readSnapshot(id)
+        if (snapshot.header.id != id) {
+            throw SessionException("Persisted Session id does not match its row", SessionErrorCode.INVALID_HEADER)
+        }
+        validateSnapshot(snapshot)
+        coroutineContext.ensureActive()
+        snapshot.events.toList()
+    }
+
     override suspend fun flush(session: Session) {
         mutex.withLock {
             check(!disposed) { "Session persistence is disposed" }
@@ -248,6 +334,49 @@ private class RoomSessionPersistence(
         return handle.session
     }
 
+    override suspend fun loadQuiescent(id: SessionId): SessionQuiescentLoad {
+        val snapshot = try {
+            mutex.withLock {
+                check(!disposed) { "Session persistence is disposed" }
+                readSnapshot(id)
+            }
+        } catch (error: SessionException) {
+            val reason =
+                if (error.code == SessionErrorCode.NOT_LIVE) SessionQuiescentRejection.NOT_FOUND
+                else SessionQuiescentRejection.INVALID
+            return SessionQuiescentLoad.Rejected(id, reason)
+        }
+        if (snapshot.header.id != id) return SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.INVALID)
+        try {
+            validateSnapshot(snapshot)
+        } catch (_: SessionException) {
+            return SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.INVALID)
+        }
+        if (findPendingLlmRetryRecovery(snapshot.events) != null)
+            return SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.PENDING_RETRY)
+        if (hasOpenTurn(snapshot.events)) return SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.OPEN_TURN)
+        val inbox = Inbox.replay(snapshot.events, AgentId(id.value))
+        if (inbox.nextTurn.isNotEmpty() || inbox.nextStep.isNotEmpty())
+            return SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.PENDING_INBOX)
+        return try {
+            SessionQuiescentLoad.Loaded(id, store.load(snapshot.header, snapshot.events))
+        } catch (_: SessionException) {
+            SessionQuiescentLoad.Rejected(id, SessionQuiescentRejection.INVALID)
+        }
+    }
+
+    /** Read-only open-turn probe; unlike [repairOpenTurn] it appends nothing. */
+    private fun hasOpenTurn(events: List<SessionEventEnvelope>): Boolean {
+        var openTurn: Long? = null
+        for (event in events) {
+            when (event.type) {
+                SessionEventNames.TURN_START -> openTurn = event.data.jsonObject["turn"]?.jsonPrimitive?.longOrNull
+                SessionEventNames.TURN_END -> openTurn = null
+            }
+        }
+        return openTurn != null
+    }
+
     override suspend fun inbox(id: SessionId, agentId: AgentId): InboxSnapshot {
         val snapshot = mutex.withLock {
             check(!disposed) { "Session persistence is disposed" }
@@ -267,6 +396,8 @@ private class RoomSessionPersistence(
             Snapshot(row.toHeader(), database.dao.findEvents(id.value).map { it.toEnvelope(json) })
         } catch (error: SessionException) {
             throw error
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
             throw SessionException("Persisted Session '${id.value}' is invalid", SessionErrorCode.INVALID_EVENT, error)
         }

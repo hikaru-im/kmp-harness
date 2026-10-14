@@ -15,28 +15,32 @@ modules:
   - backend/server
   - contracts
   - contracts/harness-protocol
-  - modules/api/gateway
   - modules/agent
   - modules/agent-loop
+  - modules/api/gateway
   - modules/boot
   - modules/bundle/desktop
   - modules/credentials
   - modules/credentials-local
+  - modules/exec-jvm
   - modules/home
   - modules/include
   - modules/llm
   - modules/llm-koog
   - modules/llm-koog-openai
+  - modules/llm-retry
   - modules/loader
   - modules/logger
-  - modules/llm-retry
   - modules/profile
   - modules/profile-file
-  - modules/session-persistence
   - modules/runtime
   - modules/session
   - modules/session-api
+  - modules/session-persistence
   - modules/settings
   - modules/settings-file
+  - modules/subagent-tools
   - modules/timer
   - modules/tools
+  - modules/ui-foundation
+  - modules/ui-slot

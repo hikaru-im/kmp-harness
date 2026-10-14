@@ -1,0 +1,18 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+repositories:
+  - id: intellij-dependencies
+    url: https://packages.jetbrains.team/maven/p/ij/intellij-dependencies
+
+dependencies:
+  - ../agent
+  - ../llm
+  - ../loader
+  - ../runtime
+  - ../session
+  - ../session-api
+  - ../tools
+  - org.jetbrains.pty4j:pty4j:0.14.0
+  - org.jetbrains.jediterm:jediterm-core:3.76

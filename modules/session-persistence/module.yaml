@@ -14,8 +14,19 @@ dependencies:
   - ../tools
   - androidx.room3:room3-runtime:3.0.0
   - androidx.sqlite:sqlite-async:2.7.0
-  - androidx.sqlite:sqlite-bundled:2.7.0
   - org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0
+
+# The 2.7.0 JVM bundle has no macOS x64 native library. Select the published
+# 2.6.2 JVM driver directly; Room/async still use the 2.7.0 SQLite interfaces.
+# A dependency on the multiplatform root is aligned back to 2.7.0.
+dependencies@jvm:
+  - androidx.sqlite:sqlite-bundled-jvm:2.6.2
+
+dependencies@android:
+  - androidx.sqlite:sqlite-bundled:2.7.0
+
+dependencies@ios:
+  - androidx.sqlite:sqlite-bundled:2.7.0
 
 settings:
   kotlin:

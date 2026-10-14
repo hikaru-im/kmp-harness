@@ -28,6 +28,51 @@ data class SessionPromptReceipt(
 
 /** Provider-neutral Session facade. */
 interface SessionApi {
+    suspend fun terminalCapability(session: SessionId): HostTerminalDiscoveryResult =
+        HostTerminalDiscoveryResult.Unavailable(session, "Terminal Host service is unavailable")
+
+    suspend fun createTerminal(request: TerminalCreateRequest): HostTerminalCreateResult =
+        HostTerminalCreateResult.Unavailable(request.owner, "Terminal Host service is unavailable")
+
+    suspend fun terminals(owner: TerminalOwner): TerminalListResult =
+        TerminalListResult.Unavailable(owner, "Terminal Host service is unavailable")
+
+    suspend fun readTerminal(key: TerminalKey): TerminalReadResult =
+        TerminalReadResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    suspend fun writeTerminal(key: TerminalKey, input: String): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    suspend fun inputTerminal(key: TerminalKey, input: TerminalInput): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    suspend fun resizeTerminal(key: TerminalKey, size: TerminalSize): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    suspend fun closeTerminal(key: TerminalKey): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    suspend fun backgroundProcesses(parent: SessionId): BackgroundProcessesResult =
+        BackgroundProcessesResult.Unavailable(parent, "Background process service is unavailable")
+
+    suspend fun readBackgroundOutput(parent: SessionId, process: BackgroundProcessId): BackgroundOutputResult =
+        BackgroundOutputResult.Unavailable(parent, process, "Background output service is unavailable")
+
+    suspend fun writeBackgroundInput(parent: SessionId, process: BackgroundProcessId, input: String): BackgroundInputResult =
+        BackgroundInputResult.Unavailable(parent, process, "Background input service is unavailable")
+
+    suspend fun closeBackgroundInput(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        BackgroundControlResult.Unavailable(parent, process, "Background input service is unavailable")
+
+    suspend fun cancelBackgroundProcess(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        BackgroundControlResult.Unavailable(parent, process, "Background process control service is unavailable")
+
+    suspend fun descendants(parent: SessionId): SessionDescendantsResult =
+        SessionDescendantsResult.Unavailable(parent)
+
+    suspend fun readChildHistory(parent: SessionId, child: SessionId): ChildHistoryResult =
+        ChildHistoryResult.Unavailable(parent, child)
+
     suspend fun list(): List<SessionSummary>
 
     suspend fun create(
@@ -58,6 +103,66 @@ interface SessionPrompt {
 internal class DefaultSessionApi(
     private val context: Context,
 ) : SessionApi {
+    private val descendantsReader = LiveSessionDescendants(context.agents)
+
+    override suspend fun terminalCapability(session: SessionId): HostTerminalDiscoveryResult =
+        context.get(SessionTerminalHostKey)?.discover(session)
+            ?: HostTerminalDiscoveryResult.Unavailable(session, "Terminal Host service is unavailable")
+
+    override suspend fun createTerminal(request: TerminalCreateRequest): HostTerminalCreateResult =
+        context.get(SessionTerminalHostKey)?.create(request)
+            ?: HostTerminalCreateResult.Unavailable(request.owner, "Terminal Host service is unavailable")
+
+    override suspend fun terminals(owner: TerminalOwner): TerminalListResult =
+        context.get(SessionTerminalHostKey)?.list(owner)
+            ?: TerminalListResult.Unavailable(owner, "Terminal Host service is unavailable")
+
+    override suspend fun readTerminal(key: TerminalKey): TerminalReadResult =
+        context.get(SessionTerminalHostKey)?.read(key)
+            ?: TerminalReadResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    override suspend fun writeTerminal(key: TerminalKey, input: String): TerminalMutationResult =
+        context.get(SessionTerminalHostKey)?.write(key, input)
+            ?: TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    override suspend fun inputTerminal(key: TerminalKey, input: TerminalInput): TerminalMutationResult =
+        context.get(SessionTerminalHostKey)?.input(key, input)
+            ?: TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    override suspend fun resizeTerminal(key: TerminalKey, size: TerminalSize): TerminalMutationResult =
+        context.get(SessionTerminalHostKey)?.resize(key, size)
+            ?: TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    override suspend fun closeTerminal(key: TerminalKey): TerminalMutationResult =
+        context.get(SessionTerminalHostKey)?.close(key)
+            ?: TerminalMutationResult.Unavailable(key, "Terminal Host service is unavailable")
+
+    override suspend fun backgroundProcesses(parent: SessionId): BackgroundProcessesResult =
+        context.get(BackgroundProcessesKey)?.list(parent)
+            ?: BackgroundProcessesResult.Unavailable(parent, "Background process service is unavailable")
+
+    override suspend fun readBackgroundOutput(parent: SessionId, process: BackgroundProcessId): BackgroundOutputResult =
+        context.get(BackgroundProcessesKey)?.read(parent, process)
+            ?: BackgroundOutputResult.Unavailable(parent, process, "Background output service is unavailable")
+
+    override suspend fun writeBackgroundInput(parent: SessionId, process: BackgroundProcessId, input: String): BackgroundInputResult =
+        context.get(BackgroundProcessesKey)?.write(parent, process, input)
+            ?: BackgroundInputResult.Unavailable(parent, process, "Background input service is unavailable")
+
+    override suspend fun closeBackgroundInput(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        context.get(BackgroundProcessesKey)?.closeInput(parent, process)
+            ?: BackgroundControlResult.Unavailable(parent, process, "Background input service is unavailable")
+
+    override suspend fun cancelBackgroundProcess(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        context.get(BackgroundProcessesKey)?.cancel(parent, process)
+            ?: BackgroundControlResult.Unavailable(parent, process, "Background process control service is unavailable")
+
+    override suspend fun descendants(parent: SessionId): SessionDescendantsResult =
+        descendantsReader.descendants(parent)
+
+    override suspend fun readChildHistory(parent: SessionId, child: SessionId): ChildHistoryResult =
+        descendantsReader.readChildHistory(parent, child)
+
     override suspend fun list(): List<SessionSummary> =
         context.agents.list().map { agent -> summary(agent.session) }
 

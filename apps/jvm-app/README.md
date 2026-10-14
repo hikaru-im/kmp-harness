@@ -77,9 +77,9 @@ HARNESS_OPENAI_LIVE_RESPONSES_MODEL='<model>'  # 省略时复用 Chat model
 endpoint、模型和密钥只进入临时测试目录，不会写入产品 Harness home。未提供 key 时 3 个用例全部由 JUnit
 跳过，不会触网或产生费用。生产 file-backed harness 已使用 Responses-only 的兼容端点和 `gpt-5.6-sol`
 实际执行：raw Responses 返回 HTTP 200，Harness 也完成 file credential、Directory/route/model 激活并到达
-HTTP 200，随后 Koog 1.1.1 因 JetBrains/koog#2211 无法反序列化合法的 string `response.instructions`。
-该连接的 Chat Completions 对所有探测模型均返回分组无可用渠道，因此 Chat/tool 未完成外部验收。Responses
-等待正式上游修复，不在 Desktop 旁路解析 SSE。
+HTTP 200；Koog 1.3.0 的离线 scripted fixture 已覆盖合法 string `response.instructions`，生产外部 endpoint
+仍需单独验收。该连接的 Chat Completions 对所有探测模型均返回分组无可用渠道，因此 Chat/tool 未完成外部验收。
+Responses 不在 Desktop 旁路解析 SSE。
 
 Desktop bundle 显式安装 `settings-file` 和 `credentials-local`，读取 Harness home 下的 `settings.yaml`
 与 `.credentials.yaml`。模型声明来自 `settings.yaml`；下面只创建一个对外 `openai` Provider，模型级

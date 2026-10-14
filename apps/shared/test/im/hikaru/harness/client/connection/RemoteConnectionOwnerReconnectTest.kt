@@ -76,7 +76,11 @@ class RemoteConnectionOwnerReconnectTest {
             val status = withTimeout(20_000L) { owner.status.first { it == RemoteConnectionStatus.DISCONNECTED } }
 
             assertEquals(RemoteConnectionStatus.DISCONNECTED, status)
+            assertEquals(HostId("desktop-local"), owner.selectedHost.value?.hostId,
+                "the selected target must remain available while its transport is disconnected")
             assertTrue(engine.requestHistory.size >= 3, "expected repeated discovery attempts before giving up")
+            owner.stop()
+            assertEquals(null, owner.selectedHost.value, "logout releases the selected target")
         } finally {
             owner.close()
         }
@@ -135,6 +139,9 @@ class RemoteConnectionOwnerReconnectTest {
                 owner.subscribedStreams().isEmpty(),
                 "switching Host must drop the previous subscriptions instead of rebuilding them on the new Host",
             )
+            assertEquals(HostId("desktop-other"), owner.selectedHost.value?.hostId)
+            owner.close()
+            assertEquals(null, owner.selectedHost.value)
         } finally {
             owner.close()
         }

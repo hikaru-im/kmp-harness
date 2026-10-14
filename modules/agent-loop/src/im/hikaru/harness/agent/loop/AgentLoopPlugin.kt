@@ -1,8 +1,11 @@
 package im.hikaru.harness.agent.loop
 
-import im.hikaru.harness.agent.AgentFactory
+import im.hikaru.harness.agent.Agent
+import im.hikaru.harness.agent.AgentFactoryRequest
 import im.hikaru.harness.agent.AgentKey
 import im.hikaru.harness.agent.AgentRegistry
+import im.hikaru.harness.agent.QuiescentRestorableFactory
+import im.hikaru.harness.llm.LlmRuntime
 import im.hikaru.harness.llm.LlmKey
 import im.hikaru.harness.tools.ToolsKey
 import im.hikaru.harness.runtime.Context
@@ -30,16 +33,28 @@ class AgentLoopPlugin(
         val registry: AgentRegistry = context.require(AgentKey)
         val handle =
             registry.registerFactory(
-                AgentFactory { request ->
-                    val callConfig = request.options.requireCallConfig()
-                    AgentLoopAgent(
-                        request = request,
-                        llm = context.require(LlmKey),
-                        config = config,
-                        callConfig = callConfig,
-                    )
-                }
+                LoopAgentFactory(context.require(LlmKey), config)
             )
         scope.add(handle)
+    }
+}
+
+/**
+ * The default loop Agent starts a driver only from an explicit [Agent.send] or an attempt resume,
+ * so it declares quiescent-restorable support: attaching it to a restored Session issues no model
+ * request until the user acts.
+ */
+private class LoopAgentFactory(
+    private val llm: LlmRuntime,
+    private val config: AgentLoopConfig,
+) : QuiescentRestorableFactory {
+    override suspend fun create(request: AgentFactoryRequest): Agent {
+        val callConfig = request.options.requireCallConfig()
+        return AgentLoopAgent(
+            request = request,
+            llm = llm,
+            config = config,
+            callConfig = callConfig,
+        )
     }
 }

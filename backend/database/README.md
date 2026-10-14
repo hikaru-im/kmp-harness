@@ -6,14 +6,14 @@
 默认本地配置使用 PostgreSQL：
 
 ```bash
-createdb -h 127.0.0.1 -U postgres agent-kmp
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/ruoyi-vue-pro.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/sync/sync.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/member/member.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/mp/mp.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/pay/pay.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/agent/agent.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/quartz.sql
+createdb -h 127.0.0.1 -U postgres ruoyi-kmp
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/ruoyi-vue-pro.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/sync/sync.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/member/member.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/mp/mp.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/pay/pay.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/agent/agent.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/quartz.sql
 ```
 
 `ruoyi-vue-pro.sql` 保持与 `references/ruoyi-vue-pro` PostgreSQL 基线一致，并把上游命名空间
@@ -30,9 +30,9 @@ PostgreSQL 结构分别维护在同名子目录中，并以以下 MySQL 导出�
 导出中的历史和演示数据。需要数据时，在结构脚本之后执行：
 
 ```bash
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/member/data.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/mp/data.sql
-psql -h 127.0.0.1 -U postgres -d agent-kmp -f backend/database/postgresql/pay/data.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/member/data.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/mp/data.sql
+psql -h 127.0.0.1 -U postgres -d ruoyi-kmp -f backend/database/postgresql/pay/data.sql
 ```
 
 `pay/data.sql` 来自原始导出，可能包含支付配置、证书和密钥，只应在明确需要的
@@ -62,7 +62,7 @@ Agent PostgreSQL 的可重复门禁使用：
 node tools/database-gate.mjs
 ```
 
-它会在隔离数据库中比较 fresh 与 incremental Agent schema，再与实时 `agent-kmp` 的八张
+它会在隔离数据库中比较 fresh 与 incremental Agent schema，再与实时 `ruoyi-kmp` 的八张
 Agent/Koog 表比较，并自动执行官方 Koog JDBC provider round-trip 测试。默认不把既有模块的
 历史 live schema 漂移计入 Agent 结果；设置 `MIGRATION_COMPARE_FULL_LIVE_CATALOG=true` 可开启全库严格比较。
 

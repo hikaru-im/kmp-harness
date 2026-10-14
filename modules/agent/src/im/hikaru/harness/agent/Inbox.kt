@@ -2,11 +2,15 @@ package im.hikaru.harness.agent
 
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.llm.copyMessage
+import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.session.Session
 import im.hikaru.harness.session.SessionEventEnvelope
-import im.hikaru.harness.runtime.Context
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 /**
@@ -21,8 +25,8 @@ class Inbox internal constructor(
     private val onChanged: suspend (InboxSpliceOperation) -> Unit = {},
 ) {
     private val mutex = Mutex()
-    private val nextTurn = initial.nextTurn.map(::copyItem).toMutableList()
-    private val nextStep = initial.nextStep.map(::copyItem).toMutableList()
+    private var nextTurn = initial.nextTurn.map(::copyItem).toMutableList()
+    private var nextStep = initial.nextStep.map(::copyItem).toMutableList()
     private var version = initial.version
     private var nextItemId = initial.nextItemId()
     private var boundAgent: Agent? = null
@@ -38,7 +42,7 @@ class Inbox internal constructor(
         target: AgentSendTarget,
         wakeup: AgentWakeup,
     ): String =
-        mutex.withLock {
+        mutate {
             val id = "${agentId.value}:$nextItemId"
             val item =
                 InboxItem(
@@ -54,33 +58,33 @@ class Inbox internal constructor(
                 operation = InboxSpliceOperation.INSERT,
                 items = nextItems,
             )
-            nextItemId += 1L
             id
         }
 
     suspend fun claim(queue: InboxQueue): List<InboxItem> =
-        mutex.withLock {
+        mutate {
             val current = queueFor(queue)
-            if (current.isEmpty()) return@withLock emptyList()
+            if (current.isEmpty()) return@mutate emptyList()
             val claimed =
-                if (queue == InboxQueue.NEXT_TURN) listOf(current.first()) else current.toList()
+                (if (queue == InboxQueue.NEXT_TURN) listOf(current.first()) else current.toList())
+                    .map(::copyItem)
             val remaining = current.drop(claimed.size).map(::copyItem)
             commit(queue, InboxSpliceOperation.CLAIM, remaining)
-            claimed.map(::copyItem)
+            claimed
         }
 
     suspend fun replace(
         queue: InboxQueue,
         items: List<InboxItem>,
     ) {
-        mutex.withLock {
+        mutate {
             commit(queue, InboxSpliceOperation.REPLACE, items.map(::copyItem))
         }
     }
 
     suspend fun clear(queue: InboxQueue) {
-        mutex.withLock {
-            if (queueFor(queue).isEmpty()) return@withLock
+        mutate {
+            if (queueFor(queue).isEmpty()) return@mutate
             commit(queue, InboxSpliceOperation.CLEAR, emptyList())
         }
     }
@@ -94,44 +98,55 @@ class Inbox internal constructor(
             )
         }
 
+    private suspend fun <T> mutate(block: suspend () -> T): T {
+        val permit = session.acquireOperationPermit()
+        try {
+            return mutex.withLock {
+                currentCoroutineContext().ensureActive()
+                block()
+            }
+        } finally {
+            permit.dispose()
+        }
+    }
+
     private suspend fun commit(
         queue: InboxQueue,
         operation: InboxSpliceOperation,
         items: List<InboxItem>,
     ) {
         val nextVersion = version + 1L
-        session.append(
-            AgentSessionEvents.InboxSpliced,
+        // Prepare both detached projections before a durable append can succeed.
+        val projection = items.map(::copyItem).toMutableList()
+        val event =
             InboxSpliceEvent(
                 agent = session.id,
                 queue = queue,
                 operation = operation,
                 version = nextVersion,
                 items = items.map(::copyItem),
-            ),
-        )
-        when (queue) {
-            InboxQueue.NEXT_TURN -> {
-                nextTurn.clear()
-                nextTurn += items.map(::copyItem)
+            )
+        currentCoroutineContext().ensureActive()
+        withContext(NonCancellable) {
+            session.append(AgentSessionEvents.InboxSpliced, event)
+            when (queue) {
+                InboxQueue.NEXT_TURN -> nextTurn = projection
+                InboxQueue.NEXT_STEP -> nextStep = projection
             }
-            InboxQueue.NEXT_STEP -> {
-                nextStep.clear()
-                nextStep += items.map(::copyItem)
+            version = nextVersion
+            if (operation == InboxSpliceOperation.INSERT) nextItemId += 1L
+            onChanged(operation)
+            val agent = boundAgent
+            if (agent != null) {
+                val key =
+                    when (operation) {
+                        InboxSpliceOperation.INSERT -> AgentEvents.InboxInserted
+                        InboxSpliceOperation.CLAIM -> AgentEvents.InboxClaimed
+                        InboxSpliceOperation.REPLACE,
+                        InboxSpliceOperation.CLEAR -> AgentEvents.InboxDiscarded
+                    }
+                eventContext?.emitContained(key, AgentNotice(agent))
             }
-        }
-        version = nextVersion
-        onChanged(operation)
-        val agent = boundAgent
-        if (agent != null) {
-            val key =
-                when (operation) {
-                    InboxSpliceOperation.INSERT -> AgentEvents.InboxInserted
-                    InboxSpliceOperation.CLAIM -> AgentEvents.InboxClaimed
-                    InboxSpliceOperation.REPLACE,
-                    InboxSpliceOperation.CLEAR -> AgentEvents.InboxDiscarded
-                }
-            eventContext?.emitContained(key, AgentNotice(agent))
         }
     }
 

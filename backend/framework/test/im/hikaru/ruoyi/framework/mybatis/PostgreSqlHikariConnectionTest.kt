@@ -13,7 +13,7 @@ class PostgreSqlHikariConnectionTest {
 
     @Test
     fun `postgresql driver is provided by the data access starter`() {
-        val url = "jdbc:postgresql://127.0.0.1:5432/agent-kmp"
+        val url = "jdbc:postgresql://127.0.0.1:5432/ruoyi-kmp"
         val driver = DriverManager.getDriver(url)
 
         assertEquals("org.postgresql.Driver", driver.javaClass.name)

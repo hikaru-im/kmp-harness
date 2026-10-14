@@ -4,10 +4,18 @@ dependencies:
   - ../../modules/bundle/desktop
   - ../../modules/agent
   - ../../modules/llm
+  - ../../modules/llm-koog
+  - ../../modules/llm-koog-openai
+  - ../../modules/settings
+  - ../../modules/credentials
   - ../../modules/home
+  - ../../modules/loader
   - ../../modules/runtime
   - ../../modules/session
   - ../../modules/session-api
+  - ../../modules/session-persistence
+  - ../../modules/ui-slot
+  - ../../modules/ui-foundation
   - ../shared
   - ../../contracts
   - ../../contracts/harness-protocol
@@ -17,25 +25,41 @@ dependencies:
   - io.ktor:ktor-client-cio:3.5.1
   - org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0
   - $compose.desktop.currentOs
+  - org.jetbrains.jewel:jewel-int-ui-standalone:0.39.1-262.9437.29
+  - org.jetbrains.jewel:jewel-int-ui-decorated-window:0.39.1-262.9437.29
+  - org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0
   - org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0
   - ch.qos.logback:logback-classic:1.5.34: runtime-only
 
 settings:
+  # Jewel's DecoratedWindow centres the macOS traffic lights through JBR's custom title bar height,
+  # so this app runs on JetBrains Runtime and never on a stock JDK.
+  jvm:
+    jdk:
+      version: 25
+      distributions: [jetbrains]
+      selectionMode: alwaysProvision
   compose: enabled
+  kotlin:
+    serialization: json
 
 test-dependencies:
+  - org.jetbrains.compose.ui:ui-test:1.11.1
+  - androidx.room3:room3-runtime:3.0.0
+  - androidx.sqlite:sqlite-bundled-jvm:2.6.2
   - ../../modules/agent-loop
+  - ../../modules/exec-jvm
+  - ../../modules/tools
   - ../../modules/credentials
   - ../../modules/credentials-local
   - ../../modules/llm
   - ../../modules/llm-koog
   - ../../modules/llm-koog-openai
-  - ../../modules/loader
   - ../../modules/logger
   - ../../modules/settings
   - ../../modules/settings-file
-  - ai.koog:prompt-executor-model:1.1.1
-  - ai.koog:prompt-executor-openai-client:1.1.1
-  - ai.koog:http-client-core:1.1.1
-  - ai.koog:http-client-ktor:1.1.1
+  - ai.koog:prompt-executor-model:1.3.0
+  - ai.koog:prompt-executor-openai-client:1.3.0
+  - ai.koog:http-client-core:1.3.0
+  - ai.koog:http-client-ktor:1.3.0
   - org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0

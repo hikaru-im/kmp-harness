@@ -5,6 +5,7 @@ import im.hikaru.harness.agent.AgentAttemptResume
 import im.hikaru.harness.agent.AgentAttemptResumer
 import im.hikaru.harness.agent.AgentErrorCode
 import im.hikaru.harness.agent.AgentFactoryRequest
+import im.hikaru.harness.agent.AgentInstructionsKey
 import im.hikaru.harness.agent.AgentRequestErrorDecision
 import im.hikaru.harness.agent.AgentRequestErrorEvent
 import im.hikaru.harness.agent.AgentEvents
@@ -53,6 +54,7 @@ import im.hikaru.harness.session.ErrorTurnEndReason
 import im.hikaru.harness.session.RequestContextEvent
 import im.hikaru.harness.session.RequestHeaderEvent
 import im.hikaru.harness.session.Session
+import im.hikaru.harness.session.SessionAdmissionPermit
 import im.hikaru.harness.session.SessionEventKeys
 import im.hikaru.harness.session.SessionEventNames
 import im.hikaru.harness.session.SessionRequestContext
@@ -64,12 +66,15 @@ import im.hikaru.harness.session.TurnStartEvent
 import im.hikaru.harness.session.UserMessageEvent
 import im.hikaru.harness.session.UserTurnAbortCause
 import im.hikaru.harness.tools.ToolCallRequest
+import im.hikaru.harness.tools.ToolExecutionContext
 import im.hikaru.harness.tools.ToolCallEvent
 import im.hikaru.harness.tools.ToolResultEvent
 import im.hikaru.harness.tools.ToolSessionEvents
 import im.hikaru.harness.tools.tools
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.currentCoroutineContext
@@ -99,11 +104,19 @@ internal class AgentLoopAgent(
     private val mutex = Mutex()
     /** The child Context owns this scope and joins it during disposal. */
     private val scope: CoroutineScope = context.managedScope()
-    private var driver: Job? = null
+    private class DriverCandidate(val permit: SessionAdmissionPermit) {
+        val adoption = CompletableDeferred<Boolean>()
+        lateinit var job: Job
+    }
+
+    private var driver: DriverCandidate? = null
     private var disposed = false
-    private var stopping = false
+    private val stopping = mutableSetOf<Any>()
+    private var restartAfterStops = false
+    private var wakeupGeneration = 0L
     private var nextTurn = 0L
     private var initialized = false
+    private var initialization: CompletableDeferred<Unit>? = null
     private var currentStatus = AgentStatus.IDLE
 
     init {
@@ -115,38 +128,48 @@ internal class AgentLoopAgent(
 
     override suspend fun awaitIdle() {
         while (true) {
-            val job = mutex.withLock { driver }
-            job?.join() ?: return
+            // Include a candidate that has cleared its installed identity but
+            // is still releasing its permit in the innermost finally.
+            val jobs = mutex.withLock { scope.coroutineContext[Job]?.children?.toList().orEmpty() }
+            if (jobs.isEmpty()) return
+            jobs.forEach { it.join() }
         }
     }
 
     override suspend fun cancel(cause: Throwable?, keepInbox: Boolean) {
-        val job =
-            mutex.withLock {
-                if (disposed) return
-                stopping = true
-                driver
-            }
+        val permit = session.acquireOperationPermit()
         try {
-            job?.cancel(cause as? CancellationException ?: CancellationException(cause?.message))
-            job?.join()
-            if (!keepInbox) {
-                withContext(NonCancellable) {
-                    inbox.clear(InboxQueue.NEXT_TURN)
-                    inbox.clear(InboxQueue.NEXT_STEP)
+            val stop = Any()
+            val job = mutex.withLock {
+                if (disposed) return
+                stopping += stop
+                driver?.job
+            }
+            // Once registered, this request owns its stop through join, clear
+            // and reconciliation, even if its caller is cancelled.
+            withContext(NonCancellable) {
+                var cleared = false
+                try {
+                    job?.cancel(cause as? CancellationException ?: CancellationException(cause?.message))
+                    job?.join()
+                    if (!keepInbox) {
+                        inbox.clear(InboxQueue.NEXT_TURN)
+                        inbox.clear(InboxQueue.NEXT_STEP)
+                        cleared = true
+                    }
+                } finally {
+                    val reconcile = mutex.withLock {
+                        stopping.remove(stop)
+                        restartAfterStops = restartAfterStops || cleared
+                        (stopping.isEmpty() && restartAfterStops).also {
+                            if (it) restartAfterStops = false
+                        }
+                    }
+                    if (reconcile) reconcileDriver()
                 }
             }
         } finally {
-            mutex.withLock {
-                stopping = false
-                // A wakeup may have inserted a turn after the non-cancellable
-                // Inbox clear but before this flag was released. Reconcile the
-                // queue under the same Agent mutex so that `keepInbox = false`
-                // never strands that durable item without a driver.
-                if (!disposed && !keepInbox && driver == null && inbox.snapshot().nextTurn.isNotEmpty()) {
-                    driver = scope.launch { runDriver() }
-                }
-            }
+            permit.dispose()
         }
     }
 
@@ -155,26 +178,33 @@ internal class AgentLoopAgent(
         target: AgentSendTarget,
         wakeup: AgentWakeup,
     ): String {
-        ensureInitialized()
-        val itemId = inbox.insert(message, target, wakeup)
-        if (wakeup != AgentWakeup.NONE) {
-            mutex.withLock {
-                if (!disposed && !stopping && (wakeup == AgentWakeup.ALWAYS || driver == null)) {
-                    if (driver == null) {
-                        driver = scope.launch { runDriver() }
-                    }
-                }
+        val permit = session.acquireOperationPermit()
+        try {
+            ensureInitialized()
+            val itemId = inbox.insert(message, target, wakeup)
+            if (wakeup != AgentWakeup.NONE) {
+                mutex.withLock { wakeupGeneration += 1L }
+                startDriver()
             }
+            return itemId
+        } finally {
+            permit.dispose()
         }
-        return itemId
     }
 
     override suspend fun resumeAttempt(request: AgentAttemptResume) {
-        ensureInitialized()
-        mutex.withLock {
-            check(!disposed) { "Agent is disposed" }
-            check(driver == null) { "Agent is already running" }
-            driver = scope.launch { runDriver(request) }
+        val permit = session.acquireOperationPermit()
+        try {
+            ensureInitialized()
+            mutex.withLock {
+                check(!disposed) { "Agent is disposed" }
+                check(driver == null) { "Agent is already running" }
+                check(stopping.isEmpty()) { "Agent is stopping" }
+                check(scope.coroutineContext[Job]?.isActive == true) { "Agent scope is cancelled" }
+            }
+            check(startDriver(resume = request)) { "Agent cannot adopt the restored attempt" }
+        } finally {
+            permit.dispose()
         }
     }
 
@@ -183,18 +213,112 @@ internal class AgentLoopAgent(
             mutex.withLock {
                 if (disposed) return
                 disposed = true
-                stopping = true
-                driver
+                driver?.job
             }
         job?.cancel(CancellationException("Agent disposed"))
         job?.join()
         scope.coroutineContext[Job]?.cancel()
     }
 
-    private suspend fun runDriver(resume: AgentAttemptResume? = null) {
-        ensureInitialized()
-        updateStatus(AgentStatus.RUNNING)
+    /** Called only under mutex; no Inbox access or callbacks belong here. */
+    private fun canStartDriver(previous: DriverCandidate?, previousJob: Job?): Boolean =
+        !disposed && stopping.isEmpty() && driver === previous &&
+            scope.coroutineContext[Job]?.isActive == true && previousJob?.isActive != false
+
+    private suspend fun startDriver(
+        resume: AgentAttemptResume? = null,
+        previous: DriverCandidate? = null,
+        previousJob: Job? = null,
+        generation: Long? = null,
+    ): Boolean {
+        mutex.withLock {
+            if (!canStartDriver(previous, previousJob)) return false
+            if (generation != null && wakeupGeneration != generation) return false
+        }
+        val permit = session.acquireOperationPermit()
+        var candidate: DriverCandidate? = null
+        var job: Job? = null
+        var adopted = false
         try {
+            currentCoroutineContext().ensureActive()
+            // Admission can suspend; recheck the owned scope before creating
+            // a candidate, then check both Jobs again at installation.
+            mutex.withLock {
+                if (!canStartDriver(previous, previousJob)) return false
+                if (generation != null && wakeupGeneration != generation) return false
+            }
+            val record = DriverCandidate(permit)
+            candidate = record
+            // UNDISPATCHED enters the outer try even in a cancelled scope.
+            // The adoption barrier prevents initialization or notices here.
+            val launched = scope.launch(start = CoroutineStart.UNDISPATCHED) { runDriver(record, resume) }
+            job = launched
+            record.job = launched
+            currentCoroutineContext().ensureActive()
+            mutex.withLock {
+                currentCoroutineContext().ensureActive()
+                if (launched.isActive && canStartDriver(previous, previousJob) &&
+                    (generation == null || wakeupGeneration == generation)
+                ) {
+                    driver = record
+                    adopted = true
+                }
+            }
+            return adopted
+        } finally {
+            if (adopted) {
+                // Also opened if the caller is cancelled after installation.
+                candidate!!.adoption.complete(true)
+            } else {
+                withContext(NonCancellable) {
+                    try {
+                        candidate?.adoption?.complete(false)
+                        job?.cancel()
+                        job?.join()
+                    } finally {
+                        // Covers synchronous launch failure as well as every
+                        // unadopted candidate; disposal is identity/idempotent.
+                        permit.dispose()
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun reconcileDriver(previous: DriverCandidate? = null, previousJob: Job? = null) {
+        while (true) {
+            val generation = mutex.withLock {
+                if (!canStartDriver(previous, previousJob)) return
+                wakeupGeneration
+            }
+            val queued = inbox.snapshot().nextTurn.isNotEmpty()
+            if (!queued) {
+                val settled = mutex.withLock {
+                    if (!canStartDriver(previous, previousJob)) return
+                    if (wakeupGeneration != generation) false else {
+                        if (driver === previous) driver = null
+                        true
+                    }
+                }
+                if (settled) return
+            } else {
+                if (startDriver(previous = previous, previousJob = previousJob, generation = generation)) return
+                mutex.withLock {
+                    if (!canStartDriver(previous, previousJob) || wakeupGeneration == generation) return
+                }
+            }
+        }
+    }
+
+    private suspend fun runDriver(candidate: DriverCandidate, resume: AgentAttemptResume?) {
+        val realJob = currentCoroutineContext()[Job]!!
+        var adopted = false
+        var normalExit = false
+        try {
+            adopted = candidate.adoption.await()
+            if (!adopted) return
+            ensureInitialized()
+            updateStatus(AgentStatus.RUNNING)
             if (resume != null) {
                 runRestoredTurn(resume)
                 currentCoroutineContext().ensureActive()
@@ -205,44 +329,64 @@ internal class AgentLoopAgent(
                 runTurn(item.message)
                 currentCoroutineContext().ensureActive()
             }
+            normalExit = true
         } finally {
-            updateStatus(AgentStatus.IDLE)
-            // Keep the current driver registered until the restart decision is
-            // committed. Otherwise cancel() can observe a transient null,
-            // clear `stopping`, and then race this finally block into spawning
-            // a new driver for a queue that was explicitly kept.
-            mutex.withLock {
-                // Re-check the durable queue while holding the Agent mutex.
-                // `send` inserts into Inbox before acquiring this mutex; taking
-                // the snapshot outside it allowed a follow-up to land between
-                // the snapshot and `driver = null`, after which `send` saw the
-                // still-live driver and did not schedule a replacement.
-                val hasQueuedTurns = inbox.snapshot().nextTurn.isNotEmpty()
-                if (!disposed && !stopping && hasQueuedTurns) {
-                    driver = scope.launch { runDriver() }
-                } else {
-                    driver = null
+            withContext(NonCancellable) {
+                try {
+                    if (adopted) {
+                        // Keep this identity registered throughout IDLE; a
+                        // concurrent cancel must still find the real Job.
+                        updateStatus(AgentStatus.IDLE)
+                        if (normalExit && realJob.isActive && scope.coroutineContext[Job]?.isActive == true) {
+                            // The next candidate acquires its own activity
+                            // before this driver's permit can be released.
+                            reconcileDriver(candidate, realJob)
+                        }
+                    }
+                } finally {
+                    try {
+                        mutex.withLock { if (driver === candidate) driver = null }
+                    } finally {
+                        candidate.permit.dispose()
+                    }
                 }
             }
         }
     }
 
     private suspend fun ensureInitialized() {
-        val shouldLoad = mutex.withLock {
-            if (initialized) false else {
-                initialized = true
-                true
+        var loader = false
+        val completion = mutex.withLock {
+            if (initialized) return
+            initialization ?: CompletableDeferred<Unit>().also {
+                initialization = it
+                loader = true
             }
         }
-        if (!shouldLoad) return
-        val maxTurn =
-            session.events().asSequence()
-                .filter { it.type == SessionEventNames.TURN_START }
-                .mapNotNull { it.data.jsonObject["turn"]?.jsonPrimitive?.longOrNull }
-                .maxOrNull()
-                ?: 0L
-        mutex.withLock {
-            nextTurn = maxOf(nextTurn, maxTurn)
+        if (!loader) {
+            completion.await()
+            return
+        }
+        try {
+            val maxTurn =
+                session.events().asSequence()
+                    .filter { it.type == SessionEventNames.TURN_START }
+                    .mapNotNull { it.data.jsonObject["turn"]?.jsonPrimitive?.longOrNull }
+                    .maxOrNull()
+                    ?: 0L
+            mutex.withLock {
+                currentCoroutineContext().ensureActive()
+                nextTurn = maxOf(nextTurn, maxTurn)
+                initialized = true
+                initialization = null
+            }
+            completion.complete(Unit)
+        } catch (error: Throwable) {
+            withContext(NonCancellable) {
+                mutex.withLock { if (initialization === completion) initialization = null }
+                completion.completeExceptionally(error)
+            }
+            throw error
         }
     }
 
@@ -384,6 +528,12 @@ internal class AgentLoopAgent(
                     return StepOutcome.Finished(ErrorTurnEndReason(normalizeLlmFailure(error)))
                 }
             try {
+                val instructions = context.get(AgentInstructionsKey)?.readInstructions(this)?.takeIf { it.isNotBlank() }
+                val system = when {
+                    instructions == null -> config.system
+                    config.system == null -> instructions
+                    else -> "${config.system}\n\n$instructions"
+                }
                 val toolsService = context.tools
                 val toolSchemas = toolsService?.schemas()?.takeIf { it.isNotEmpty() }
                 val request =
@@ -392,7 +542,7 @@ internal class AgentLoopAgent(
                         model = prepared.config.model,
                         messages = session.deriveMessages(),
                         reasoningEffort = prepared.config.reasoningEffort,
-                        system = config.system,
+                        system = system,
                         tools = toolSchemas,
                         temperature = prepared.config.temperature,
                         maxTokens = prepared.config.maxTokens,
@@ -554,7 +704,7 @@ internal class AgentLoopAgent(
             session.append(ToolSessionEvents.Call, ToolCallEvent(session.id, turn, step, request))
             val result =
                 try {
-                    toolsService.execute(request)
+                    toolsService.execute(request, ToolExecutionContext(context, session))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {

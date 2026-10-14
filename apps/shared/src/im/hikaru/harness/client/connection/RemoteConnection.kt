@@ -43,6 +43,8 @@ public class RemoteConnection private constructor(
     private val timeoutMillis: Long,
 ) : Connection, AutoCloseable {
     private val json = Json { encodeDefaults = true; explicitNulls = false; ignoreUnknownKeys = true }
+    private val descendantsReader = RemoteSessionDescendants(json, ::invoke)
+    private val backgroundProcessesReader = RemoteSessionBackgroundProcesses(json, ::invoke)
     private val nextRequest = AtomicRequestId()
     private val pending = mutableMapOf<String, CompletableDeferred<RelayResponse>>()
     private val pendingMutex = Mutex()
@@ -74,6 +76,27 @@ public class RemoteConnection private constructor(
     }
 
     override val session: SessionApi = object : SessionApi {
+        override suspend fun backgroundProcesses(parent: SessionId): BackgroundProcessesResult =
+            backgroundProcessesReader.backgroundProcesses(parent)
+
+        override suspend fun readBackgroundOutput(parent: SessionId, process: BackgroundProcessId): BackgroundOutputResult =
+            backgroundProcessesReader.readBackgroundOutput(parent, process)
+
+        override suspend fun writeBackgroundInput(parent: SessionId, process: BackgroundProcessId, input: String): BackgroundInputResult =
+            backgroundProcessesReader.writeBackgroundInput(parent, process, input)
+
+        override suspend fun closeBackgroundInput(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+            backgroundProcessesReader.closeBackgroundInput(parent, process)
+
+        override suspend fun cancelBackgroundProcess(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+            backgroundProcessesReader.cancelBackgroundProcess(parent, process)
+
+        override suspend fun descendants(parent: SessionId): SessionDescendantsResult =
+            descendantsReader.descendants(parent)
+
+        override suspend fun readChildHistory(parent: SessionId, child: SessionId): ChildHistoryResult =
+            descendantsReader.readChildHistory(parent, child)
+
         override suspend fun list(): List<SessionSummary> =
             invoke("session.list", null).decodeResult<List<SessionSummary>>()
 
@@ -221,30 +244,32 @@ public class RemoteConnection private constructor(
                 header("tenant-id", tenantId)
             }
             val connection = RemoteConnection(socket, host, scope, timeoutMillis)
-            val handshake = HandshakeRequest(ClientDescription(ProtocolVersion.Current, ClientId(clientId), "Harness Client"))
-            val described = connection.host.describe()
-            val remoteHost = described.data ?: run {
-                connection.close()
-                throw RemoteConnectionException(described.msg ?: "Host handshake failed", described.code)
-            }
-            when (val negotiation = HandshakeNegotiator.negotiate(handshake, remoteHost)) {
-                is HandshakeNegotiationResult.Accepted -> Unit
-                is HandshakeNegotiationResult.Rejected -> {
-                    connection.close()
-                    throw RemoteConnectionException(negotiation.rejection.message)
+            try {
+                val handshake = HandshakeRequest(ClientDescription(ProtocolVersion.Current, ClientId(clientId), "Harness Client"))
+                val described = connection.host.describe()
+                if (!described.isSuccess)
+                    throw RemoteConnectionException("Host description rejected", described.code)
+                val remoteHost = described.data ?: throw RemoteConnectionException("Host description missing", described.code)
+                require(remoteHost.hostId == host.hostId) { "Remote description Host mismatch" }
+                when (val negotiation = HandshakeNegotiator.negotiate(handshake, remoteHost)) {
+                    is HandshakeNegotiationResult.Accepted -> Unit
+                    is HandshakeNegotiationResult.Rejected -> throw RemoteConnectionException(negotiation.rejection.message)
                 }
+                val remoteHandshake: HandshakeResponse = connection.run {
+                    invoke(
+                        "host.handshake",
+                        json.encodeToJsonElement(HandshakeRequest.serializer(), handshake),
+                    ).decodeResult()
+                }
+                require(remoteHandshake.host.hostId == host.hostId) { "Remote handshake Host mismatch" }
+                require(remoteHandshake.negotiatedProtocolVersion.major == ProtocolVersion.Current.major) {
+                    "Remote handshake protocol is incompatible"
+                }
+                return connection
+            } catch (failure: Throwable) {
+                connection.close()
+                throw failure
             }
-            val remoteHandshake: HandshakeResponse = connection.run {
-                invoke(
-                    "host.handshake",
-                    json.encodeToJsonElement(HandshakeRequest.serializer(), handshake),
-                ).decodeResult()
-            }
-            require(remoteHandshake.host.hostId == host.hostId) { "Remote handshake Host mismatch" }
-            require(remoteHandshake.negotiatedProtocolVersion.major == ProtocolVersion.Current.major) {
-                "Remote handshake protocol is incompatible"
-            }
-            return connection
         }
     }
 }

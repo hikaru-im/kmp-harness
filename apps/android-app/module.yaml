@@ -9,3 +9,5 @@ dependencies:
 settings:
   compose:
     enabled: true
+  android:
+    namespace: im.hikaru.harness

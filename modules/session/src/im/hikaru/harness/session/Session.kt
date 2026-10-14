@@ -12,6 +12,7 @@ class Session internal constructor(
     private val observerFailureHandler: SessionObserverFailureHandler,
     internal val ownerStore: SessionStore,
 ) {
+    internal val admissionIdentity = SessionAdmissionIdentity(ownerStore.admission)
     private val mutex = Mutex()
     private val log = mutableListOf<SessionEventEnvelope>()
     private var lifecycle = SessionLifecycle.PREPARED
@@ -19,11 +20,26 @@ class Session internal constructor(
     val id: SessionId
         get() = header.id
 
+    /** Registers activity on this exact Session; callers must dispose the permit in finally. */
+    suspend fun acquireOperationPermit(): SessionAdmissionPermit =
+        ownerStore.admission.acquireOperation(this)
+
     suspend fun <T : Any> append(
         key: SessionEventKey<T>,
         value: T,
         sourceEventSeqs: List<Long>? = null,
+    ): SessionEventEnvelope =
+        ownerStore.admission.acquireOperation(this).useAdmission { permit ->
+            appendAdmitted(key, value, sourceEventSeqs, permit)
+        }
+
+    private suspend fun <T : Any> appendAdmitted(
+        key: SessionEventKey<T>,
+        value: T,
+        sourceEventSeqs: List<Long>?,
+        permit: SessionAdmissionPermit,
     ): SessionEventEnvelope {
+        permit.requireSession(this)
         val data = encodeSessionEvent(key, value)
         val sources = sourceEventSeqs?.takeIf(List<Long>::isNotEmpty)?.toList()
 
@@ -75,6 +91,11 @@ class Session internal constructor(
 
     /** Restore a prepared Session from a validated durable log. */
     suspend fun restore(events: List<SessionEventEnvelope>) {
+        ownerStore.admission.acquireOperation(this).useAdmission { permit -> restore(events, permit) }
+    }
+
+    internal suspend fun restore(events: List<SessionEventEnvelope>, permit: SessionAdmissionPermit) {
+        permit.requireSession(this)
         mutex.withLock {
             if (lifecycle != SessionLifecycle.PREPARED) {
                 throw SessionException(
@@ -152,7 +173,8 @@ class Session internal constructor(
     suspend fun isLive(): Boolean =
         mutex.withLock { lifecycle.hasEntered }
 
-    internal suspend fun enter() {
+    internal suspend fun enter(permit: SessionAdmissionPermit) {
+        permit.requireSession(this, lifecycle = true)
         mutex.withLock {
             if (lifecycle != SessionLifecycle.PREPARED) {
                 throw SessionException(
@@ -164,7 +186,8 @@ class Session internal constructor(
         }
     }
 
-    internal suspend fun beginAnnounce() {
+    internal suspend fun beginAnnounce(permit: SessionAdmissionPermit) {
+        permit.requireSession(this, lifecycle = true)
         mutex.withLock {
             if (lifecycle != SessionLifecycle.ENTERED) {
                 throw SessionException(
@@ -176,7 +199,8 @@ class Session internal constructor(
         }
     }
 
-    internal suspend fun completeAnnounce() {
+    internal suspend fun completeAnnounce(permit: SessionAdmissionPermit) {
+        permit.requireSession(this, lifecycle = true)
         mutex.withLock {
             if (lifecycle != SessionLifecycle.ANNOUNCING) {
                 throw SessionException(
@@ -188,8 +212,9 @@ class Session internal constructor(
         }
     }
 
-    internal suspend fun close(): Boolean =
-        mutex.withLock {
+    internal suspend fun close(permit: SessionAdmissionPermit): Boolean {
+        permit.requireSession(this, lifecycle = true)
+        val changed = mutex.withLock {
             if (lifecycle == SessionLifecycle.CLOSED) {
                 false
             } else {
@@ -197,6 +222,9 @@ class Session internal constructor(
                 true
             }
         }
+        ownerStore.admission.retire(this, permit)
+        return changed
+    }
 
     private fun checkAppendable() {
         if (lifecycle == SessionLifecycle.CLOSED) {

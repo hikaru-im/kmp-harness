@@ -105,6 +105,9 @@
 - [x] K39：补齐生产 file-backed Chat 的真实失败与恢复验收；同一 generation 中的 `gpt-4o-mini` HTTP
   503 已映射为唯一 `SERVER` Error Finish，随后同一 executor 使用 `gpt-5.6-luna` 恢复并返回
   `RECOVERY_OK`。当前 `RetryPolicy` 只提供数据约定，真正的退避重试属于后续 `llm-retry` Plugin。
+- [x] K40：升级四个 Koog 依赖至 1.3.0；Responses scripted fixture 现在携带字符串形式的
+  `response.instructions`，并新增 Chat `reasoning_content` 到 Harness reasoning block 的真实 client
+  门禁。1.3.0 通过现有 llm-koog、llm-koog-openai 和 jvm-app JVM 测试，无需 Harness 适配层改动。
 
 这些勾选项表示“实现入口和失败边界已具备”，不表示对应 Provider 能力已经完成。
 
@@ -158,7 +161,8 @@ Provider-native replay 闭环见 [REPLAY_MAPPING_GUIDE.md](REPLAY_MAPPING_GUIDE.
   scripted `KoogHttpClient.Factory` 验证一个 OpenAI Provider 的模型级 Chat Completions/Responses API、密钥边界、Host close，以及
   settings/credential watcher 的 generation 切换、在途请求保护、旧 client 空闲关闭和非法配置回退。
 - [ ] Desktop Profile 外部 live 验收闭环（生产 file-backed Chat text/tool/lifecycle/failure recovery 已通过；
-  Responses 已在 HTTP 200 后复现 Koog #2211；OpenAI 官方 endpoint、live replay 和 Compose 首帧仍未完成）。
+  1.3.0 已通过字符串 `response.instructions` 的离线 scripted gate，OpenAI 官方 endpoint、live replay 和
+  Compose 首帧仍未完成）。
 - [x] OpenAI Responses stream replay writer、版本化 state、严格 restorer 和内容改写清除已完成；真实网络
   replay/live persistence 仍待验收。
 
@@ -170,7 +174,7 @@ Provider-native replay 闭环见 [REPLAY_MAPPING_GUIDE.md](REPLAY_MAPPING_GUIDE.
   结构化 HTTP failure mapper 已有 JVM fixture 测试。
 - [x] OpenAI semantics 安装专属 `KoogToolCallTerminalPolicy`；delta-only tool-call 流在
   `End("tool_calls")` 时补出 `ToolCallBlock`，随后才输出 usage 和 finish，公共层不绑定该字符串。
-- [x] OpenAI Responses JVM/Desktop API template、Koog 原生参数、标准 usage/finish、文本 terminal、tool complete
+- [x] OpenAI Responses JVM/Desktop API template、Koog 原生参数、字符串 `response.instructions`、标准 usage/finish、文本 terminal、tool complete
   和 scripted cancellation/close fixture 已实现；loopback 默认 Ktor transport 也已验收 read-idle timeout
   与连接断开；Provider-native reasoning/replay state 的离线 codec/round-trip 已实现，真实网络 text/tool/
   cancellation/HTTP teardown 和 live persistence 尚未验收。Responses live 文本已到达 HTTP 200，但当前由

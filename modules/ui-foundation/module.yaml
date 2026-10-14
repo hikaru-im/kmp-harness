@@ -1,0 +1,20 @@
+apply: [../../kmp.module-template.yaml]
+
+product:
+  type: kmp/lib
+  platforms: [jvm, android, iosSimulatorArm64, iosArm64]
+
+dependencies:
+  - $compose.foundation: exported
+  - org.jetbrains.compose.material3:material3:1.11.0-alpha07: exported
+
+test-dependencies:
+  - org.jetbrains.compose.ui:ui-test:1.11.1
+
+test-dependencies@jvm:
+  - $compose.desktop.currentOs
+
+settings:
+  compose:
+    enabled: true
+    version: 1.11.1

@@ -42,18 +42,14 @@ internal class KoogStreamMapper(
                 frames.transformWhile { frame ->
                     when (frame) {
                         is StreamFrame.TextDelta -> {
-                            val block =
-                                state.open(
+                            val (completedReasoning, block) =
+                                state.openAfterReasoning(
                                     providerIndex = frame.index,
                                     type = KoogStreamBlockType.TEXT,
                                 )
+                            completedReasoning.forEach { chunk -> emit(chunk) }
                             if (block.startIfNeeded()) {
-                                emit(
-                                    BlockStartChunk(
-                                        index = block.outputIndex,
-                                        blockType = block.type.harnessType,
-                                    )
-                                )
+                                emit(BlockStartChunk(index = block.outputIndex, blockType = block.type.harnessType))
                             }
                             block.append(frame.text)
                             emit(
@@ -66,18 +62,14 @@ internal class KoogStreamMapper(
                         }
 
                         is StreamFrame.TextComplete -> {
-                            val block =
-                                state.open(
+                            val (completedReasoning, block) =
+                                state.openAfterReasoning(
                                     providerIndex = frame.index,
                                     type = KoogStreamBlockType.TEXT,
                                 )
+                            completedReasoning.forEach { chunk -> emit(chunk) }
                             if (block.startIfNeeded()) {
-                                emit(
-                                    BlockStartChunk(
-                                        index = block.outputIndex,
-                                        blockType = block.type.harnessType,
-                                    )
-                                )
+                                emit(BlockStartChunk(index = block.outputIndex, blockType = block.type.harnessType))
                             }
                             block.complete(finalText = frame.text)
                             emit(

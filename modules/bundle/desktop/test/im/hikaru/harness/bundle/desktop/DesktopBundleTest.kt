@@ -56,7 +56,7 @@ class DesktopBundleTest {
 
         assertEquals(entries.map { it.name }.toSet(), DesktopPluginCatalog.names)
         assertEquals(
-            listOf("logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent", "tools", "agent-loop", "session-api", "session-persistence", "llm-retry"),
+            listOf("logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent", "tools", "agent-loop", "session-api", "exec-process", "subagent-tools", "session-persistence", "llm-retry"),
             entries.map { it.id },
         )
     }
@@ -132,7 +132,7 @@ class DesktopBundleTest {
         try {
             val context = session.host.runtime.context
             val pluginNames = DesktopProfileBundle.patches.single().insert.orEmpty().map { it.id }
-            assertEquals(12, pluginNames.size)
+            assertEquals(14, pluginNames.size)
             assertTrue(
                 pluginNames.all { name ->
                     session.host.loader.fiber(name)?.state == FiberState.Active
@@ -201,7 +201,7 @@ class DesktopBundleTest {
             val loader = session.host.loader
             val context = session.host.runtime.context
             val dependentNames =
-                listOf("agent", "agent-loop", "session-api", "session-persistence", "llm-retry")
+                listOf("agent", "agent-loop", "session-api", "exec-process", "subagent-tools", "session-persistence", "llm-retry")
             val initialPersistence = checkNotNull(context.get(SessionPersistenceKey))
 
             withContext(Dispatchers.IO) { delay(75) }

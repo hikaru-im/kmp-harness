@@ -74,6 +74,15 @@ fun interface AgentFactory {
     suspend fun create(request: AgentFactoryRequest): Agent
 }
 
+/**
+ * A factory that declares its Agents perform no autonomous work when attached to a restored
+ * Session: no model request, no driver start and no inbox drain until an explicit send or resume.
+ *
+ * Only such factories may be used for a quiescent restore of an archived chat. A factory that has
+ * not declared this capability is rejected instead of being trusted to stay quiet.
+ */
+interface QuiescentRestorableFactory : AgentFactory
+
 interface AgentFactoryHandle : Disposable
 
 interface AgentHandle : Disposable {

@@ -8,6 +8,7 @@ import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.runtime.service.ServiceKey
 import im.hikaru.harness.session.SessionEventKey
 import im.hikaru.harness.session.SessionId
+import im.hikaru.harness.session.Session
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.sync.Semaphore
@@ -36,9 +37,21 @@ fun interface ToolHandler {
     suspend fun execute(request: ToolCallRequest): ToolExecutionResult
 }
 
+/** In-process authority supplied by the Agent, never decoded from tool arguments or scope. */
+data class ToolExecutionContext(val context: Context, val session: Session)
+
+fun interface ContextualToolHandler : ToolHandler {
+    override suspend fun execute(request: ToolCallRequest): ToolExecutionResult =
+        error("This handler requires trusted ToolExecutionContext")
+
+    suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult
+}
+
 interface ToolsService {
     suspend fun schemas(): List<ToolSchema>
     suspend fun execute(request: ToolCallRequest): ToolExecutionResult
+    suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult =
+        execute(request)
     fun register(schema: ToolSchema, handler: ToolHandler): Disposable
 }
 
@@ -133,7 +146,12 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
         }
     }
 
-    override suspend fun execute(request: ToolCallRequest): ToolExecutionResult {
+    override suspend fun execute(request: ToolCallRequest): ToolExecutionResult = executeInternal(request, null)
+
+    override suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult =
+        executeInternal(request, execution)
+
+    private suspend fun executeInternal(request: ToolCallRequest, execution: ToolExecutionContext?): ToolExecutionResult {
         val key = (request.scope ?: "") to request.callId
         var handler: ToolHandler? = null
         while (handler == null) {
@@ -152,9 +170,15 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
         return try {
             permits.acquire()
             acquired = true
-            val result = selectedHandler.execute(request)
+            check(!state.load().disposed) { "Tools service is disposed" }
+            val result = if (selectedHandler is ContextualToolHandler && execution != null) {
+                selectedHandler.execute(request, execution)
+            } else {
+                selectedHandler.execute(request)
+            }
             while (true) {
                 val current = state.load()
+                if (current.disposed) break
                 val updated = current.copy(
                     inFlight = current.inFlight - key,
                     completed = current.completed + key,
@@ -165,6 +189,7 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
         } catch (error: Throwable) {
             while (true) {
                 val current = state.load()
+                if (current.disposed) break
                 val updated = current.copy(inFlight = current.inFlight - key)
                 if (state.compareAndSet(current, updated)) break
             }

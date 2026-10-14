@@ -156,6 +156,54 @@ public interface SessionPrompt {
 }
 
 public interface SessionApi {
+    public suspend fun terminalCapability(session: SessionId): TerminalDiscoveryResult =
+        TerminalDiscoveryResult.Unavailable(session, "Terminal Host service is not exposed by this connection")
+
+    /** Create is never retried; an unknown outcome may have no acknowledged terminal key. */
+    public suspend fun createTerminal(request: TerminalCreateRequest): TerminalCreateResult =
+        TerminalCreateResult.Unavailable(request.owner, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun terminals(owner: TerminalOwner): TerminalListResult =
+        TerminalListResult.Unavailable(owner, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun readTerminal(key: TerminalKey): TerminalReadResult =
+        TerminalReadResult.Unavailable(key, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun writeTerminal(key: TerminalKey, input: String): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun inputTerminal(key: TerminalKey, input: TerminalInput): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun resizeTerminal(key: TerminalKey, size: TerminalSize): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun closeTerminal(key: TerminalKey): TerminalMutationResult =
+        TerminalMutationResult.Unavailable(key, "Terminal Host service is not exposed by this connection")
+
+    public suspend fun backgroundProcesses(parent: SessionId): BackgroundProcessesResult =
+        BackgroundProcessesResult.Unavailable(parent, "Background process service is not exposed by this connection")
+
+    public suspend fun readBackgroundOutput(parent: SessionId, process: BackgroundProcessId): BackgroundOutputResult =
+        BackgroundOutputResult.Unavailable(parent, process, "Background output service is not exposed by this connection")
+
+    /** Mutations are never retried; UnknownOutcome means the process may already have received the operation. */
+    public suspend fun writeBackgroundInput(parent: SessionId, process: BackgroundProcessId, input: String): BackgroundInputResult =
+        BackgroundInputResult.Unavailable(parent, process, "Background input service is not exposed by this connection")
+
+    public suspend fun closeBackgroundInput(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        BackgroundControlResult.Unavailable(parent, process, "Background input service is not exposed by this connection")
+
+    public suspend fun cancelBackgroundProcess(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        BackgroundControlResult.Unavailable(parent, process, "Background process control service is not exposed by this connection")
+
+    /** Optional read-only capability. Successful empty and unavailable remain distinct. */
+    public suspend fun descendants(parent: SessionId): SessionDescendantsResult =
+        SessionDescendantsResult.Unavailable(parent)
+
+    public suspend fun readChildHistory(parent: SessionId, child: SessionId): ChildHistoryResult =
+        ChildHistoryResult.Unavailable(parent, child)
+
     public suspend fun list(): List<SessionSummary>
     public suspend fun create(
         id: SessionId? = null,

@@ -13,6 +13,35 @@ import im.hikaru.harness.api.gateway.session.SessionHistoryEndpoint
 import im.hikaru.harness.api.gateway.session.SessionListEndpoint
 import im.hikaru.harness.api.gateway.session.SessionPromptEndpoint
 import im.hikaru.harness.api.gateway.session.SessionPromptRequest
+import im.hikaru.harness.api.gateway.session.SessionDescendantsEndpoint
+import im.hikaru.harness.api.gateway.session.SessionChildHistoryEndpoint
+import im.hikaru.harness.api.gateway.session.ChildHistoryRequest
+import im.hikaru.harness.api.gateway.session.SessionBackgroundProcessesEndpoint
+import im.hikaru.harness.api.gateway.session.SessionBackgroundOutputEndpoint
+import im.hikaru.harness.api.gateway.session.BackgroundOutputRequest
+import im.hikaru.harness.api.gateway.session.BackgroundInputRequest
+import im.hikaru.harness.api.gateway.session.BackgroundControlRequest
+import im.hikaru.harness.api.gateway.session.SessionBackgroundInputEndpoint
+import im.hikaru.harness.api.gateway.session.SessionBackgroundCloseInputEndpoint
+import im.hikaru.harness.api.gateway.session.SessionBackgroundCancelEndpoint
+import im.hikaru.harness.client.connection.BackgroundProcessId
+import im.hikaru.harness.client.connection.BackgroundProcessesResult
+import im.hikaru.harness.client.connection.BackgroundOutputResult
+import im.hikaru.harness.client.connection.BackgroundInputResult
+import im.hikaru.harness.client.connection.BackgroundControlResult
+import im.hikaru.harness.api.gateway.GatewayResultCodes
+import im.hikaru.harness.client.connection.SessionDescendantsResult
+import im.hikaru.harness.client.connection.ChildHistoryResult
+import im.hikaru.harness.client.connection.TerminalCreateRequest
+import im.hikaru.harness.client.connection.TerminalCreateResult
+import im.hikaru.harness.client.connection.TerminalDiscoveryResult
+import im.hikaru.harness.client.connection.TerminalKey
+import im.hikaru.harness.client.connection.TerminalInput
+import im.hikaru.harness.client.connection.TerminalListResult
+import im.hikaru.harness.client.connection.TerminalMutationResult
+import im.hikaru.harness.client.connection.TerminalOwner
+import im.hikaru.harness.client.connection.TerminalReadResult
+import im.hikaru.harness.client.connection.TerminalSize
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.llm.MessageId
 import im.hikaru.harness.llm.MessageRole
@@ -48,6 +77,8 @@ import im.hikaru.harness.session.CreateSessionOptions
 import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.api.SessionPrompt
 import im.hikaru.harness.session.api.SessionSummary
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Desktop 客户端到同进程 Harness Host 的本地连接。
@@ -57,6 +88,7 @@ import im.hikaru.harness.session.api.SessionSummary
 public class LocalConnection(
     private val gateway: ApiGateway,
 ) : Connection {
+    private val localTerminals = LocalSessionTerminals(gateway)
 
     override val host: HostApi =
         object : HostApi {
@@ -69,6 +101,73 @@ public class LocalConnection(
 
     override val session: SessionApi =
         object : SessionApi {
+            override suspend fun terminalCapability(session: ClientSessionId): TerminalDiscoveryResult =
+                localTerminals.terminalCapability(session)
+
+            override suspend fun createTerminal(request: TerminalCreateRequest): TerminalCreateResult =
+                localTerminals.createTerminal(request)
+
+            override suspend fun terminals(owner: TerminalOwner): TerminalListResult =
+                localTerminals.terminals(owner)
+
+            override suspend fun readTerminal(key: TerminalKey): TerminalReadResult =
+                localTerminals.readTerminal(key)
+
+            override suspend fun writeTerminal(key: TerminalKey, input: String): TerminalMutationResult =
+                localTerminals.writeTerminal(key, input)
+
+            override suspend fun inputTerminal(key: TerminalKey, input: TerminalInput): TerminalMutationResult =
+                localTerminals.inputTerminal(key, input)
+
+            override suspend fun resizeTerminal(key: TerminalKey, size: TerminalSize): TerminalMutationResult =
+                localTerminals.resizeTerminal(key, size)
+
+            override suspend fun closeTerminal(key: TerminalKey): TerminalMutationResult =
+                localTerminals.closeTerminal(key)
+
+            override suspend fun backgroundProcesses(parent: ClientSessionId): BackgroundProcessesResult =
+                optionalRead(SessionBackgroundProcessesEndpoint, SessionId(parent.value))?.toClient()
+                    ?.also { require(it.parent == parent) { "Background process parent mismatch" } }
+                    ?: BackgroundProcessesResult.Unavailable(parent, "Background process service is unavailable")
+
+            override suspend fun readBackgroundOutput(parent: ClientSessionId, process: BackgroundProcessId): BackgroundOutputResult =
+                optionalRead(SessionBackgroundOutputEndpoint, BackgroundOutputRequest(
+                    SessionId(parent.value), im.hikaru.harness.session.api.BackgroundProcessId(process.value)))
+                    ?.toClient()?.also { require(it.parent == parent && it.process == process) { "Background output identity mismatch" } }
+                    ?: BackgroundOutputResult.Unavailable(parent, process, "Background output service is unavailable")
+
+            override suspend fun writeBackgroundInput(parent: ClientSessionId, process: BackgroundProcessId, input: String): BackgroundInputResult =
+                backgroundMutation(SessionBackgroundInputEndpoint, BackgroundInputRequest(
+                    SessionId(parent.value), im.hikaru.harness.session.api.BackgroundProcessId(process.value), input),
+                    BackgroundInputResult.Unavailable(parent, process, "Background input endpoint is unavailable"),
+                    BackgroundInputResult.UnknownOutcome(parent, process, "Background input outcome is unknown")) { response ->
+                    response.toClient().also { require(it.parent == parent && it.process == process) }
+                }
+
+            override suspend fun closeBackgroundInput(parent: ClientSessionId, process: BackgroundProcessId): BackgroundControlResult =
+                backgroundMutation(SessionBackgroundCloseInputEndpoint, BackgroundControlRequest(
+                    SessionId(parent.value), im.hikaru.harness.session.api.BackgroundProcessId(process.value)),
+                    BackgroundControlResult.Unavailable(parent, process, "Background input close endpoint is unavailable"),
+                    BackgroundControlResult.UnknownOutcome(parent, process, "Background input close outcome is unknown")) { response ->
+                    response.toClient().also { require(it.parent == parent && it.process == process) }
+                }
+
+            override suspend fun cancelBackgroundProcess(parent: ClientSessionId, process: BackgroundProcessId): BackgroundControlResult =
+                backgroundMutation(SessionBackgroundCancelEndpoint, BackgroundControlRequest(
+                    SessionId(parent.value), im.hikaru.harness.session.api.BackgroundProcessId(process.value)),
+                    BackgroundControlResult.Unavailable(parent, process, "Background process cancel endpoint is unavailable"),
+                    BackgroundControlResult.UnknownOutcome(parent, process, "Background process cancel outcome is unknown")) { response ->
+                    response.toClient().also { require(it.parent == parent && it.process == process) }
+                }
+
+            override suspend fun descendants(parent: ClientSessionId): SessionDescendantsResult =
+                optionalRead(SessionDescendantsEndpoint, SessionId(parent.value))?.toClient()
+                    ?: SessionDescendantsResult.Unavailable(parent)
+
+            override suspend fun readChildHistory(parent: ClientSessionId, child: ClientSessionId): ChildHistoryResult =
+                optionalRead(SessionChildHistoryEndpoint, ChildHistoryRequest(SessionId(parent.value), SessionId(child.value)))
+                    ?.toClient() ?: ChildHistoryResult.Unavailable(parent, child)
+
             override suspend fun list(): List<ClientSessionSummary> =
                 invoke(SessionListEndpoint, Unit).map(::toClientSummary)
 
@@ -113,6 +212,37 @@ public class LocalConnection(
                 invoke(SessionCancelEndpoint, SessionCancelRequest(SessionId(id.value), keepInbox))
             }
         }
+
+    private suspend fun <Request : Any, Response : Any, Result> backgroundMutation(
+        endpoint: ApiEndpoint<Request, Response>,
+        request: Request,
+        unavailable: Result,
+        unknown: Result,
+        map: (Response) -> Result,
+    ): Result {
+        currentCoroutineContext().ensureActive()
+        return try {
+            val result = gateway.invoke(endpoint, request)
+            if (result.code == GatewayResultCodes.NotFound &&
+                result.msg == "Harness API endpoint '${endpoint.method}' 未注册") unavailable
+            else if (!result.isSuccess || result.data == null) unknown
+            else map(requireNotNull(result.data))
+        } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
+            unknown
+        }
+    }
+
+    private suspend fun <Request : Any, Response : Any> optionalRead(
+        endpoint: ApiEndpoint<Request, Response>,
+        request: Request,
+    ): Response? {
+        val result = gateway.invoke(endpoint, request)
+        if (result.code == GatewayResultCodes.NotFound &&
+            result.msg == "Harness API endpoint '${endpoint.method}' 未注册") return null
+        if (!result.isSuccess) throw LocalConnectionException(result.code, result.msg)
+        return result.data ?: throw LocalConnectionException(result.code, "Harness API returned no data")
+    }
 
     private suspend fun <Request : Any, Response : Any> invoke(
         endpoint: ApiEndpoint<Request, Response>,

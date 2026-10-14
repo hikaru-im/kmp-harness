@@ -434,6 +434,41 @@ class OpenAiClientFixtureTest {
     }
 
     @Test
+    fun chatReasoningContentShouldBecomeReplayableHarnessReasoningBlock() = runTest {
+        val fixture =
+            fixture(
+                flowOf(
+                    reasoningDelta("private thought"),
+                    textDelta("answer"),
+                    finish("stop"),
+                    usage(promptTokens = 3, completionTokens = 2),
+                    DONE,
+                )
+            )
+
+        val chunks =
+            try {
+                fixture.adapter.stream(textOptions()).toList()
+            } finally {
+                fixture.executor.close()
+            }
+
+        assertEquals(
+            listOf(
+                BlockStartChunk(index = 0, blockType = "reasoning"),
+                im.hikaru.harness.llm.ReasoningDeltaChunk(index = 0, text = "private thought"),
+                BlockEndChunk(index = 0, block = im.hikaru.harness.llm.ReasoningBlock("private thought")),
+                BlockStartChunk(index = 1, blockType = "text"),
+                TextDeltaChunk(index = 1, text = "answer"),
+                BlockEndChunk(index = 1, block = TextBlock("answer")),
+                UsageChunk(TokenUsage(inputTokens = 3, outputTokens = 2)),
+                FinishChunk(StopFinishReason),
+            ),
+            chunks,
+        )
+    }
+
+    @Test
     fun responsesClientShouldSerializeToolSchemaAndMapArgumentSseWithoutNetwork() = runTest {
         val fixture =
             responsesFixture(
@@ -1200,6 +1235,19 @@ private fun textDelta(text: String): String =
             }
     )
 
+private fun reasoningDelta(text: String): String =
+    streamChunk(
+        choices =
+            buildJsonArray {
+                addJsonObject {
+                    put("index", 0)
+                    putJsonObject("delta") {
+                        put("reasoning_content", text)
+                    }
+                }
+            }
+    )
+
 private fun toolDelta(
     id: String?,
     name: String?,
@@ -1324,6 +1372,7 @@ private fun responsesCompleted(
             put("created_at", 1)
             put("id", "resp-fixture")
             put("model", "gpt-4o-mini")
+            put("instructions", "fixture instructions")
             putJsonArray("output") { }
             put("parallel_tool_calls", false)
             put("status", "completed")
