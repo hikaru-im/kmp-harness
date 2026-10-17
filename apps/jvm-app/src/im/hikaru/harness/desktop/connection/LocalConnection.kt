@@ -273,6 +273,7 @@ internal fun toClientMessage(message: Message): ClientMessage =
         },
         content = message.content.map(::toClientContent),
         source = message.source.toClientSource(),
+        timestampMillis = message.timestampMillis,
     )
 
 internal fun ClientMessage.toCoreMessage(): Message =

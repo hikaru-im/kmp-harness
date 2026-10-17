@@ -73,6 +73,7 @@ data class Message(
     val role: MessageRole,
     val content: List<ContentBlock>,
     val source: MessageSource,
+    val timestampMillis: Long? = null,
 ) {
     init {
         when (source) {

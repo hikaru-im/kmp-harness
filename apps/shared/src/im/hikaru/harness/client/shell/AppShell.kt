@@ -40,6 +40,8 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import im.hikaru.harness.client.app.ConversationAppearance
+import im.hikaru.harness.client.app.LocalConversationBottomInset
 import im.hikaru.harness.client.panels.ThreadPanelLayout
 import im.hikaru.harness.client.panels.ThreadPanelWidthMode
 import im.hikaru.harness.client.scheduled.label
@@ -383,6 +385,7 @@ public fun AppShell(
                                         // The dock hangs off the shell's single composer, which drafts and
                                         // sends on the **conversation**; a pane that is a tab never gets it.
                                         docksComposer = paneSpec.docksComposer && paneTab == null,
+                                        conversation = (paneTab?.page ?: state.navigation.currentPage) is PageId.Thread,
                                         contentMaxWidth =
                                             when {
                                                 // A page that brings its own column (新标签页) keeps the whole
@@ -1867,10 +1870,33 @@ private fun MainSurface(
     contentMaxWidth: Dp? = HarnessTokens.Control.ContentMaxWidth,
     /** Whether this pane's page docks a composer; a page with none drops the dock, gutter and all. */
     docksComposer: Boolean = true,
+    conversation: Boolean = false,
     composerState: ComposerState,
     content: @Composable () -> Unit,
     composer: (@Composable () -> Unit)?,
 ) {
+    if (conversation) {
+        var composerHeight by remember { mutableStateOf(98.dp) }
+        val density = LocalDensity.current
+        val inset = if (docksComposer && composer != null) composerHeight + 16.dp else 0.dp
+        Box(modifier.fillMaxSize().background(ConversationAppearance.canvas)) {
+            CompositionLocalProvider(LocalConversationBottomInset provides inset) { content() }
+            if (docksComposer && composer != null) {
+                Box(
+                    Modifier.align(Alignment.BottomCenter).widthIn(max = 768.dp).fillMaxWidth()
+                        .padding(horizontal = 16.dp).padding(bottom = 16.dp),
+                ) {
+                    Box(Modifier.matchParentSize().background(ConversationAppearance.canvas))
+                    Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(32.dp).offset(y = (-32).dp)
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, ConversationAppearance.canvas))))
+                    Box(Modifier.fillMaxWidth().onGloballyPositioned {
+                        composerHeight = with(density) { it.size.height.toDp() }
+                    }.semantics { testTag = "composer-column" }) { composer() }
+                }
+            }
+        }
+        return
+    }
     Column(
         modifier = modifier.fillMaxHeight().background(HarnessTokens.Colors.Canvas),
     ) {

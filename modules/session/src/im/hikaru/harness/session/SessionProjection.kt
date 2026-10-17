@@ -10,11 +10,12 @@ fun deriveMessages(events: List<SessionEventEnvelope>): List<Message> =
 
         when (event.type) {
             SessionEventNames.USER_MESSAGE ->
-                decode(UserMessageEvent.serializer(), event.data).message
+                decode(UserMessageEvent.serializer(), event.data).message.copy(timestampMillis = event.time)
 
             SessionEventNames.ASSISTANT_MESSAGE ->
                 decode(AssistantMessageEvent.serializer(), event.data)
                     .message
+                    .copy(timestampMillis = event.time)
                     .takeIf { message -> message.content.isNotEmpty() }
 
             else -> null

@@ -10,12 +10,15 @@ dependencies:
   - ../../modules/ui-foundation
   - ../../modules/loader
   - ../../modules/runtime
+  - org.jetbrains.kotlinx:kotlinx-datetime:0.7.1
+  - org.jetbrains:markdown:0.7.18
   - io.insert-koin:koin-core:4.2.2
   - io.ktor:ktor-client-core:3.5.1
   - io.ktor:ktor-client-content-negotiation:3.5.1
   - io.ktor:ktor-serialization-kotlinx-json:3.5.1
   - io.ktor:ktor-client-websockets:3.5.1
   - ../../contracts/harness-protocol
+  - $compose.animation
   - $compose.foundation: exported
   - org.jetbrains.compose.material3:material3:1.11.0-alpha07: exported
 

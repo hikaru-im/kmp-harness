@@ -1,49 +1,40 @@
 package im.hikaru.harness.client.app
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import im.hikaru.harness.client.connection.Message
-import im.hikaru.harness.client.connection.MessageContent
-import im.hikaru.harness.client.connection.MessageRole
-import im.hikaru.harness.client.connection.ModelMessageSource
-import im.hikaru.harness.client.connection.PluginMessageSource
-import im.hikaru.harness.client.connection.ReasoningContent
-import im.hikaru.harness.client.connection.TextContent
-import im.hikaru.harness.client.connection.ToolCallContent
-import im.hikaru.harness.client.connection.ToolResultContent
-import im.hikaru.harness.client.connection.ToolMessageSource
-import im.hikaru.harness.client.connection.UserMessageSource
-import im.hikaru.harness.ui.foundation.HarnessIcon
-import im.hikaru.harness.ui.foundation.HarnessIconName
-import im.hikaru.harness.ui.foundation.HarnessSurface
-import im.hikaru.harness.ui.foundation.HarnessText
-import im.hikaru.harness.ui.foundation.HarnessTokens
+import androidx.compose.ui.unit.sp
+import im.hikaru.harness.client.connection.*
+import im.hikaru.harness.ui.foundation.*
+import kotlinx.coroutines.launch
+import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 @Composable
 internal fun ConversationViewport(
@@ -52,163 +43,317 @@ internal fun ConversationViewport(
     error: String? = null,
     onRetry: () -> Unit = {},
 ) {
-    LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
-    ) {
-        if (messages.isEmpty()) {
-            item {
-                HarnessSurface(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Seven),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-                    ) {
-                        HarnessIcon(HarnessIconName.Send, tint = HarnessTokens.Colors.Accent, size = HarnessTokens.Control.LargeHeight)
-                        HarnessText("开始新的会话", color = HarnessTokens.Colors.Text)
-                        HarnessText("输入问题，Harness 会在当前 Host 上运行 Agent。", color = HarnessTokens.Colors.TextMuted)
+    val list = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val bottom = LocalConversationBottomInset.current
+    val atBottom by remember { derivedStateOf { !list.canScrollForward } }
+    var following by remember { mutableStateOf(true) }
+    // Live Codex prints one `用时 {duration}` header at the top of a turn's activity; the duration is the
+    // turn's own wall clock, which our messages already carry as event timestamps.
+    val workedFor = remember(messages) { turnWorkedFor(messages) }
+    val toolCalls = remember(messages) {
+        messages.flatMap { it.content }.filterIsInstance<ToolCallContent>().associateBy { it.id }
+    }
+    // The live app draws one activity row per call and keeps the output inside it; our history stores the
+    // result as its own message, so those messages fold into the call row instead of printing a second row.
+    val toolResults = remember(messages) { toolResultIndex(messages) }
+    val shown = remember(messages, toolResults) { messages.filterNot { it.isFoldedToolResult(toolResults) } }
+    val lastTextMessage = remember(messages) { turnLastTextMessageIds(messages) }
+    LaunchedEffect(list) {
+        var wasScrolling = false
+        snapshotFlow { list.isScrollInProgress to !list.canScrollForward }.collect { (scrolling, reachedBottom) ->
+            // Content and composer remeasurement must not cancel an existing follow intent.
+            if (scrolling || wasScrolling) following = reachedBottom
+            wasScrolling = scrolling
+        }
+    }
+    LaunchedEffect(shown.size, shown.lastOrNull()?.content, error, bottom) {
+        if (shown.isNotEmpty() && following) list.scrollToItem(shown.size + if (error != null) 1 else 0)
+    }
+    Box(modifier.fillMaxWidth()) {
+        LazyColumn(
+            state = list,
+            modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp).semantics { contentDescription = "会话" },
+            // The 12dp gap before the end anchor completes the measured 32dp transcript inset.
+            contentPadding = PaddingValues(top = 32.dp, bottom = bottom + 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            items(shown, key = { it.id }) { message ->
+                Box(Modifier.widthIn(max = 768.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
+                    MessageCard(
+                        message = message,
+                        workedForMillis = workedFor[message.id],
+                        toolCalls = toolCalls,
+                        toolResults = toolResults,
+                        showActions = message.id in lastTextMessage,
+                    )
+                }
+            }
+            error?.let { message -> item { ConversationErrorCard(message, onRetry) } }
+            item(key = "conversation-end") { Spacer(Modifier.height(0.dp)) }
+        }
+        if (!atBottom) {
+            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = bottom + 24.dp)
+                .size(32.dp).background(ConversationAppearance.canvas, CircleShape)
+                .border(1.dp, ConversationAppearance.ink.copy(alpha = 0.08f), CircleShape)) {
+                ConversationActionButton(ConversationGlyph.Down, "滚动到底部", {
+                    scope.launch { list.animateScrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+                }, size = 32.dp, tint = ConversationAppearance.ink)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun MessageCard(
+    message: Message,
+    workedForMillis: Long? = null,
+    toolCalls: Map<String, ToolCallContent> = emptyMap(),
+    toolResults: Map<String, ToolResultEntry> = emptyMap(),
+    showActions: Boolean = true,
+) {
+    val isHuman = message.role == MessageRole.USER && message.source == UserMessageSource
+    val clipboard = LocalClipboardManager.current
+    val text = message.content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
+    BoxWithConstraints(Modifier.fillMaxWidth().semantics { testTag = "message:${message.id}" }) {
+        val bubbleMaxWidth = maxWidth * 0.7f
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isHuman) Alignment.End else Alignment.Start) {
+            val contents = if (isHuman) Modifier.widthIn(max = bubbleMaxWidth)
+                .background(ConversationAppearance.userBackground, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 10.dp)
+                else Modifier.fillMaxWidth()
+            SelectionContainer {
+                Column(contents, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (!isHuman && workedForMillis != null) WorkedForHeader(workedForMillis, "message:${message.id}")
+                    message.content.forEachIndexed { index, content ->
+                        MessageContentView(content, "message:${message.id}:content:$index", isHuman, toolCalls, toolResults)
                     }
                 }
             }
-        }
-        items(messages, key = { it.id }) { message ->
-            MessageCard(message)
-        }
-        error?.let { message ->
-            item {
-                ErrorMessage(message = message, onRetry = onRetry)
-            }
-        }
-    }
-}
-
-@Composable
-internal fun MessageCard(message: Message) {
-    val isHuman = message.role == MessageRole.USER && message.source == UserMessageSource
-    val description = when (val source = message.source) {
-        UserMessageSource -> if (isHuman) "You · USER" else "User source · ${message.role}"
-        is ModelMessageSource -> "Model message · ${message.role}"
-        is ToolMessageSource -> "Tool message · ${message.role}"
-        is PluginMessageSource -> "Plugin ${source.plugin} · ${message.role}"
-    }
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-        // The 672dp content column and 85%/560dp bubble cap are Harness adaptations.
-        // Rounded 16dp corners and 10dp vertical padding map rounded-2xl/py-2.5;
-        // original runtime widths, spacing and colors have not been measured.
-        BoxWithConstraints(
-            Modifier.widthIn(max = HarnessTokens.Control.ContentMaxWidth).fillMaxWidth(),
-            contentAlignment = if (isHuman) Alignment.TopEnd else Alignment.TopStart,
-        ) {
-            val contentModifier = if (isHuman) {
-                Modifier.widthIn(max = minOf(maxWidth * 0.85f, 560.dp))
-                    .background(HarnessTokens.Colors.SurfaceSecondary, RoundedCornerShape(16.dp))
-            } else Modifier.fillMaxWidth()
-            Column(
-                modifier = contentModifier.semantics {
-                    testTag = "message:${message.id}"
-                    contentDescription = description
-                }.then(if (isHuman) Modifier.padding(horizontal = 16.dp, vertical = 10.dp) else Modifier),
-                verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-            ) {
-                message.content.forEachIndexed { index, content ->
-                    MessageContentView(content, "message:${message.id}:content:$index")
+            if (isHuman) {
+                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    message.timestampMillis?.let {
+                        HarnessText(messageTimeLabel(it), color = ConversationAppearance.tertiary,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp))
+                    }
+                    ConversationActionButton(ConversationGlyph.Copy, "复制消息", { clipboard.setText(AnnotatedString(text)) })
+                }
+            } else if (showActions && text.isNotBlank()) {
+                Row(Modifier.padding(top = 6.dp).offset(x = (-4).dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    ConversationActionButton(ConversationGlyph.Copy, "复制", { clipboard.setText(AnnotatedString(text)) })
+                    ConversationActionButton(ConversationGlyph.Speaker, "朗读（暂不可用）")
+                    ConversationActionButton(ConversationGlyph.Feedback, "评价回复（暂不可用）")
+                    ConversationActionButton(ConversationGlyph.Branch, "从这里创建聊天分支（暂不可用）")
                 }
             }
         }
     }
 }
 
-@Composable
-private fun MessageContentView(content: MessageContent, tag: String) {
-    when (content) {
-        is TextContent -> MessageText(content.text, tag)
-        is ReasoningContent -> ReasoningBlock(content, tag)
-        is ToolCallContent -> ToolCallBlock(content, tag)
-        is ToolResultContent -> ToolResultBlock(content, tag)
-    }
-}
+private fun isHumanMessage(message: Message): Boolean =
+    message.role == MessageRole.USER && message.source == UserMessageSource
 
-@Composable
-private fun MessageText(text: String, tag: String, muted: Boolean = false) {
-    HarnessText(text, Modifier.semantics { testTag = tag },
-        color = if (muted) HarnessTokens.Colors.TextMuted else HarnessTokens.Colors.Text,
-        maxLines = Int.MAX_VALUE, overflow = TextOverflow.Visible)
-}
-
-@Composable
-private fun ReasoningBlock(content: ReasoningContent, tag: String) {
-    var expanded by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        MessageDisclosureHeader(if (expanded) "Reasoning" else "Reasoning · 展开",
-            HarnessIconName.Search, expanded, tag) { expanded = !expanded }
-        if (expanded) MessageText(content.text, "$tag:body", muted = true)
-    }
-}
-
-@Composable
-private fun ToolCallBlock(content: ToolCallContent, tag: String) {
-    var expanded by remember(content.id) { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        MessageDisclosureHeader(content.name, HarnessIconName.Host, expanded, tag) { expanded = !expanded }
-        if (expanded) MessageText(content.arguments, "$tag:body", muted = true)
-    }
-}
-
-@Composable
-private fun MessageDisclosureHeader(
-    label: String, icon: HarnessIconName, expanded: Boolean, tag: String, onToggle: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = HarnessTokens.Control.CompactHeight)
-            .clickable(role = Role.Button, onClickLabel = if (expanded) "Collapse" else "Expand", onClick = onToggle)
-            .semantics { testTag = "$tag:header"; stateDescription = if (expanded) "Expanded" else "Collapsed" }
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HarnessIcon(icon, tint = HarnessTokens.Colors.TextMuted, size = 16.dp)
-        HarnessText(label, Modifier.weight(1f), color = HarnessTokens.Colors.TextMuted,
-            maxLines = Int.MAX_VALUE, overflow = TextOverflow.Visible)
-        HarnessIcon(if (expanded) HarnessIconName.ChevronDown else HarnessIconName.ChevronRight,
-            tint = HarnessTokens.Colors.TextMuted, size = 16.dp)
-    }
-}
-
-@Composable
-private fun ToolResultBlock(content: ToolResultContent, tag: String) {
-    Column(
-        modifier = Modifier.fillMaxWidth().semantics { testTag = tag },
-        verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two), verticalAlignment = Alignment.CenterVertically) {
-            HarnessIcon(
-                if (content.isError) HarnessIconName.Warning else HarnessIconName.Host,
-                tint = if (content.isError) HarnessTokens.Colors.Danger else HarnessTokens.Colors.TextMuted,
-                size = 16.dp,
-            )
-            HarnessText(if (content.isError) "Tool failed" else "Tool result",
-                color = if (content.isError) HarnessTokens.Colors.Danger else HarnessTokens.Colors.TextMuted)
+/**
+ * Live Codex prints one `用时 {duration}` line above the activity of a turn (`localConversation.workedFor`
+ * = `用时 {time}`, zh-CN catalogue). The duration is the turn's own wall clock, measured here from the human
+ * prompt to the turn's last event, both of which our messages already carry as event timestamps. The header is
+ * attached to the first message of the turn that holds activity so a turn prints it once.
+ */
+private fun turnWorkedFor(messages: List<Message>): Map<String, Long> {
+    val headers = mutableMapOf<String, Long>()
+    var index = 0
+    while (index < messages.size) {
+        if (isHumanMessage(messages[index])) { index++; continue }
+        var firstActivity: String? = null
+        var last: Long? = null
+        var cursor = index
+        while (cursor < messages.size && !isHumanMessage(messages[cursor])) {
+            val current = messages[cursor]
+            if (firstActivity == null && current.content.any {
+                    it is ReasoningContent || it is ToolCallContent || it is ToolResultContent
+                }) firstActivity = current.id
+            val time = current.timestampMillis
+            if (time != null && (last == null || time > last!!)) last = time
+            cursor++
         }
-        content.content.forEachIndexed { index, child ->
-            MessageContentView(child, "$tag:content:$index")
+        val start = messages.getOrNull(index - 1)?.takeIf(::isHumanMessage)?.timestampMillis
+            ?: messages.subList(index, cursor).firstNotNullOfOrNull { it.timestampMillis }
+        val end = last
+        if (firstActivity != null && start != null && end != null && end > start) {
+            headers[firstActivity] = end - start
         }
+        index = cursor
     }
+    return headers
 }
 
-@Composable
-private fun ErrorMessage(message: String, onRetry: () -> Unit) {
-    HarnessSurface(modifier = Modifier.fillMaxWidth(), selected = true) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Three),
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HarnessIcon(HarnessIconName.Warning, tint = HarnessTokens.Colors.Danger)
-            Column(modifier = Modifier.weight(1f)) {
-                HarnessText("请求失败", color = HarnessTokens.Colors.Danger)
-                HarnessText(message, color = HarnessTokens.Colors.TextMuted)
+internal class ToolResultEntry(val messageId: String, val index: Int, val content: ToolResultContent)
+
+/** Results whose call is present in the same history: they belong to that call's activity row. */
+private fun toolResultIndex(messages: List<Message>): Map<String, ToolResultEntry> {
+    val calls = messages.flatMap { it.content }.filterIsInstance<ToolCallContent>().mapTo(mutableSetOf()) { it.id }
+    val index = mutableMapOf<String, ToolResultEntry>()
+    messages.forEach { message ->
+        message.content.forEachIndexed { position, content ->
+            if (content is ToolResultContent && content.toolCallId in calls) {
+                index[content.toolCallId] = ToolResultEntry(message.id, position, content)
             }
-            androidx.compose.material3.TextButton(onClick = onRetry) { HarnessText("重试") }
         }
+    }
+    return index
+}
+
+/** A message that holds nothing but results folded into a call row is not drawn on its own. */
+private fun Message.isFoldedToolResult(results: Map<String, ToolResultEntry>): Boolean =
+    content.isNotEmpty() && content.all { it is ToolResultContent && results[it.toolCallId]?.messageId == id }
+
+/** The action row sits under the last text of a turn, not under every message inside it. */
+private fun turnLastTextMessageIds(messages: List<Message>): Set<String> {
+    val ids = mutableSetOf<String>()
+    var index = 0
+    while (index < messages.size) {
+        if (isHumanMessage(messages[index])) { index++; continue }
+        var lastText: String? = null
+        var cursor = index
+        while (cursor < messages.size && !isHumanMessage(messages[cursor])) {
+            val current = messages[cursor]
+            if (current.content.any { it is TextContent }) lastText = current.id
+            cursor++
+        }
+        lastText?.let(ids::add)
+        index = cursor
+    }
+    return ids
+}
+
+private fun workedForLabel(millis: Long): String {
+    val total = (millis / 1000).coerceAtLeast(1)
+    val minutes = total / 60
+    val seconds = total % 60
+    return when {
+        minutes == 0L -> "${seconds}秒"
+        seconds == 0L -> "${minutes}分"
+        else -> "${minutes}分${seconds}秒"
+    }
+}
+
+@Composable
+private fun WorkedForHeader(millis: Long, tag: String) {
+    // Live `activity-divider`: `text-size-chat text-secondary` = rgba(255,255,255,.498), 14 / 21, no icon.
+    Row(Modifier.fillMaxWidth().height(21.dp).semantics { testTag = "$tag:worked-for" },
+        verticalAlignment = Alignment.CenterVertically) {
+        HarnessText("用时 ${workedForLabel(millis)}", color = ConversationAppearance.tertiary, maxLines = 1,
+            style = LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 21.sp))
+    }
+}
+
+private fun messageTimeLabel(epochMillis: Long): String {
+    val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(TimeZone.currentSystemDefault())
+    val day = listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")[local.dayOfWeek.ordinal]
+    return "$day${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+}
+
+@Composable
+private fun MessageContentView(
+    content: MessageContent,
+    tag: String,
+    human: Boolean = false,
+    toolCalls: Map<String, ToolCallContent> = emptyMap(),
+    toolResults: Map<String, ToolResultEntry> = emptyMap(),
+) {
+    when (content) {
+        is TextContent -> if (human) HarnessText(content.text, Modifier.semantics { testTag = tag },
+            color = ConversationAppearance.userInk, style = LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 22.75.sp,
+                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                    androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.None)),
+            overflow = TextOverflow.Visible)
+            else ConversationMarkdown(content.text, Modifier.semantics { testTag = tag })
+        is ReasoningContent -> ActivityDisclosure("已完成思考", HarnessIconName.Search, tag) {
+            ConversationMarkdown(content.text, color = ConversationAppearance.muted)
+        }
+        is ToolCallContent -> ActivityDisclosure(toolActivityLabel(content), HarnessIconName.Host, tag) {
+            val result = toolResults[content.id]
+            if (result != null) {
+                result.content.content.forEachIndexed { i, child ->
+                    MessageContentView(child, "message:${result.messageId}:content:${result.index}:content:$i",
+                        toolCalls = toolCalls, toolResults = toolResults)
+                }
+            } else ConversationMarkdown("```json\n${content.arguments}\n```", color = ConversationAppearance.muted)
+        }
+        // The live app summarises a tool result by the action it belongs to (`已读取 <file>`), not by its
+        // outcome, and a failed call gets no separate surface: the error text only shows up if the assistant
+        // repeats it in its reply. Only conversation-level errors (capacity, submit failures) use the aside.
+        is ToolResultContent -> ActivityDisclosure(toolResultLabel(toolCalls[content.toolCallId]), HarnessIconName.Host, tag) {
+            content.content.forEachIndexed { i, child -> MessageContentView(child, "$tag:content:$i", toolCalls = toolCalls) }
+        }
+    }
+}
+
+private fun toolActivityLabel(call: ToolCallContent): String {
+    val name = call.name
+    val file = toolArgumentFile(call.arguments)
+    return when {
+        name.contains("read", ignoreCase = true) -> file?.let { "已读取 $it" } ?: "已读取文件"
+        name.contains("edit", ignoreCase = true) || name.contains("write", ignoreCase = true) ->
+            file?.let { "编辑了 $it" } ?: "编辑了文件"
+        name.contains("search", ignoreCase = true) -> "已搜索网页"
+        name.contains("bash", ignoreCase = true) || name.contains("shell", ignoreCase = true) ||
+            name.contains("exec", ignoreCase = true) -> "运行了命令"
+        else -> "加载了工具 · $name"
+    }
+}
+
+private fun toolResultLabel(call: ToolCallContent?): String = call?.let(::toolActivityLabel) ?: "工具输出"
+
+/** Basename of the `path`-style argument a tool call carries, if the arguments are a JSON object we can read. */
+private fun toolArgumentFile(arguments: String): String? {
+    val match = Regex("\"(?:path|file_path|filePath)\"\\s*:\\s*\"([^\"]+)\"").find(arguments) ?: return null
+    return match.groupValues[1].substringAfterLast('/').takeIf { it.isNotBlank() }
+}
+
+@Composable
+private fun ActivityDisclosure(label: String, icon: HarnessIconName, tag: String, content: @Composable () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val hovered by interactions.collectIsHoveredAsState()
+    // Live Codex `activity-header`: `self-start` content-width row, icon 16 / gap 6 / label / gap 4 / chevron
+    // `icon-2xs` (14). Label and chevron are `text-text/60`; hovering lifts the label to full ink and fades the
+    // chevron in (`opacity-0` by default), and expanding adds `rotate-90 opacity-100`.
+    val chevron by animateFloatAsState(if (expanded || hovered) 1f else 0f, label = "activity-chevron")
+    val angle by animateFloatAsState(if (expanded) 90f else 0f, label = "activity-chevron-angle")
+    Column(Modifier.fillMaxWidth().semantics { testTag = tag }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.align(Alignment.Start).height(21.dp).hoverable(interactions)
+            .clickable(interactionSource = interactions, indication = null, role = Role.Button,
+                onClickLabel = if (expanded) "收起" else "展开") { expanded = !expanded }
+            .semantics { testTag = "$tag:header"; stateDescription = if (expanded) "已展开" else "已折叠" },
+            verticalAlignment = Alignment.CenterVertically) {
+            HarnessIcon(icon, tint = ConversationAppearance.muted, size = 16.dp)
+            HarnessText(label, Modifier.padding(start = 6.dp), maxLines = 1,
+                color = if (hovered) ConversationAppearance.ink else ConversationAppearance.muted,
+                style = LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 21.sp))
+            Box(Modifier.padding(start = 4.dp).rotate(angle)) {
+                ConversationIcon(ConversationGlyph.ActivityChevron, ConversationAppearance.muted.copy(alpha = chevron), size = 14.dp)
+            }
+        }
+        if (expanded) content()
+    }
+}
+
+@Composable
+internal fun ConversationErrorCard(message: String, onRetry: (() -> Unit)? = null, tag: String = "conversation-error") {
+    // Live Codex aside: text-sm (13 / 21.125), 0.5px border-strong ring, 20/16/12/16 padding, 12 gap,
+    // 18px icon on `self-center`, and `0 0 2px rgb(0 0 0/5%), 0 4px 6px rgb(0 0 0/2%)`.
+    val shape = RoundedCornerShape(25.dp)
+    Row(Modifier.fillMaxWidth()
+        .shadow(6.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.02f))
+        .background(ConversationAppearance.canvas, shape)
+        .border(0.5.dp, ConversationAppearance.ringStrong, shape)
+        .semantics { testTag = tag; error(message) }.padding(start = 20.dp, top = 16.dp, end = 12.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        HarnessIcon(HarnessIconName.Warning, tint = ConversationAppearance.ink, size = 18.dp)
+        HarnessText(message, Modifier.weight(1f), color = ConversationAppearance.ink,
+            style = LocalHarnessContentTextStyle.current.copy(fontSize = 13.sp, lineHeight = 21.125.sp))
+        if (onRetry != null) HarnessText("重试", Modifier.clickable(onClick = onRetry).padding(4.dp), color = ConversationAppearance.ink,
+            style = LocalHarnessContentTextStyle.current.copy(fontSize = 13.sp, lineHeight = 21.125.sp))
     }
 }

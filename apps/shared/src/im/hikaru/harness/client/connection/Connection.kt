@@ -125,6 +125,7 @@ public data class Message(
     val role: MessageRole,
     val content: List<MessageContent>,
     val source: MessageSource,
+    val timestampMillis: Long? = null,
 )
 
 @OptIn(ExperimentalUuidApi::class)

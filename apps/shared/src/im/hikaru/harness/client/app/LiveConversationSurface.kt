@@ -1,6 +1,12 @@
 package im.hikaru.harness.client.app
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -50,6 +56,7 @@ public data class ConversationModelChoice(val providerId: String, val modelId: S
 public val LocalConversationEditorMaxHeight = staticCompositionLocalOf { 160.dp }
 /** Supply the main viewport height when Thread and its composer occupy separate layout slots. */
 public val LocalConversationViewportHeight = staticCompositionLocalOf<Dp?> { null }
+internal val LocalConversationBottomInset = staticCompositionLocalOf { 0.dp }
 
 /**
  * The 新聊天 page: the surface a new chat opens on, measured against the live Codex page.
@@ -189,50 +196,49 @@ private fun DrawScope.drawHeroUnderline(layout: TextLayoutResult?, range: IntRan
 /** Timeline only. The app owns the selected route, controller and separate shared composer. */
 @Composable
 public fun LiveThreadSurface(state: ConversationState, onRetry: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(HarnessTokens.Spacing.Four).semantics { testTag = "live-thread" },
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        when {
-            !state.connected || state.historyPhase == ConversationDataPhase.Disconnected ->
-                ConversationNotice("连接已断开。重新连接后可继续此会话。", "live-thread-disconnected")
-            state.historyPhase == ConversationDataPhase.Loading ->
-                ConversationNotice("正在读取会话…", "live-thread-loading")
-            state.historyPhase == ConversationDataPhase.Failed && ConversationErrorKind.History !in state.errors -> {
-                ConversationNotice("会话历史不可用。", "live-thread-unavailable")
-                HarnessButton("重试", onRetry, testTag = "live-thread-retry", size = HarnessControlSize.Compact)
+    Box(Modifier.fillMaxSize().background(ConversationAppearance.canvas)) {
+        Column(Modifier.fillMaxSize().semantics { testTag = "live-thread" },
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                !state.connected || state.historyPhase == ConversationDataPhase.Disconnected ->
+                    ConversationNotice("连接已断开。重新连接后可继续此会话。", "live-thread-disconnected")
+                state.historyPhase == ConversationDataPhase.Loading ->
+                    ConversationNotice("正在读取会话…", "live-thread-loading")
+                state.historyPhase == ConversationDataPhase.Failed && ConversationErrorKind.History !in state.errors -> {
+                    ConversationNotice("会话历史不可用。", "live-thread-unavailable")
+                    HarnessButton("重试", onRetry, testTag = "live-thread-retry", size = HarnessControlSize.Compact)
+                }
             }
-        }
-        state.errors.values.forEach { issue ->
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                ConversationNotice(issue.message, "live-thread-error-${issue.kind.name}", isError = true)
-                if (issue.retry != null) {
-                    // Execution retries belong to Send/Stop, never a generic history refresh.
-                    when (issue.retry) {
-                        ConversationRetry.History, ConversationRetry.Refresh -> HarnessButton(
-                            "重试", onRetry, enabled = state.connected && state.historyPhase != ConversationDataPhase.Loading,
-                            testTag = "live-thread-retry-${issue.kind.name}", size = HarnessControlSize.Compact,
-                        )
-                        ConversationRetry.SubmitExplicitly -> ConversationNotice(
-                            "确认消息尚未发送后，可在输入框中重新发送。", "live-thread-submit-recovery",
-                        )
-                        ConversationRetry.Cancel -> ConversationNotice("可使用停止按钮重试。", "live-thread-stop-recovery")
+            state.errors.values.forEach { issue ->
+                ConversationErrorCard(issue.message,
+                    onRetry = if (issue.retry == ConversationRetry.History || issue.retry == ConversationRetry.Refresh) onRetry else null,
+                    tag = "live-thread-error-${issue.kind.name}")
+            }
+            if (state.history.isNotEmpty()) {
+                key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {
+                    ConversationViewport(state.history, Modifier.weight(1f).semantics { testTag = "live-thread-timeline" })
+                }
+            } else {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (state.connected && state.historyPhase !in listOf(ConversationDataPhase.Loading, ConversationDataPhase.Failed,
+                            ConversationDataPhase.Disconnected)) {
+                        HarnessText("此会话暂无消息。", Modifier.semantics { testTag = "live-thread-empty" },
+                            color = HarnessTokens.Colors.TextMuted)
                     }
                 }
             }
         }
-        if (state.history.isNotEmpty()) {
-            key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {
-                ConversationViewport(state.history, Modifier.weight(1f).semantics { testTag = "live-thread-timeline" })
-            }
-        } else {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (state.connected && state.historyPhase !in listOf(ConversationDataPhase.Loading, ConversationDataPhase.Failed,
-                        ConversationDataPhase.Disconnected)) {
-                    HarnessText("此会话暂无消息。", Modifier.semantics { testTag = "live-thread-empty" },
-                        color = HarnessTokens.Colors.TextMuted)
-                }
-            }
-        }
+        Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(40.dp).background(
+            androidx.compose.ui.graphics.Brush.verticalGradient(
+                0f to ConversationAppearance.canvas,
+                0.1f to ConversationAppearance.canvas.copy(alpha = 0.82f),
+                0.3f to ConversationAppearance.canvas.copy(alpha = 0.48f),
+                0.6f to ConversationAppearance.canvas.copy(alpha = 0.12f),
+                1f to Color.Transparent,
+            ),
+        ))
     }
+
 }
 
 @Composable
@@ -247,7 +253,7 @@ public fun LiveConversationComposer(
     modelUnavailableReason: String?,
     submitUnavailableReason: String?,
 ) {
-    val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(40.dp)
+    val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(44.dp)
     val suppliedViewport = LocalConversationViewportHeight.current
     val canSend = state.canSubmit && submitUnavailableReason == null
     val latestCanSend by rememberUpdatedState(canSend)
@@ -267,82 +273,75 @@ public fun LiveConversationComposer(
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val viewport = suppliedViewport ?: if (constraints.hasBoundedHeight) maxHeight else null
-        val editorCap = if (viewport == null) configuredCap else minOf(configuredCap, (viewport * 0.25f).coerceAtLeast(40.dp))
-        val compact = maxWidth < 640.dp
-        Surface(
-            Modifier.fillMaxWidth().semantics { testTag = "live-composer" },
-            color = HarnessTokens.Colors.SurfaceElevated,
-            contentColor = HarnessTokens.Colors.Text,
-            shape = RoundedCornerShape(HarnessTokens.Control.ComposerRadius),
-            // The reference rings the composer with a 1px 4% ink hairline, not a full border.
-            border = BorderStroke(1.dp, HarnessTokens.Colors.SurfaceRing),
-        ) {
-            Column(Modifier.padding(HarnessTokens.Control.ComposerGutter), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                BasicTextField(
-                    value = editor,
-                    onValueChange = { value ->
-                        val previousText = editor.text
-                        editor = value
-                        if (value.text != previousText) onDraftChange(value.text)
-                    },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp, max = editorCap)
-                        .onFocusChanged { if (!it.isFocused) enterHeld = false }
-                        .onPreviewKeyEvent { event ->
-                            when {
-                                event.key != Key.Enter && event.key != Key.NumPadEnter -> false
-                                event.type == KeyEventType.KeyUp -> {
-                                    val consumed = enterHeld
-                                    enterHeld = false
-                                    consumed
+        val editorCap = if (viewport == null) configuredCap else minOf(configuredCap, (viewport * 0.25f).coerceAtLeast(44.dp))
+        val ink = ConversationAppearance.ink
+        val ring = if (ConversationAppearance.dark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.04f)
+        val status = submitUnavailableReason ?: when {
+            !state.connected -> "连接 Host 后可发送消息。"
+            state.cancelling -> "正在停止…"
+            state.action != ConversationAction.Idle -> "正在运行…"
+            else -> null
+        }
+        Column(Modifier.fillMaxWidth()) {
+            // Real failures remain visible; capability explanations live on their controls.
+            if (state.selectedSessionId == null) state.errors.values.forEach {
+                ConversationErrorCard(it.message, tag = "live-composer-error-${it.kind.name}")
+            }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                    .background(ConversationAppearance.composer)
+                    .drawWithContent {
+                        drawContent()
+                        drawRoundRect(ring, cornerRadius = androidx.compose.ui.geometry.CornerRadius(22.dp.toPx()),
+                            style = Stroke(0.5.dp.toPx()))
+                    }
+                    .semantics { testTag = "live-composer"; status?.let { stateDescription = it } }
+                    .padding(top = 14.dp, bottom = 8.dp),
+            ) {
+                Box(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                    BasicTextField(
+                        value = editor,
+                        onValueChange = { value ->
+                            val previousText = editor.text
+                            editor = value
+                            if (value.text != previousText) onDraftChange(value.text)
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(min = 44.dp, max = editorCap)
+                            .onFocusChanged { if (!it.isFocused) enterHeld = false }
+                            .onPreviewKeyEvent { event ->
+                                when {
+                                    event.key != Key.Enter && event.key != Key.NumPadEnter -> false
+                                    event.type == KeyEventType.KeyUp -> {
+                                        val consumed = enterHeld
+                                        enterHeld = false
+                                        consumed
+                                    }
+                                    event.type != KeyEventType.KeyDown -> false
+                                    enterHeld -> true
+                                    event.isShiftPressed || event.isCtrlPressed || event.isAltPressed || event.isMetaPressed -> false
+                                    editor.composition != null -> false
+                                    else -> {
+                                        enterHeld = true
+                                        if (latestCanSend) latestSubmit()
+                                        true
+                                    }
                                 }
-                                event.type != KeyEventType.KeyDown -> false
-                                enterHeld -> true
-                                event.isShiftPressed || event.isCtrlPressed || event.isAltPressed || event.isMetaPressed -> false
-                                editor.composition != null -> false
-                                else -> {
-                                    enterHeld = true
-                                    if (latestCanSend) latestSubmit()
-                                    true
-                                }
+                            }.semantics { testTag = "live-composer-editor"; contentDescription = "消息" },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = ink, lineHeight = 20.sp),
+                        cursorBrush = SolidColor(ink), singleLine = false,
+                        decorationBox = { inner ->
+                            Box {
+                                if (editor.text.isEmpty()) HarnessText(
+                                    if (state.selectedSessionId == null) "随心输入" else "与 Codex 协作",
+                                    color = ink.copy(alpha = 0.5f),
+                                )
+                                inner()
                             }
-                        }
-                        .semantics { testTag = "live-composer-editor"; contentDescription = "消息" },
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = HarnessTokens.Colors.Text, lineHeight = 18.9.sp),
-                    cursorBrush = SolidColor(HarnessTokens.Colors.Text),
-                    singleLine = false,
-                    decorationBox = { inner ->
-                        Box {
-                            if (editor.text.isEmpty()) HarnessText("描述你想构建的内容…", color = HarnessTokens.Colors.TextMuted)
-                            inner()
-                        }
-                    },
-                )
-                ComposerFooter(state, models, selectedModel, onModelSelect, modelUnavailableReason, compact, canSend, onSubmit, onCancel)
-                ConversationNotice("附件与权限调整暂不可用。", "live-composer-unsupported")
-                val modelReason = modelUnavailableReason ?: when {
-                    state.selectedSessionId != null -> "会话开始后不能更改模型。"
-                    models.isEmpty() -> "模型列表不可用，使用 Host 默认模型。"
-                    else -> null
+                        },
+                    )
                 }
-                modelReason?.let { ConversationNotice(it, "live-composer-model-unavailable") }
-                when {
-                    submitUnavailableReason != null -> ConversationNotice(submitUnavailableReason, "live-composer-submit-unavailable")
-                    !state.connected -> ConversationNotice("连接 Host 后可发送消息。", "live-composer-disconnected")
-                    state.cancelling -> ConversationNotice("正在停止…", "live-composer-action")
-                    state.action != ConversationAction.Idle -> ConversationNotice(when (state.action) {
-                        ConversationAction.Creating -> "正在创建会话…"
-                        ConversationAction.Associating -> "正在确认项目关联…"
-                        ConversationAction.Sending -> "正在发送…"
-                        ConversationAction.WaitingForLocalIdle -> "正在运行…"
-                        ConversationAction.RunningUnknown -> "消息已接收，运行状态尚未确认。"
-                        ConversationAction.Idle -> ""
-                    }, "live-composer-action")
-                }
-                // Home has no timeline slot: preserve create/prompt/cancel errors beside its draft.
-                state.errors.values.filter { it.kind in listOf(ConversationErrorKind.Create, ConversationErrorKind.Association, ConversationErrorKind.Prompt,
-                    ConversationErrorKind.Cancel, ConversationErrorKind.Completion) }.forEach {
-                    ConversationNotice(it.message, "live-composer-error-${it.kind.name}", isError = true)
-                }
+                ComposerFooter(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
+                    submitUnavailableReason)
             }
         }
     }
@@ -351,74 +350,77 @@ public fun LiveConversationComposer(
 @Composable
 private fun ComposerFooter(
     state: ConversationState, models: List<ConversationModelChoice>, selectedModel: ConversationModelChoice?,
-    onModelSelect: (ConversationModelChoice) -> Unit, modelReason: String?, compact: Boolean,
-    canSend: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit,
+    onModelSelect: (ConversationModelChoice) -> Unit, modelReason: String?,
+    canSend: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit, submitReason: String?,
 ) {
     var modelMenuOpen by remember { mutableStateOf(false) }
     val choices = models.distinctBy { it.providerId to it.modelId }
     val effectiveReason = modelReason ?: if (state.selectedSessionId != null) "会话开始后不能更改模型。" else null
     val canChoose = effectiveReason == null && choices.isNotEmpty() && state.action == ConversationAction.Idle && !state.cancelling
-    val controls: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            UnsupportedComposerControl("+", "添加附件", "附件暂不可用", "live-composer-attachment")
-            UnsupportedComposerControl("权限", "权限", "权限调整暂不可用", "live-composer-permissions")
-            Box(Modifier.weight(1f)) {
-                HarnessMenu(
-                    expanded = modelMenuOpen && canChoose,
-                    entries = choices.map { choice ->
-                        HarnessMenuEntry.Item(key = choice.menuKey(), text = choice.label,
-                            selected = choice.providerId == selectedModel?.providerId && choice.modelId == selectedModel?.modelId)
-                    },
-                    onExpandedChange = { modelMenuOpen = it && canChoose },
-                    onSelect = { key ->
-                        if (canChoose) choices.firstOrNull { it.menuKey() == key }?.let(onModelSelect)
-                    },
-                    anchor = { toggle ->
-                        androidx.compose.material3.TextButton(onClick = toggle, enabled = canChoose,
-                            modifier = Modifier.fillMaxWidth().semantics {
-                                testTag = "live-composer-model"
-                                contentDescription = "选择模型"
+    val ink = ConversationAppearance.ink
+    Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 8.dp).semantics { testTag = "live-composer-footer-wide" },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        ConversationActionButton(ConversationGlyph.Plus, "添加文件等内容（附件暂不可用）", size = 28.dp,
+            tint = ink, modifier = Modifier.semantics { testTag = "live-composer-attachment" })
+        val interactions = remember { MutableInteractionSource() }
+        val hovered by interactions.collectIsHoveredAsState()
+        HarnessTooltip("更改权限（权限调整暂不可用）", hovered) {
+            Row(Modifier.height(28.dp).hoverable(interactions).padding(horizontal = 7.dp).semantics {
+                testTag = "live-composer-permissions"; role = Role.Button; disabled(); contentDescription = "更改权限"; stateDescription = "权限调整暂不可用"
+            }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                ConversationIcon(ConversationGlyph.Permissions, ConversationAppearance.tertiary)
+                HarnessText("自定义", color = ConversationAppearance.tertiary, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            HarnessMenu(
+                expanded = modelMenuOpen && canChoose,
+                entries = choices.map { choice -> HarnessMenuEntry.Item(key = choice.menuKey(), text = choice.label,
+                    selected = choice.providerId == selectedModel?.providerId && choice.modelId == selectedModel?.modelId) },
+                onExpandedChange = { modelMenuOpen = it && canChoose },
+                onSelect = { key -> if (canChoose) choices.firstOrNull { it.menuKey() == key }?.let(onModelSelect) },
+                anchor = { toggle ->
+                    val interactions = remember { MutableInteractionSource() }
+                    val hovered by interactions.collectIsHoveredAsState()
+                    HarnessTooltip(effectiveReason ?: "选择模型", hovered) {
+                        Row(Modifier.height(28.dp).hoverable(interactions)
+                            .then(if (canChoose) Modifier.clickable(onClick = toggle) else Modifier)
+                            .padding(horizontal = 7.dp).semantics {
+                                testTag = "live-composer-model"; contentDescription = "选择模型"
                                 stateDescription = effectiveReason ?: if (choices.isEmpty()) "模型列表不可用" else "选择本次新会话的模型"
-                            }) {
-                            HarnessText(selectedModel?.label ?: "Host 默认模型", maxLines = 1,
-                                color = if (canChoose) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextDisabled)
+                                if (!canChoose) disabled()
+                            }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            HarnessText(selectedModel?.label ?: "Host 默认模型", Modifier.weight(1f, fill = false), maxLines = 1,
+                                color = ink, style = MaterialTheme.typography.bodyMedium)
+                            ConversationIcon(ConversationGlyph.Chevron, ConversationAppearance.tertiary, 12.dp)
                         }
-                    },
-                )
-            }
-            if (!compact) ComposerSubmitControls(state, canSend, onSubmit, onCancel)
+                    }
+                },
+            )
         }
+        ConversationActionButton(ConversationGlyph.Microphone, "听写（暂不可用）", size = 28.dp, tint = ink,
+            modifier = Modifier.semantics { testTag = "live-composer-dictation" })
+        Spacer(Modifier.width(3.dp))
+        ComposerSubmitControls(state, canSend, onSubmit, onCancel, submitReason)
     }
-    if (compact) {
-        Column(Modifier.fillMaxWidth().semantics { testTag = "live-composer-footer-compact" }, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            controls()
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                ComposerSubmitControls(state, canSend, onSubmit, onCancel)
-            }
-        }
-    } else Row(Modifier.fillMaxWidth().semantics { testTag = "live-composer-footer-wide" }) { controls() }
 }
 
 private fun ConversationModelChoice.menuKey(): String =
     "conversation-model:${providerId.length}:$providerId:${modelId.length}:$modelId"
 
-/** Disabled semantics without a pretend click action or empty callback. */
 @Composable
-private fun UnsupportedComposerControl(label: String, description: String, reason: String, tag: String) {
-    Box(Modifier.heightIn(min = 36.dp).padding(horizontal = 6.dp).semantics {
-        testTag = tag; role = Role.Button; disabled(); contentDescription = description; stateDescription = reason
-    }, contentAlignment = Alignment.Center) { HarnessText(label, color = HarnessTokens.Colors.TextDisabled) }
-}
-
-@Composable
-private fun ComposerSubmitControls(state: ConversationState, canSend: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit) {
-    if (state.canCancel || state.cancelling) HarnessButton(
-        if (state.cancelling) "停止中" else "停止", { if (state.canCancel) onCancel() },
-        enabled = state.canCancel, testTag = "live-composer-stop", size = HarnessControlSize.Compact,
-        variant = HarnessButtonVariant.Secondary,
-    )
-    HarnessButton("发送", { if (canSend) onSubmit() }, enabled = canSend, testTag = "live-composer-send",
-        size = HarnessControlSize.Compact)
+private fun ComposerSubmitControls(state: ConversationState, canSend: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit,
+    submitReason: String?) {
+    val stopping = state.canCancel || state.cancelling
+    val voice = !stopping && state.draft.isBlank()
+    val label = when { stopping -> if (state.cancelling) "正在停止…" else "停止"; voice -> "开启语音聊天（暂不可用）"; else -> submitReason ?: "发送" }
+    val enabled = if (stopping) state.canCancel else !voice && canSend
+    val action: (() -> Unit)? = if (!enabled) null else if (stopping) onCancel else onSubmit
+    Box(Modifier.size(28.dp).background(ConversationAppearance.primary, CircleShape)) {
+        ConversationActionButton(when { stopping -> ConversationGlyph.Stop; voice -> ConversationGlyph.Voice; else -> ConversationGlyph.Up },
+            label, action, size = 28.dp, tint = Color.White,
+            modifier = Modifier.semantics { testTag = if (stopping) "live-composer-stop" else "live-composer-send" })
+    }
 }
 
 @Composable
