@@ -10,6 +10,10 @@ import im.hikaru.harness.llm.LlmConfigurableProvider
 import im.hikaru.harness.llm.LlmErrorCode
 import im.hikaru.harness.llm.LlmException
 import im.hikaru.harness.llm.LlmRuntime
+import im.hikaru.harness.llm.LlmSettingsApplication
+import im.hikaru.harness.llm.LlmSettingsApplicationState
+import im.hikaru.harness.llm.LlmSettingsFailure
+import kotlinx.coroutines.flow.MutableStateFlow
 import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.settings.SettingsScope
 import kotlinx.coroutines.CancellationException
@@ -38,7 +42,7 @@ class KoogLlmReloadCoordinator(
     private val directoryRegistration: DirectoryRegistrationHandle,
     baseDirectory: List<LlmConfigurableProvider>,
     parentScope: CoroutineScope,
-) : Disposable {
+) : Disposable, LlmSettingsApplication {
     private val installedRoutes = installedRoutes.map(KoogProviderRoute::detachedCopy)
     private val baseDirectory = baseDirectory.map(LlmConfigurableProvider::detachedCopy)
     private val scope =
@@ -53,7 +57,9 @@ class KoogLlmReloadCoordinator(
     private var disposed = false
     private var settingsWatch: Disposable? = null
     private var credentialsWatch: Disposable? = null
-    private var lastReloadFailure: Throwable? = null
+    private val application = MutableStateFlow(LlmSettingsApplicationState())
+    override val applicationState: LlmSettingsApplicationState get() = application.value
+    override suspend fun retry(): Boolean = reload()
 
     init {
         require(this.installedRoutes.isNotEmpty()) {
@@ -76,9 +82,6 @@ class KoogLlmReloadCoordinator(
         }
     }
 
-    val reloadFailure: Throwable?
-        get() = lastReloadFailure
-
     suspend fun start(): KoogReloadableLlmAdapter =
         reloadMutex.withLock {
             mutex.withLock {
@@ -86,7 +89,8 @@ class KoogLlmReloadCoordinator(
                 check(!started) { "Koog LLM reload coordinator is already started" }
             }
 
-            applySnapshot(KoogLlmSettings.fromJson(settings.get()))
+            // Invalid saved credentials must not remove the watcher needed to repair them.
+            applyCurrentSettings()
             mutex.withLock { started = true }
             settingsWatch = settings.watch { reload() }
             credentialsWatch =
@@ -120,17 +124,27 @@ class KoogLlmReloadCoordinator(
     suspend fun reload(): Boolean =
         reloadMutex.withLock {
             if (mutex.withLock { disposed || !started }) return@withLock false
-            try {
-                applySnapshot(KoogLlmSettings.fromJson(settings.get()))
-                lastReloadFailure = null
-                true
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                lastReloadFailure = error
-                false
-            }
+            applyCurrentSettings()
         }
+
+    private suspend fun applyCurrentSettings(): Boolean {
+        application.value = LlmSettingsApplicationState(applying = true)
+        return try {
+            applySnapshot(KoogLlmSettings.fromJson(settings.get()))
+            application.value = LlmSettingsApplicationState()
+            true
+        } catch (cancelled: CancellationException) {
+            application.value = LlmSettingsApplicationState(failure = LlmSettingsFailure.Load)
+            throw cancelled
+        } catch (error: Throwable) {
+            application.value = LlmSettingsApplicationState(failure = when {
+                error is LlmException && error.code == LlmErrorCode.INVALID_CREDENTIAL -> LlmSettingsFailure.Credential
+                error is IllegalArgumentException || error is LlmException && error.code == KoogLlmErrorCode.UNSUPPORTED_OPTION -> LlmSettingsFailure.Configuration
+                else -> LlmSettingsFailure.Load
+            })
+            false
+        }
+    }
 
     private suspend fun applySnapshot(nextSettings: KoogLlmSettings) {
         val resolvedRoutes = nextSettings.resolveRoutes(installedRoutes)

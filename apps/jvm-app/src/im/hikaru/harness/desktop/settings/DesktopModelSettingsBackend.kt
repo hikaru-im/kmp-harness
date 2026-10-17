@@ -28,6 +28,8 @@ public class DesktopModelSettingsBackend(context: Context) : ModelSettingsBacken
                             model.maxTokens, model.reasoningEfforts)
                     },
                     catalogError = provider.catalogError,
+                    applicationError = provider.applicationError,
+                    applying = provider.applying,
                 )
             },
             protocols = snapshot.protocols.map { ModelProtocol(it.id, it.label) },
@@ -51,6 +53,11 @@ public class DesktopModelSettingsBackend(context: Context) : ModelSettingsBacken
 
     override suspend fun setCredential(name: String, value: String) {
         service.setCredential(name, value)
+    }
+
+    override suspend fun retryApplication() = service.retryApplication()
+    override suspend fun discoverModels(providerId: String, expectedRevision: Long) {
+        mapConflict { service.discoverModels(providerId, expectedRevision) }
     }
 
     private suspend fun mapConflict(action: suspend () -> Unit) {

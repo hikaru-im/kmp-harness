@@ -744,6 +744,7 @@ public fun HarnessApp(
         page is PageId.Thread -> "当前会话暂不支持更换模型。"
         transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
         modelSettings.loading -> "正在读取本机模型目录。"
+        modelChoices.isEmpty() && modelSettings.snapshot.providers.any { it.applicationError != null } -> "Provider 配置未生效，请到设置中修复。"
         modelChoices.isEmpty() -> "请先在设置中配置本机模型与 Provider。"
         else -> null
     }
@@ -1371,6 +1372,8 @@ public fun HarnessApp(
                         onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
                         modelSettings = modelSettings,
                         onModelsRefresh = { modelScope.launch { models.load() } },
+                        onModelsRetryApplication = { modelScope.launch { models.retryApplication() } },
+                        onModelsDiscover = { id, revision -> modelScope.launch { models.discoverModels(id, revision) } },
                         onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
                         onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
                         onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
@@ -1861,6 +1864,8 @@ private fun SettingsScreen(
     onAppearanceRetry: () -> Unit,
     modelSettings: ModelSettingsState,
     onModelsRefresh: () -> Unit,
+    onModelsRetryApplication: () -> Unit,
+    onModelsDiscover: (String, Long) -> Unit,
     onProviderSave: (ProviderConfiguration, Long) -> Unit,
     onProviderRemove: (String, Long) -> Unit,
     onCredentialSet: (String, String) -> Unit,
@@ -1890,7 +1895,7 @@ private fun SettingsScreen(
       when (section) {
         SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins)
         SettingsSection.Appearance -> SettingsAppearancePage(appearanceState, onAppearanceChange, onAppearanceRetry)
-        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet)
+        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover)
         SettingsSection.Connections -> SettingsConnectionsPage(connectionsState, onConnectionsRefresh, onConnectionSelect)
         SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository)
         SettingsSection.Plugins -> InstalledPluginsPage(pluginsState, onPluginAction)

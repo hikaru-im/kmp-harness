@@ -26,6 +26,8 @@ public fun SettingsModelsPage(
     onSave: (ProviderConfiguration, Long) -> Unit,
     onRemove: (String, Long) -> Unit,
     onSetCredential: (String, String) -> Unit,
+    onRetryApplication: () -> Unit = {},
+    onDiscoverModels: ((String, Long) -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var editor by remember { mutableStateOf<ProviderEditorSession?>(null) }
@@ -34,6 +36,11 @@ public fun SettingsModelsPage(
     var credentialProvider by remember { mutableStateOf<ConfigurableProvider?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     val snapshot = state.snapshot
+    LaunchedEffect(state.completedOperation, state.saving) {
+        if (!state.saving && state.completedOperation?.startsWith("models:") == true && !state.refreshRequired) {
+            feedback = "服务端模型列表已获取并保存；生效结果见下方状态。"
+        }
+    }
     val visible = snapshot.providers.filter { provider ->
         query.isBlank() || listOf(provider.id, provider.displayName).any { it.contains(query, true) } ||
             provider.models.any { it.id.contains(query, true) || it.name.contains(query, true) }
@@ -70,19 +77,35 @@ public fun SettingsModelsPage(
                 SettingsFormSection(provider.displayName) {
                     SettingsFormCard {
                         SettingsFormRow(provider.id, if (provider.configuration == null) "尚未配置" else "已保存配置") {
-                            HarnessText(if (provider.active) "路由已注册" else "路由未注册", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                            HarnessText(when {
+                                provider.applying -> "正在应用"
+                                provider.applicationError != null && provider.active -> "新配置未生效，沿用上次配置"
+                                provider.applicationError != null -> "配置未生效"
+                                provider.active -> "已生效"
+                                else -> "路由未注册"
+                            }, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                         }
                         SettingsFormRow("凭据", provider.configuration?.credentialName ?: "尚未设置引用") {
                             HarnessText(if (provider.credentialConfigured) "凭据可用" else "凭据未配置", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                         }
                         provider.configuration?.baseUrl?.let { HarnessText(it, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
                         provider.catalogError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall) }
+                        provider.applicationError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall) }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
                             HarnessButton("编辑", { edit(provider) }, enabled = state.canEdit, variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact, testTag = "models-edit-" + provider.id)
                             HarnessButton("查看模型 (" + provider.models.size + ")", { viewing = provider.id }, enabled = !state.loading && !state.saving,
                                 variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact, testTag = "models-view-" + provider.id)
+                            if (onDiscoverModels != null) HarnessButton(
+                                if (state.discoveringProviderId == provider.id) "获取中…" else "获取模型",
+                                { onDiscoverModels(provider.id, snapshot.revision) },
+                                enabled = state.canEdit && provider.configuration != null && provider.credentialConfigured,
+                                variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
+                                testTag = "models-discover-" + provider.id)
                             HarnessButton("配置凭据", { credentialProvider = provider }, enabled = state.canEdit && provider.credentialWritable,
                                 variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact, testTag = "models-credential-" + provider.id)
+                            if (provider.applicationError != null) HarnessButton("重试应用", onRetryApplication,
+                                enabled = state.canEdit && !provider.applying, variant = HarnessButtonVariant.Secondary,
+                                size = HarnessControlSize.Compact, testTag = "models-retry-" + provider.id)
                             if (provider.canRemove) HarnessButton("删除配置", { removing = ProviderRemovalSession(provider, snapshot.revision) }, enabled = state.canEdit,
                                 variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact, testTag = "models-remove-" + provider.id)
                         }
@@ -95,7 +118,7 @@ public fun SettingsModelsPage(
     editor?.let { session -> key(session) {
         ProviderEditor(session, state, onRefresh, onSave,
             onReload = { editor = ProviderEditorSession(snapshot.providers.firstOrNull { it.id == session.configuration.id }?.configuration ?: session.configuration, snapshot.revision, session.creating) },
-            onDismiss = { editor = null }, onSaved = { editor = null; feedback = "Provider 配置已保存" })
+            onDismiss = { editor = null }, onSaved = { editor = null; feedback = "Provider 配置已保存；生效结果见下方状态。" })
     } }
     removing?.let { session ->
         ProviderRemovalDialog(session, state, onRefresh, onRemove, { removing = null }, { removing = null; feedback = "Provider 配置已删除" })
@@ -108,6 +131,7 @@ public fun SettingsModelsPage(
         HarnessDialog(true, { viewing = null }, (provider?.displayName ?: id) + " · 模型") {
             Column(Modifier.widthIn(min = 240.dp, max = 520.dp).heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (provider?.catalogError != null) HarnessText(provider.catalogError, color = HarnessTokens.Colors.Danger)
+                provider?.applicationError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger) }
                 if (provider?.models.isNullOrEmpty()) HarnessText(if (provider?.active == true) "当前没有模型目录。" else "此 Provider 尚未注册路由，暂时无法读取模型目录。", color = HarnessTokens.Colors.TextMuted)
                 provider?.models?.forEach { model ->
                     SettingsFormCard {
@@ -168,13 +192,14 @@ private fun ProviderEditor(
                     enabled, "provider-editor-api") { draft = draft.copy(api = it) }
             }
             DraftField("服务地址（留空使用默认值）", draft.baseUrl, { draft = draft.copy(baseUrl = it) }, enabled, "provider-editor-base-url")
-            DraftField("凭据引用名称（可留空）", draft.credential, { draft = draft.copy(credential = it) }, enabled, "provider-editor-credential")
+            DraftField("凭据引用名称（必填）", draft.credential, { draft = draft.copy(credential = it) }, enabled, "provider-editor-credential")
             DraftField("请求超时 / 毫秒", draft.request, { draft = draft.copy(request = it) }, enabled, "provider-editor-request-timeout")
             DraftField("连接超时 / 毫秒", draft.connect, { draft = draft.copy(connect = it) }, enabled, "provider-editor-connect-timeout")
             DraftField("Socket 超时 / 毫秒", draft.socket, { draft = draft.copy(socket = it) }, enabled, "provider-editor-socket-timeout")
             DraftField("默认上下文容量", draft.context, { draft = draft.copy(context = it) }, enabled, "provider-editor-context")
             DraftField("默认最大输出", draft.maxTokens, { draft = draft.copy(maxTokens = it) }, enabled, "provider-editor-max-tokens")
             DraftField("自定义模型 ID（每行一个，留空沿用默认目录）", draft.models, { draft = draft.copy(models = it) }, enabled, "provider-editor-models", multiline = true)
+            if (draft.baseUrl.isNotBlank() && draft.models.isBlank()) HarnessText("留空会沿用内置目录。保存配置并配置凭据后，可点击「获取模型」读取服务端列表。", color = HarnessTokens.Colors.TextMuted)
         }
         (error ?: state.saveError ?: state.loadError)?.let { HarnessText(it, Modifier.semantics { testTag = "provider-editor-error" }, color = HarnessTokens.Colors.Danger) }
         if (session.revision != state.snapshot.revision || state.refreshRequired) {
@@ -227,7 +252,7 @@ private fun CredentialEditor(
     provider: ConfigurableProvider, state: ModelSettingsState, onRefresh: () -> Unit, onSetCredential: (String, String) -> Unit,
     onDismiss: () -> Unit, onSaved: () -> Unit,
 ) {
-    var name by remember { mutableStateOf(provider.configuration?.credentialName ?: "OPENAI_API_KEY") }
+    val name = provider.configuration?.credentialName.orEmpty()
     var value by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var submittedName by remember { mutableStateOf<String?>(null) }
@@ -240,7 +265,7 @@ private fun CredentialEditor(
     }
     HarnessDialog(true, { if (!state.saving) { value = ""; onDismiss() } }, "配置凭据") {
         HarnessText(provider.displayName + " · 保存后通过凭据引用使用。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-        DraftField("凭据名称", name, { name = it }, state.canEdit && provider.credentialWritable, "credential-editor-name")
+        HarnessText("凭据引用：$name（如需更换，请编辑 Provider）")
         DraftField("API key", value, { value = it }, state.canEdit && provider.credentialWritable, "credential-editor-value", password = true)
         (error ?: state.saveError)?.let { HarnessText(it, Modifier.semantics { testTag = "credential-editor-error" }, color = HarnessTokens.Colors.Danger) }
         if (state.refreshRequired) HarnessButton("刷新", onRefresh, enabled = !state.loading && !state.saving, variant = HarnessButtonVariant.Secondary)

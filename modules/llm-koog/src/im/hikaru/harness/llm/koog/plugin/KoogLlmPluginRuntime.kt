@@ -113,6 +113,7 @@ internal class KoogLlmPluginRuntime(
         try {
             coordinator.start()
             scope.add(coordinator)
+            scope.add(context.llm.registerSettingsApplication(dynamic.namespace.value, coordinator))
         } catch (error: Throwable) {
             coordinator.dispose()
             throw error
