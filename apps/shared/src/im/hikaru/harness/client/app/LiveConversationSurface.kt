@@ -2,6 +2,8 @@ package im.hikaru.harness.client.app
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -54,25 +56,24 @@ public val LocalConversationViewportHeight = staticCompositionLocalOf<Dp?> { nul
 /**
  * The 新聊天 page: the surface a new chat opens on, measured against the live Codex page.
  *
- * The page is its hero above its composer. The hero is the reference's `home-icon` block — the Codex
- * mark at 56dp and 30% ink — over the `heading-xl` question, with the project name carried *inside* the
- * heading as a dotted-underlined segment rather than as a line of its own; the composer then sits at the
- * bottom of the page, which is where the reference docks it (its own region ends 16px above the page's
- * bottom edge). Centring the hero in the space the composer leaves puts it at the height the reference
- * draws it at: the live hero's ink centre is 610 of a page running 90..1316, i.e. 42% down.
- *
- * The reference names the selected *project* in that heading and opens a project picker when it is
- * clicked. This client has no project picker and no project selection to name, so the heading names the
- * Host the page is bound to — the same label the workspace navigator's header shows — and draws the
- * name as plain dotted-underlined text rather than a control that would do nothing.
+ * The hero and composer form one scrollable group near the top of the viewport. The initial
+ * spacing is bounded so a tall window does not separate the prompt from its input controls.
+ * The heading names the bound Host; project selection belongs to the controls above the composer.
  */
 @Composable
 public fun LiveHomeSurface(hostLabel: String?, content: @Composable () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize().semantics { testTag = "live-home" }) {
         val viewportHeight = if (constraints.hasBoundedHeight) maxHeight else null
         CompositionLocalProvider(LocalConversationViewportHeight provides viewportHeight) {
-            Column(Modifier.fillMaxSize().padding(HarnessTokens.Spacing.Four)) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // Keep the first-task prompt and its controls together. Short viewports scroll
+            // instead of squeezing the editor; tall windows do not push it to the bottom.
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(HarnessTokens.Spacing.Four),
+                verticalArrangement = Arrangement.spacedBy(32.dp),
+            ) {
+                Spacer(Modifier.height(((viewportHeight ?: 600.dp) * 0.12f).coerceIn(24.dp, 96.dp)))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     HomeHero(hostLabel)
                 }
                 Box(Modifier.fillMaxWidth().semantics { testTag = "live-home-content" }) { content() }

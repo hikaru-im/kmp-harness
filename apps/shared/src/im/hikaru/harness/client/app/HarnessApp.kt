@@ -951,9 +951,8 @@ public fun HarnessApp(
         // The conversation's own title, drawn in the title-bar segment the tab strip does not own — the
         // whole bar while the panel is closed, the conversation's half of it while the panel is open. The
         // side panel's segment draws the strip instead, so it never needs one.
-        titleStrip?.content = {
-            conversationTitle(page, threadSurfaceState)?.let { HarnessPaneTitle(it) }
-        }
+        val paneHeading = conversationTitle(page, threadSurfaceState)?.takeIf { it.isNotBlank() }
+        titleStrip?.content = paneHeading?.let { heading -> { HarnessPaneTitle(heading) } }
         // The side panel hangs off the conversation, so the reference mounts it on a chat page only: it
         // is on 首页 and every 会话, and on none of the other pages. The window owns the panel, so the
         // page tells it which kind of page it is, exactly as it tells the bar whether it has a navigator.
@@ -1525,7 +1524,7 @@ private fun isChatPage(page: PageId): Boolean = page == PageId.Home || page is P
  */
 private fun conversationTitle(page: PageId, thread: ThreadSurfaceState?): String? =
     when (page) {
-        PageId.Home -> ""
+        PageId.Home -> null
         is PageId.Thread -> thread?.title ?: pageTitle(page)
         else -> null
     }

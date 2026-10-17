@@ -228,6 +228,56 @@ public fun HarnessTabStrip(
     }
 }
 
+/** Navigation hosted separately in the Windows title bar; only buttons are client hit regions. */
+@Composable
+internal fun HarnessWindowNavigation(
+    state: HarnessTabStripState,
+    drag: HarnessTabDragState,
+    backShortcut: String?,
+    onToggleNavigator: (() -> Unit)?,
+    navigatorShortcut: String?,
+    onNewChat: (() -> Unit)?,
+    clientRegion: Modifier.(String) -> Modifier,
+) {
+    val buttons = 2 + (if (onToggleNavigator != null) 1 else 0) + (if (onNewChat != null) 1 else 0)
+    val inset = HarnessTokens.Spacing.Two
+    val width = inset + (HarnessTokens.Control.TabStripControl + HarnessTokens.Control.TitlebarGap) * buttons
+    CompositionLocalProvider(LocalTabClientRegion provides clientRegion) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LeadingChrome(width, inset, state, drag, backShortcut, onToggleNavigator, navigatorShortcut, onNewChat, null)
+            if (state.tabsHidden && state.tabs.isNotEmpty()) TrailingCluster(state)
+        }
+    }
+}
+
+/** Empty-workspace action rendered at the client area's trailing edge. */
+@Composable
+internal fun HarnessEmptyWorkspaceAction(state: HarnessTabStripState) {
+    if (state.onChatPage && state.tabsHidden && state.tabs.isEmpty()) {
+        Box(Modifier.height(HarnessTokens.Control.Titlebar)) { TrailingCluster(state) }
+    }
+}
+
+/** Client-area header owned by a pane, without native insets or sidebar placeholders. */
+@Composable
+internal fun HarnessPaneHeader(
+    state: HarnessTabStripState,
+    drag: HarnessTabDragState,
+    panel: Boolean,
+    title: (@Composable () -> Unit)?,
+) {
+    if (!panel && title == null) return
+    Row(
+        Modifier.fillMaxWidth().height(HarnessTokens.Control.Titlebar)
+            .background(HarnessTokens.Colors.AppBackground).testTag("harness-pane-header"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PaneSegment(state, drag, Modifier.weight(1f), title, null,
+            tag = if (panel) "harness-tool-header" else "harness-conversation-header", panel = panel)
+        if (panel) TrailingCluster(state)
+    }
+}
+
 /**
  * The fixed chrome at the head of the strip: the history cluster, the navigator toggle and 新聊天,
  * laid out with 6px gaps and the measured 88px lead inset — [inset] once the strip's own window origin

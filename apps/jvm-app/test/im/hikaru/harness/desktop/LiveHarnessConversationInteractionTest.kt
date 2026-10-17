@@ -73,9 +73,17 @@ class LiveHarnessConversationInteractionTest {
             api.idleGate = idle
             val connection = LiveTestConnection(api)
             val models = liveTestModels()
+            val titleStrip = im.hikaru.harness.client.app.HarnessTitleStripState()
             try {
-                setContent { HarnessApp(connection, modelSettingsRepository = models, themeMode = HarnessThemeMode.Light) }
+                setContent {
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        im.hikaru.harness.client.app.LocalHarnessTitleStrip provides titleStrip,
+                    ) {
+                        HarnessApp(connection, modelSettingsRepository = models, themeMode = HarnessThemeMode.Light)
+                    }
+                }
                 onNodeWithTag("live-home").assertExists()
+                runOnIdle { assertTrue(titleStrip.content == null, "Home must not publish an empty title bar") }
                 onNodeWithTag("live-home-hero")
                     .assertTextEquals("你想让我们在 ${connection.description.displayName} 中构建什么？")
                 onNodeWithTag("live-composer-editor").performTextReplacement("First production route message")

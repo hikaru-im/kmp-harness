@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -42,6 +44,7 @@ import im.hikaru.harness.client.shell.HarnessTabLayout
 import im.hikaru.harness.client.shell.HarnessTabStripState
 import im.hikaru.harness.client.shell.HarnessWorkspaceTab
 import im.hikaru.harness.client.shell.LocalHarnessPaneTab
+import im.hikaru.harness.client.app.HarnessTitleStripState
 import im.hikaru.harness.ui.foundation.HarnessTokens
 
 /**
@@ -242,10 +245,28 @@ private fun RowScope.DropHalf(tag: String, targeted: Boolean) {
 private class TabMainRegion(
     private val state: HarnessTabStripState,
     private val drag: HarnessTabDragState,
+    private val paneHeaders: Boolean,
+    private val titleStrip: HarnessTitleStripState?,
 ) : HarnessMainRegion {
     @Composable
     override fun Panes(modifier: Modifier, surface: @Composable (Modifier) -> Unit) {
-        HarnessSplitMainRegion(state, drag, modifier, surface)
+        HarnessSplitMainRegion(state, drag, modifier) { paneModifier ->
+            if (!paneHeaders) {
+                surface(paneModifier)
+            } else {
+                val panel = state.onChatPage && !state.tabsHidden &&
+                    (LocalHarnessPaneTab.current != null || state.layout == HarnessTabLayout.Full)
+                Box(paneModifier) {
+                    Column(Modifier.fillMaxSize()) {
+                        HarnessPaneHeader(state, drag, panel, titleStrip?.content)
+                        surface(Modifier.weight(1f).fillMaxWidth())
+                    }
+                    Box(Modifier.align(Alignment.TopEnd)) {
+                        HarnessEmptyWorkspaceAction(state)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -253,4 +274,8 @@ private class TabMainRegion(
 public fun rememberHarnessTabMainRegion(
     state: HarnessTabStripState,
     drag: HarnessTabDragState,
-): HarnessMainRegion = remember(state, drag) { TabMainRegion(state, drag) }
+    paneHeaders: Boolean = false,
+    titleStrip: HarnessTitleStripState? = null,
+): HarnessMainRegion = remember(state, drag, paneHeaders, titleStrip) {
+    TabMainRegion(state, drag, paneHeaders, titleStrip)
+}
