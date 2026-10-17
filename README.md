@@ -144,6 +144,8 @@ RuoYi Backend Relay          = 本项目增加的认证远程接入与转发层
 
 ## 构建
 
+Windows 环境配置和统一启动命令见 [Windows 开发环境](docs/windows-development.md)。
+
 ```bash
 ./kotlin build
 ./kotlin test -m runtime

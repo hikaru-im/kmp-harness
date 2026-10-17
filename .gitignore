@@ -1,4 +1,7 @@
 .DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
 .fleet/scratches
 .obsidian
@@ -15,8 +18,23 @@ shared test caches/
 local.properties
 keystore.properties
 
+# local development data, downloaded tools, and credentials
+/.local/
+.env.local
+.env.*.local
+
+# JVM crash reports and heap dumps
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+
+# local runtime logs
+/logs/
+
 # machine-local tool settings
 .claude/settings.local.json
+/.idea/misc.xml
+/out/
 
 /references/
 # >>> Comet managed project state >>>

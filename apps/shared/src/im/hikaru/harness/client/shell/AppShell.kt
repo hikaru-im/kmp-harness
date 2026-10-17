@@ -42,6 +42,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import im.hikaru.harness.client.app.ConversationAppearance
 import im.hikaru.harness.client.app.LocalConversationBottomInset
+import im.hikaru.harness.client.app.LocalConversationViewportHeight
 import im.hikaru.harness.client.panels.ThreadPanelLayout
 import im.hikaru.harness.client.panels.ThreadPanelWidthMode
 import im.hikaru.harness.client.scheduled.label
@@ -396,7 +397,6 @@ public fun AppShell(
                                                     HarnessTokens.Control.SettingsContentMaxWidth
                                                 else -> HarnessTokens.Control.ContentMaxWidth
                                             },
-                                        composerState = state.composer,
                                         content = content,
                                         composer = composer,
                                     )
@@ -1871,83 +1871,68 @@ private fun MainSurface(
     /** Whether this pane's page docks a composer; a page with none drops the dock, gutter and all. */
     docksComposer: Boolean = true,
     conversation: Boolean = false,
-    composerState: ComposerState,
     content: @Composable () -> Unit,
     composer: (@Composable () -> Unit)?,
 ) {
-    if (conversation) {
-        var composerHeight by remember { mutableStateOf(98.dp) }
-        val density = LocalDensity.current
-        val inset = if (docksComposer && composer != null) composerHeight + 16.dp else 0.dp
-        Box(modifier.fillMaxSize().background(ConversationAppearance.canvas)) {
-            CompositionLocalProvider(LocalConversationBottomInset provides inset) { content() }
-            if (docksComposer && composer != null) {
-                Box(
-                    Modifier.align(Alignment.BottomCenter).widthIn(max = 768.dp).fillMaxWidth()
-                        .padding(horizontal = 16.dp).padding(bottom = 16.dp),
-                ) {
-                    Box(Modifier.matchParentSize().background(ConversationAppearance.canvas))
-                    Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(32.dp).offset(y = (-32).dp)
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, ConversationAppearance.canvas))))
-                    Box(Modifier.fillMaxWidth().onGloballyPositioned {
-                        composerHeight = with(density) { it.size.height.toDp() }
-                    }.semantics { testTag = "composer-column" }) { composer() }
+    BoxWithConstraints(modifier.fillMaxHeight()) {
+        CompositionLocalProvider(LocalConversationViewportHeight provides maxHeight) {
+            if (conversation) {
+                // The conversation docks its composer over the timeline instead of stacking below it: the
+                // timeline keeps the full height and the composer floats on the measured canvas.
+                var composerHeight by remember { mutableStateOf(98.dp) }
+                val density = LocalDensity.current
+                val inset = if (docksComposer && composer != null) composerHeight + 16.dp else 0.dp
+                Box(Modifier.fillMaxSize().background(ConversationAppearance.canvas)) {
+                    CompositionLocalProvider(LocalConversationBottomInset provides inset) { content() }
+                    if (docksComposer && composer != null) {
+                        Box(
+                            Modifier.align(Alignment.BottomCenter).widthIn(max = 768.dp).fillMaxWidth()
+                                .padding(horizontal = 16.dp).padding(bottom = 16.dp),
+                        ) {
+                            Box(Modifier.matchParentSize().background(ConversationAppearance.canvas))
+                            Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(32.dp).offset(y = (-32).dp)
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, ConversationAppearance.canvas))))
+                            Box(Modifier.fillMaxWidth().onGloballyPositioned {
+                                composerHeight = with(density) { it.size.height.toDp() }
+                            }.semantics { testTag = "composer-column" }) { composer() }
+                        }
+                    }
                 }
+                return@CompositionLocalProvider
+            }
+            Column(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas)) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                    Box(
+                        Modifier.then(
+                            if (contentMaxWidth == null) Modifier.fillMaxSize()
+                            else Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().fillMaxHeight(),
+                        ).semantics { testTag = "main-content-column" },
+                    ) { content() }
+                }
+                if (docksComposer) composer?.let { ComposerDock(it) }
             }
         }
-        return
-    }
-    Column(
-        modifier = modifier.fillMaxHeight().background(HarnessTokens.Colors.Canvas),
-    ) {
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Box(
-                modifier =
-                    Modifier
-                        .then(
-                            if (contentMaxWidth == null) {
-                                Modifier.fillMaxSize()
-                            } else {
-                                Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().fillMaxHeight()
-                            },
-                        )
-                        .semantics { testTag = "main-content-column" },
-            ) {
-                content()
-            }
-        }
-        if (docksComposer) composer?.let { ComposerDock(composerState, it) }
     }
 }
-
 @Composable
 private fun ComposerDock(
-    state: ComposerState,
     content: @Composable () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(
-            horizontal = HarnessTokens.Control.ComposerGutter,
-            vertical = HarnessTokens.Control.ComposerGutter,
+            horizontal = HarnessTokens.Composer.DockInset,
+            vertical = HarnessTokens.Composer.DockInset,
         ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier =
                 Modifier
-                    .widthIn(max = HarnessTokens.Control.ContentMaxWidth)
+                    .widthIn(max = HarnessTokens.Composer.MaxWidth)
                     .fillMaxWidth()
                     .semantics { testTag = "composer-column" },
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-                content()
-                if (state.error != null) {
-                    HarnessText(state.error, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall)
-                }
-            }
+            content()
         }
     }
 }

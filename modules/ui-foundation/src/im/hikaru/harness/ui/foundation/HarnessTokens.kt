@@ -244,6 +244,38 @@ public val LocalHarnessColors = staticCompositionLocalOf { HarnessLightColors }
 
 /** Shared visual values. Components should consume these values instead of Material defaults. */
 public object HarnessTokens {
+    /** Shared geometry for welcome and docked conversation composers. */
+    public object Composer {
+        public val Radius: Dp = 22.dp
+        public val PaddingX: Dp = 16.dp
+        public val PaddingTop: Dp = 16.dp
+        public val PaddingBottom: Dp = 12.dp
+        public val SectionGap: Dp = 12.dp
+        public val ControlGap: Dp = 6.dp
+        public val DockInset: Dp = 16.dp
+        public val PageInset: Dp = 24.dp
+        public val WelcomeGap: Dp = 24.dp
+        public val MaxWidth: Dp = 760.dp
+        public val WelcomeEditorMinHeight: Dp = 72.dp
+        public val ThreadEditorMinHeight: Dp = 40.dp
+        public val EditorMaxHeight: Dp = 160.dp
+        public const val ViewportFraction: Float = 0.25f
+        public val ActionSize: Dp = 32.dp
+        public val PopupWidth: Dp = 280.dp
+        public val PermissionPopupWidth: Dp = 320.dp
+        public val PopupMaxHeight: Dp = 360.dp
+        public val PopupInset: Dp = 12.dp
+        public val BorderWidth: Dp = 1.dp
+        public const val FocusAlpha: Float = 0.45f
+        /** Permission selection emphasis, not an execution-status indicator. */
+        public val FullAccessColor: Color = Color(0xFFE76F24)
+    }
+    public object Slider {
+        public val TrackHeight: Dp = 24.dp
+        public val ThumbSize: Dp = 26.dp
+        public val ThumbElevation: Dp = 2.dp
+        public val TickRadius: Dp = 2.dp
+    }
     /** Active palette. Reads the theme provided by [HarnessTheme]; never hardcodes dark. */
     public val Colors: HarnessColors
         @Composable
@@ -573,8 +605,6 @@ public object HarnessTokens {
          * (card x 1079..1806, row ink and separator x 1096..1789 in the 2560px capture).
          */
         public val SettingsRowInsetX: Dp = 17.dp
-        public val ComposerRadius: Dp = 22.dp
-        public val ComposerGutter: Dp = 12.dp
 
         /**
          * The Codex mark above the 新聊天 page's hero heading: the reference's `size-14`, measured 56x56

@@ -23,6 +23,8 @@ internal class ModelUiBackend : ModelSettingsBackend {
     var failWrite = false
     val keys = mutableMapOf<String, String>()
     var writes = 0
+    var retries = 0
+    var discoveries = 0
     var snapshot = ModelSettingsSnapshot(
         providers = listOf(ConfigurableProvider("openai", "OpenAI", ProviderConfiguration("openai", "OpenAI", credentialName = "MODEL_UI_TEST_KEY", modelIds = listOf("model-a", "model-b")),
             active = true, credentialWritable = true, canRemove = true,
@@ -48,10 +50,66 @@ internal class ModelUiBackend : ModelSettingsBackend {
         keys[name] = value
         snapshot = snapshot.copy(providers = snapshot.providers.map { if (it.configuration?.credentialName == name) it.copy(credentialConfigured = true) else it })
     }
+    override suspend fun retryApplication() {
+        retries++
+        snapshot = snapshot.copy(providers = snapshot.providers.map { it.copy(applicationError = null, active = true) })
+    }
+    override suspend fun discoverModels(providerId: String, expectedRevision: Long) {
+        discoveries++
+        snapshot = snapshot.copy(providers = snapshot.providers.map {
+            if (it.id == providerId) it.copy(models = listOf(ProviderModel("remote-model", "Remote Model"))) else it
+        })
+    }
 }
 
 @OptIn(ExperimentalTestApi::class)
 class ModelSettingsInteractionTest {
+    @Test
+    fun discoveryButtonLoadsServerModelsAndShowsFeedback() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        backend.snapshot = backend.snapshot.copy(providers = backend.snapshot.providers.map { it.copy(credentialConfigured = true) })
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-discover-openai").performClick()
+        runOnIdle { assertEquals(1, backend.discoveries) }
+        onNodeWithText("服务端模型列表已获取并保存；生效结果见下方状态。").assertExists()
+        onNodeWithTag("models-view-openai").performClick()
+        onNodeWithText("Remote Model").assertExists()
+    }
+
+    @Test
+    fun failedApplicationShowsOldRouteAndRetryIsDistinctFromRefresh() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        backend.snapshot = backend.snapshot.copy(providers = backend.snapshot.providers.map {
+            it.copy(applicationError = "引用的凭据不存在，请配置凭据后重试应用。")
+        })
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithText("新配置未生效，沿用上次配置").assertExists()
+        onNodeWithTag("models-refresh").performClick()
+        runOnIdle { assertEquals(0, backend.retries) }
+        onNodeWithTag("models-retry-openai").performClick()
+        onNodeWithText("已生效").assertExists()
+        onNodeWithTag("models-retry-openai").assertDoesNotExist()
+        runOnIdle { assertEquals(1, backend.retries) }
+    }
+
+    @Test
+    fun missingReferenceCannotBeSavedAndCredentialEditorCannotRenameBinding() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-edit-openai").performClick()
+        onNodeWithTag("provider-editor-credential").performScrollTo().performTextReplacement("")
+        onNodeWithTag("provider-editor-save").performClick()
+        onNodeWithText("请填写凭据引用名称").assertExists()
+        runOnIdle { assertEquals(0, backend.writes) }
+        onNodeWithText("取消").performClick()
+        onNodeWithTag("models-credential-openai").performClick()
+        onNodeWithText("凭据引用：MODEL_UI_TEST_KEY（如需更换，请编辑 Provider）").assertExists()
+        onNodeWithTag("credential-editor-name").assertDoesNotExist()
+    }
+
     @Test
     fun routeShowsOwnerDataAndSearchFiltersIt() = runComposeUiTest {
         val repository = loaded(ModelUiBackend())
@@ -207,7 +265,9 @@ class ModelSettingsInteractionTest {
             SettingsModelsPage(state, { scope.launch { repository.load() } },
                 { config, revision -> scope.launch { repository.save(config, revision) } },
                 { id, revision -> scope.launch { repository.remove(id, revision) } },
-                { name, value -> scope.launch { repository.setCredential(name, value) } })
+                { name, value -> scope.launch { repository.setCredential(name, value) } },
+                { scope.launch { repository.retryApplication() } },
+                { id, revision -> scope.launch { repository.discoverModels(id, revision) } })
         }
     }
 

@@ -62,6 +62,24 @@ class LlmRuntime internal constructor(
     private var disposed =
         false
 
+    private val settingsApplications = mutableMapOf<String, LlmSettingsApplication>()
+
+    suspend fun registerSettingsApplication(namespace: String, application: LlmSettingsApplication): Disposable {
+        mutex.withLock {
+            checkActive()
+            check(namespace !in settingsApplications) { "Settings application already registered" }
+            settingsApplications[namespace] = application
+        }
+        return Disposable {
+            mutex.withLock {
+                if (settingsApplications[namespace] === application) settingsApplications.remove(namespace)
+            }
+        }
+    }
+
+    suspend fun settingsApplication(namespace: String): LlmSettingsApplication? =
+        mutex.withLock { settingsApplications[namespace] }
+
     /**
      * 为一组 provider routes 注册同一个适配器。
      *
@@ -260,6 +278,7 @@ class LlmRuntime internal constructor(
             disposed = true
             routes.clear()
             directory.clear()
+            settingsApplications.clear()
         }
     }
 

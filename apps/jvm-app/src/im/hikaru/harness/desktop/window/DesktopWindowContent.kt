@@ -61,7 +61,7 @@ import org.jetbrains.jewel.window.styling.TitleBarColors
 import org.jetbrains.jewel.window.styling.TitleBarMetrics
 import org.jetbrains.jewel.window.styling.TitleBarStyle
 
-/** Jewel owns native controls and dragging; the title bar renders the fixture tab controls. */
+/** Jewel owns window controls and dragging. Windows keeps the workspace dock below the title bar. */
 @Composable
 public fun DesktopHarnessWindow(
     width: Int,
@@ -80,6 +80,7 @@ public fun DesktopHarnessWindow(
     LaunchedEffect(shortcuts) { if (!shortcuts.state.value.loaded) shortcuts.load() }
     DesktopWindowShortcutBinding(shortcuts, closeController, closeConfirmation, onCloseRequest)
     val windowState = rememberWindowState(size = DpSize(width.dp, height.dp))
+    val separateDock = desktopShortcutPlatform() == ShortcutPlatform.Windows
     // The current page publishes its title and actions here; the title bar below renders them.
     val titleStrip = remember { HarnessTitleStripState() }
     val tabState = rememberHarnessTabStripState()
@@ -124,84 +125,102 @@ public fun DesktopHarnessWindow(
                 // the shell is then composed over the traffic lights.
                 CompositionLocalProvider(LocalHarnessColors provides harnessColors(useDark, customization)) {
                     TitleBar(style = harnessTitleBarStyle(useDark)) { titleBarState ->
-                        // Jewel adds native insets after measuring children. Reserve JBR's macOS inset
-                        // in the measurement budget too, so the rightmost control stays inside the window.
-                        // Measured on the live window: the traffic lights own the first ~88px of a macOS title
-                        // bar, which is the same width the strip insets its own cluster by.
-                        val nativeInset = if (desktopShortcutPlatform() == ShortcutPlatform.Mac && !titleBarState.isFullscreen)
-                            HarnessTokens.Control.TitlebarLeadInset else 0.dp
-                        Box(Modifier.align(Alignment.Start).layout { measurable, constraints ->
-                            val child = measurable.measure(constraints.offset(horizontal = -nativeInset.roundToPx()))
-                            layout(child.width, child.height) { child.placeRelative(0, 0) }
-                        }.fillMaxWidth().height(HarnessTokens.Control.Titlebar)) {
-                            // The strip's own content reads the theme's typography and material scheme; the
-                            // bar *around* it cannot, since only a direct child is recognised by the window.
-                            HarnessTheme(themeMode = themeMode, customization = customization) {
-                            HarnessTabStrip(
-                                state = tabState,
-                                drag = tabDrag,
-                                backShortcut = backShortcut,
-                                onToggleNavigator = titleStrip.navigatorToggle,
-                                navigatorShortcut = navigatorShortcut,
-                                onNewChat = titleStrip.newChat,
-                                // The conversation's segment draws the page's own title bar, which the page
-                                // publishes; the side panel's segment draws the strip instead.
-                                paneTitle = titleStrip.content,
-                                leadInset = if (desktopShortcutPlatform() == ShortcutPlatform.Mac) {
-                                    HarnessTokens.Control.TitlebarLeadInset
-                                } else {
-                                    HarnessTokens.Spacing.Two
-                                },
-                                // Jewel already insets this content by the macOS window controls, so the strip
-                                // starts ~88px into the window and every window-coordinate column it lays out
-                                // has to lose that origin. Without it the whole title bar sits ~88px right of
-                                // the shell below it: the tab strips start past the navigator's right edge.
-                                contentInset = nativeInset,
-                                clientRegion = { clientRegion(it) },
-                            )
-                        // The strip is an opaque band above the shell, so the page card's drop shadow cannot
-                        // spill into it. Repaint just that spill: a ghost of the card (same shape and corner
-                        // radius) pushed below the strip, so only its shadow rises into the strip, and the
-                        // band clips the ghost itself away. The strip's own colour is untouched above the band.
-                        Box(
-                            modifier =
-                                Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .layout { measurable, constraints ->
-                                        // Keep the original shadow in window coordinates, including the
-                                        // part beneath the native control inset.
-                                        val insetPx = nativeInset.roundToPx()
-                                        val child = measurable.measure(constraints.offset(horizontal = insetPx))
-                                        layout((child.width - insetPx).coerceAtLeast(0), child.height) {
-                                            child.placeRelative(-insetPx, 0)
-                                        }
-                                    }
-                                    .fillMaxWidth()
-                                    .height(HarnessTokens.Control.PageSurfaceShadowBand)
-                                    .clipToBounds(),
-                        ) {
+                        // Windows keeps navigation beside the drag region and window controls,
+                        // while workspace tabs occupy a separate row below.
+                        if (separateDock) {
+                            Box(Modifier.align(Alignment.Start).height(HarnessTokens.Control.Titlebar)) {
+                                HarnessTheme(themeMode = themeMode, customization = customization) {
+                                    HarnessWindowNavigation(
+                                        state = tabState,
+                                        drag = tabDrag,
+                                        backShortcut = backShortcut,
+                                        onToggleNavigator = titleStrip.navigatorToggle,
+                                        navigatorShortcut = navigatorShortcut,
+                                        onNewChat = titleStrip.newChat,
+                                        clientRegion = { clientRegion(it) },
+                                    )
+                                }
+                            }
+                        } else {
+                            // Jewel adds native insets after measuring children. Reserve JBR's macOS inset
+                            // in the measurement budget too, so the rightmost control stays inside the window.
+                            // Measured on the live window: the traffic lights own the first ~88px of a macOS title
+                            // bar, which is the same width the strip insets its own cluster by.
+                            val nativeInset = if (desktopShortcutPlatform() == ShortcutPlatform.Mac && !titleBarState.isFullscreen)
+                                HarnessTokens.Control.TitlebarLeadInset else 0.dp
+                            Box(Modifier.align(Alignment.Start).layout { measurable, constraints ->
+                                val child = measurable.measure(constraints.offset(horizontal = -nativeInset.roundToPx()))
+                                layout(child.width, child.height) { child.placeRelative(0, 0) }
+                            }.fillMaxWidth().height(HarnessTokens.Control.Titlebar)) {
+                                // The strip's own content reads the theme's typography and material scheme; the
+                                // bar *around* it cannot, since only a direct child is recognised by the window.
+                                HarnessTheme(themeMode = themeMode, customization = customization) {
+                                HarnessTabStrip(
+                                    state = tabState,
+                                    drag = tabDrag,
+                                    backShortcut = backShortcut,
+                                    onToggleNavigator = titleStrip.navigatorToggle,
+                                    navigatorShortcut = navigatorShortcut,
+                                    onNewChat = titleStrip.newChat,
+                                    // The conversation's segment draws the page's own title bar, which the page
+                                    // publishes; the side panel's segment draws the strip instead.
+                                    paneTitle = titleStrip.content,
+                                    leadInset = if (desktopShortcutPlatform() == ShortcutPlatform.Mac) {
+                                        HarnessTokens.Control.TitlebarLeadInset
+                                    } else {
+                                        HarnessTokens.Spacing.Two
+                                    },
+                                    // Jewel already insets this content by the macOS window controls, so the strip
+                                    // starts ~88px into the window and every window-coordinate column it lays out
+                                    // has to lose that origin. Without it the whole title bar sits ~88px right of
+                                    // the shell below it: the tab strips start past the navigator's right edge.
+                                    contentInset = nativeInset,
+                                    clientRegion = { clientRegion(it) },
+                                )
+                            // The strip is an opaque band above the shell, so the page card's drop shadow cannot
+                            // spill into it. Repaint just that spill: a ghost of the card (same shape and corner
+                            // radius) pushed below the strip, so only its shadow rises into the strip, and the
+                            // band clips the ghost itself away. The strip's own colour is untouched above the band.
                             Box(
                                 modifier =
                                     Modifier
-                                        .padding(
-                                            start = HarnessTokens.Control.RailWidth,
-                                            end = HarnessTokens.Control.PageSurfaceInset,
-                                        )
+                                        .align(Alignment.BottomCenter)
+                                        .layout { measurable, constraints ->
+                                            // Keep the original shadow in window coordinates, including the
+                                            // part beneath the native control inset.
+                                            val insetPx = nativeInset.roundToPx()
+                                            val child = measurable.measure(constraints.offset(horizontal = insetPx))
+                                            layout((child.width - insetPx).coerceAtLeast(0), child.height) {
+                                                child.placeRelative(-insetPx, 0)
+                                            }
+                                        }
                                         .fillMaxWidth()
-                                        .height(HarnessTokens.Control.PageSurfaceShadowBand + HarnessTokens.Spacing.Four)
-                                        .offset(y = HarnessTokens.Control.PageSurfaceShadowBand)
-                                        .dropShadow(
-                                            shape = RoundedCornerShape(HarnessTokens.Control.PageSurfaceRadius),
-                                            shadow =
-                                                Shadow(
-                                                    radius = 16.dp,
-                                                    spread = 0.dp,
-                                                    offset = DpOffset(x = 0.dp, y = 4.dp),
-                                                    color = Color.Black.copy(alpha = 0.05f),
-                                                ),
-                                        ),
-                            )
-                        }
+                                        .height(HarnessTokens.Control.PageSurfaceShadowBand)
+                                        .clipToBounds(),
+                            ) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .padding(
+                                                start = HarnessTokens.Control.RailWidth,
+                                                end = HarnessTokens.Control.PageSurfaceInset,
+                                            )
+                                            .fillMaxWidth()
+                                            .height(HarnessTokens.Control.PageSurfaceShadowBand + HarnessTokens.Spacing.Four)
+                                            .offset(y = HarnessTokens.Control.PageSurfaceShadowBand)
+                                            .dropShadow(
+                                                shape = RoundedCornerShape(HarnessTokens.Control.PageSurfaceRadius),
+                                                shadow =
+                                                    Shadow(
+                                                        radius = 16.dp,
+                                                        spread = 0.dp,
+                                                        offset = DpOffset(x = 0.dp, y = 4.dp),
+                                                        color = Color.Black.copy(alpha = 0.05f),
+                                                    ),
+                                            ),
+                                )
+                            }
+                                }
                             }
                         }
                     }
@@ -210,7 +229,9 @@ public fun DesktopHarnessWindow(
                     LocalHarnessTitleStrip provides titleStrip,
                     // The tabs divide the shell's main region — right of the navigator, inside the page
                     // card — so the rail, the navigator and the side panels are composed exactly once.
-                    LocalHarnessMainRegion provides rememberHarnessTabMainRegion(tabState, tabDrag),
+                    LocalHarnessMainRegion provides rememberHarnessTabMainRegion(
+                        tabState, tabDrag, paneHeaders = separateDock, titleStrip = titleStrip,
+                    ),
                     // The same strip also reports the conversation's page, so the shell and the pane's own
                     // title bar agree on which page the conversation is showing.
                     LocalHarnessTabStrip provides tabState,

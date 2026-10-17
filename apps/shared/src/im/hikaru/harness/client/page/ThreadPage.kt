@@ -1,32 +1,26 @@
 package im.hikaru.harness.client.page
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 import im.hikaru.harness.client.fixture.ReferenceBlock
 import im.hikaru.harness.client.fixture.ReferenceBlockKind
@@ -34,7 +28,6 @@ import im.hikaru.harness.client.fixture.ReferenceChangedFile
 import im.hikaru.harness.client.fixture.ReferenceThread
 import im.hikaru.harness.client.fixture.ReferenceTurn
 import im.hikaru.harness.ui.foundation.HarnessIcon
-import im.hikaru.harness.ui.foundation.HarnessIconButton
 import im.hikaru.harness.ui.foundation.HarnessIconName
 import im.hikaru.harness.ui.foundation.HarnessSurface
 import im.hikaru.harness.ui.foundation.HarnessText
@@ -273,61 +266,5 @@ private fun ContextRow(label: String, value: String) {
     Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One)) {
         HarnessText(label, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.labelMedium)
         HarnessText(value, color = HarnessTokens.Colors.Text, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-    }
-}
-
-/** Thread composer dock: rounded input with attachment and send controls. */
-@Composable
-public fun ThreadComposer(
-    draft: String,
-    onDraftChange: (String) -> Unit,
-    placeholder: String = "要求后续变更",
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(HarnessTokens.Control.ComposerRadius))
-                .background(HarnessTokens.Colors.SurfaceElevated)
-                .border(1.dp, HarnessTokens.Colors.SurfaceRing, RoundedCornerShape(HarnessTokens.Control.ComposerRadius))
-                .padding(HarnessTokens.Control.ComposerGutter),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three)) {
-            Box(modifier = Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.CenterStart) {
-                if (draft.isEmpty()) {
-                    HarnessText(placeholder, color = HarnessTokens.Colors.TextMuted, maxLines = 1)
-                }
-                BasicTextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = HarnessTokens.Colors.Text),
-                    cursorBrush = SolidColor(HarnessTokens.Colors.Accent),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                HarnessIconButton(contentDescription = "Attach", onClick = {}) {
-                    HarnessIcon(HarnessIconName.Attach, tint = HarnessTokens.Colors.TextMuted, size = 16.dp)
-                }
-                HarnessText("本地", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                Spacer(Modifier.weight(1f))
-                Box(
-                    modifier =
-                        Modifier
-                            .size(HarnessTokens.Control.IconButton)
-                            .clip(CircleShape)
-                            .background(HarnessTokens.Colors.Accent),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    HarnessIcon(HarnessIconName.Send, tint = HarnessTokens.Colors.OnAccent, size = 16.dp)
-                }
-            }
-        }
     }
 }

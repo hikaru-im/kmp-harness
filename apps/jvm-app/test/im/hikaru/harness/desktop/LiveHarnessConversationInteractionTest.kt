@@ -28,6 +28,24 @@ import kotlin.test.*
 @OptIn(ExperimentalTestApi::class)
 class LiveHarnessConversationInteractionTest {
     @Test
+    fun permissionPreferenceIsIsolatedPerConversation() = runSkikoComposeUiTest(size = Size(1440f, 900f)) {
+        val first = SessionId("permission-first")
+        val second = SessionId("permission-second")
+        val api = LiveTestSessionApi(listOf(liveSummary(first), liveSummary(second)))
+        val models = liveTestModels()
+        val connection = LiveTestConnection(api)
+        setContent { HarnessApp(connection, modelSettingsRepository = models) }
+        onNodeWithTag("recent-${first.value}").performClick()
+        onNodeWithTag("live-composer-permissions").performClick()
+        onNodeWithTag("live-composer-permission-FullAccess").performClick()
+        onNodeWithTag("recent-${second.value}").performClick()
+        onNodeWithTag("live-composer-permissions").assertTextEquals("请求批准")
+        onNodeWithTag("recent-${first.value}").performClick()
+        onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问权限")
+        runOnIdle { assertTrue(api.creates.isEmpty()); assertTrue(api.prompts.isEmpty()) }
+    }
+
+    @Test
     fun subagentPanelReadsVerifiedHistoryRefreshesAndClearsWhenParentChanges() =
         runSkikoComposeUiTest(size = Size(1440f, 900f)) {
             val parent = SessionId("panel-parent")
@@ -73,14 +91,28 @@ class LiveHarnessConversationInteractionTest {
             api.idleGate = idle
             val connection = LiveTestConnection(api)
             val models = liveTestModels()
+            val titleStrip = im.hikaru.harness.client.app.HarnessTitleStripState()
             try {
-                setContent { HarnessApp(connection, modelSettingsRepository = models, themeMode = HarnessThemeMode.Light) }
+                setContent {
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        im.hikaru.harness.client.app.LocalHarnessTitleStrip provides titleStrip,
+                    ) {
+                        HarnessApp(connection, modelSettingsRepository = models, themeMode = HarnessThemeMode.Light)
+                    }
+                }
                 onNodeWithTag("live-home").assertExists()
+                runOnIdle { assertTrue(titleStrip.content == null, "Home must not publish an empty title bar") }
                 onNodeWithTag("live-home-hero")
                     .assertTextEquals("你想让我们在 ${connection.description.displayName} 中构建什么？")
                 onNodeWithTag("live-composer-editor").performTextReplacement("First production route message")
                 onNodeWithTag("live-composer-send").assertIsNotEnabled()
                 chooseLiveTestModel()
+                onNodeWithTag("live-composer-permissions").performClick()
+                onNodeWithTag("live-composer-permission-FullAccess").performClick()
+                onNodeWithTag("live-composer-model").performClick()
+                onNodeWithTag("live-composer-effort-slider").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(2f) }
+                onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Escape) }
+                onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
                 onNodeWithTag("live-composer-send").assertIsEnabled().performClick()
                 waitUntil { api.prompts.size == 1 && api.idleStarted.isCompleted }
                 onNodeWithTag("live-thread").assertExists()
@@ -88,11 +120,12 @@ class LiveHarnessConversationInteractionTest {
                 onNodeWithText("First production route message").assertExists()
                 onNodeWithText("Reply from the test Session API").assertExists()
                 onNodeWithTag("live-composer-stop").assertIsEnabled()
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("live-composer-send").assertDoesNotExist()
+                onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问权限")
                 runOnIdle {
                     assertEquals(listOf("create", "prompt"), api.commands.toList())
                     assertNull(api.creates.single().requestedId)
-                    assertEquals(AgentOptions(provider = LIVE_PROVIDER, model = LIVE_MODEL), api.creates.single().agentOptions)
+                    assertEquals(AgentOptions(provider = LIVE_PROVIDER, model = LIVE_MODEL, reasoningEffort = ReasoningEffortId("high")), api.creates.single().agentOptions)
                     // prompt has no AgentOptions argument; its session was configured by create.
                     assertEquals(api.createdId, api.prompts.single().id)
                     assertEquals(api.creates.single().agentOptions, api.createdOptions[api.prompts.single().id])
@@ -293,6 +326,8 @@ private fun SemanticsNodeInteractionsProvider.chooseLiveTestModel() {
     onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
     onNodeWithTag("menu:conversation-model:${LIVE_PROVIDER.length}:$LIVE_PROVIDER:${LIVE_MODEL.length}:$LIVE_MODEL")
         .performClick()
+    onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Escape) }
+    onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
 }
 
 private fun SemanticsNodeInteractionsProvider.recentRows(): SemanticsNodeInteractionCollection =
@@ -319,7 +354,7 @@ private class LiveCatalogBackend : ModelSettingsBackend {
         providers = listOf(ConfigurableProvider(
             id = LIVE_PROVIDER, displayName = "Test catalog provider", active = true,
             configuration = ProviderConfiguration(LIVE_PROVIDER, modelIds = listOf(LIVE_MODEL)),
-            models = listOf(ProviderModel(LIVE_MODEL, "Test catalog model")),
+            models = listOf(ProviderModel(LIVE_MODEL, "Test catalog model", reasoningEfforts = listOf("low", "high"))),
         )), available = true, unavailableReason = null,
     )
     override suspend fun save(configuration: ProviderConfiguration, expectedRevision: Long): Unit =

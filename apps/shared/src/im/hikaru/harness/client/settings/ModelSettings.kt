@@ -23,7 +23,8 @@ public data class ProviderConfiguration(
                 "地址须为 HTTP(S) URL，且不能包含账号、查询参数或片段"
             }
         }
-        credentialName?.let { require(validCredentialName(it)) { "凭据名称格式无效" } }
+        require(!credentialName.isNullOrBlank()) { "请填写凭据引用名称" }
+        require(validCredentialName(credentialName)) { "凭据名称格式无效" }
         listOf(requestTimeoutMillis, connectTimeoutMillis, socketTimeoutMillis, defaultContextWindow, defaultMaxTokens).forEach {
             require(it == null || it > 0) { "超时和模型容量须为正整数" }
         }
@@ -47,6 +48,8 @@ public data class ConfigurableProvider(
     val credentialWritable: Boolean = false, val credentialSource: String? = null,
     val canRemove: Boolean = false, val models: List<ProviderModel> = emptyList(),
     val catalogError: String? = null,
+    val applicationError: String? = null,
+    val applying: Boolean = false,
 )
 public data class ModelSettingsSnapshot(
     val providers: List<ConfigurableProvider> = emptyList(),
@@ -64,6 +67,8 @@ public interface ModelSettingsBackend {
     public suspend fun save(configuration: ProviderConfiguration, expectedRevision: Long)
     public suspend fun remove(providerId: String, expectedRevision: Long)
     public suspend fun setCredential(name: String, value: String)
+    public suspend fun retryApplication(): Unit = error("模型配置应用服务不可用")
+    public suspend fun discoverModels(providerId: String, expectedRevision: Long): Unit = error("此 Host 暂不支持获取模型列表")
 }
 
 public class UnavailableModelSettingsBackend : ModelSettingsBackend {

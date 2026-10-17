@@ -14,14 +14,11 @@ class AppShellStateTest {
                 destination = ShellDestination.Conversation,
                 connection = ConnectionIndicatorState.Online,
                 panel = PanelState(PanelKind.ToolDetails, isOpen = true),
-                composer = ComposerState(draft = "hello", status = ComposerStatus.Sending),
             )
 
         assertEquals(SidebarMode.Collapsed, state.sidebar.mode)
         assertEquals("session-alpha", state.sidebar.selectedSessionId)
         assertTrue(state.panel.isOpen)
-        assertEquals(ComposerStatus.Sending, state.composer.status)
-        assertFalse(state.composer.attachments.isNotEmpty())
     }
 
     @Test

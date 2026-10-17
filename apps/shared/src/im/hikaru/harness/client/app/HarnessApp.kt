@@ -8,19 +8,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -29,6 +24,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -50,14 +46,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import im.hikaru.contracts.harness.identity.HostDescription
-import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.client.account.AccountException
 import im.hikaru.harness.client.account.AccountState
 import im.hikaru.harness.client.account.BackendTenant
 import im.hikaru.harness.client.account.MemberAccount
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.client.connection.AgentOptions
-import im.hikaru.harness.client.connection.ModelMessageSource
 import im.hikaru.harness.client.connection.SessionId
 import im.hikaru.harness.client.connection.CreateSessionOptions
 import im.hikaru.harness.client.conversation.ConversationController
@@ -111,8 +105,6 @@ import im.hikaru.harness.client.summary.ThreadSummaryActivityKind
 import im.hikaru.harness.client.summary.threadSummaryEnvironment
 import im.hikaru.harness.client.summary.threadSummaryScheduledTasks
 import im.hikaru.harness.client.page.SettingsFormFrame
-import im.hikaru.harness.client.page.SettingsFormSelect
-import im.hikaru.harness.ui.slot.ListSlotOutlet
 import im.hikaru.harness.ui.slot.SlotOutlet
 import im.hikaru.harness.ui.slot.UiSnapshot
 import im.hikaru.harness.ui.slot.UiSnapshotProvider
@@ -132,7 +124,6 @@ import im.hikaru.harness.client.connection.RemoteConnectionStatus
 import im.hikaru.harness.client.connection.RemoteDiscoveryState
 import im.hikaru.harness.client.page.SettingsConnectionsPage
 import im.hikaru.harness.client.shell.AppShell
-import im.hikaru.harness.client.shell.AppShellNavItem
 import im.hikaru.harness.client.shell.AppShellState
 import im.hikaru.harness.client.shell.AccountMenuAction
 import im.hikaru.harness.client.shell.AccountMenuDestination
@@ -140,8 +131,6 @@ import im.hikaru.harness.client.shell.AccountMenuState
 import im.hikaru.harness.client.shell.ConnectionIndicatorState
 import im.hikaru.harness.client.shell.SidebarState
 import im.hikaru.harness.client.shell.SidebarMode
-import im.hikaru.harness.client.page.ProjectPage
-import im.hikaru.harness.client.page.ProjectsPage
 import im.hikaru.harness.client.page.SettingsGeneralPage
 import im.hikaru.harness.client.page.SettingsAppearancePage
 import im.hikaru.harness.client.page.SettingsModelsPage
@@ -227,14 +216,10 @@ import im.hikaru.harness.client.shell.railInitials
 import im.hikaru.harness.client.shell.harnessRailItems
 import im.hikaru.harness.client.shell.railDestinationPage
 import im.hikaru.harness.ui.foundation.HarnessButton
-import im.hikaru.harness.ui.foundation.HarnessButtonVariant
-import im.hikaru.harness.ui.foundation.HarnessControlSize
 import im.hikaru.harness.ui.foundation.HarnessBadge
 import im.hikaru.harness.ui.foundation.HarnessIcon
 import im.hikaru.harness.ui.foundation.HarnessIconName
-import im.hikaru.harness.ui.foundation.HarnessIconButton
 import im.hikaru.harness.ui.foundation.HarnessSurface
-import im.hikaru.harness.ui.foundation.HarnessTextField
 import im.hikaru.harness.ui.foundation.HarnessText
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
 import im.hikaru.harness.ui.foundation.HarnessTokens
@@ -638,7 +623,7 @@ public fun HarnessApp(
     val modelChoices = if (transport == ConnectionTransport.Local && modelSettings.snapshot.available &&
         modelSettings.loadError == null && !modelSettings.loading) {
         modelSettings.snapshot.providers.filter { it.active }.flatMap { provider ->
-            provider.models.map { model -> ConversationModelChoice(provider.id, model.id, provider.displayName + " / " + model.name) }
+            provider.models.map { model -> ConversationModelChoice(provider.id, model.id, provider.displayName + " / " + model.name, model.reasoningEfforts) }
         }
     } else emptyList()
     val localSchedulingAllowed = transport == ConnectionTransport.Local && verifiedConversationConnection != null
@@ -734,37 +719,41 @@ public fun HarnessApp(
     )
     val schedulingActionScope = rememberCoroutineScope()
     var selectedNewModel by remember(conversationHost?.hostId, conversationHost?.identity) { mutableStateOf<ConversationModelChoice?>(null) }
+    val composerPreferences = remember(conversationHost?.hostId, conversationHost?.identity) {
+        mutableStateMapOf<SessionId?, ComposerSessionPreferences>()
+    }
+    val homePreferences = composerPreferences[null] ?: ComposerSessionPreferences()
+    var selectedNewEffort by remember(conversationHost?.hostId, conversationHost?.identity, selectedNewModel?.providerId, selectedNewModel?.modelId) {
+        mutableStateOf<String?>(null)
+    }
     val effectiveNewModel = selectedNewModel?.let { chosen ->
         modelChoices.firstOrNull { it.providerId == chosen.providerId && it.modelId == chosen.modelId }
     }
-    val historicalModel = conversationState.history.mapNotNull { it.source as? ModelMessageSource }.lastOrNull()?.let {
-        ConversationModelChoice(it.provider, it.model, it.provider + " / " + it.model)
-    }
+    val effectiveNewEffort = selectedNewEffort?.takeIf { it in effectiveNewModel?.reasoningEfforts.orEmpty() }
     val modelReason = when {
-        page is PageId.Thread -> "当前会话暂不支持更换模型。"
         transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
         modelSettings.loading -> "正在读取本机模型目录。"
+        modelChoices.isEmpty() && modelSettings.snapshot.providers.any { it.applicationError != null } -> "Provider 配置未生效，请到设置中修复。"
         modelChoices.isEmpty() -> "请先在设置中配置本机模型与 Provider。"
         else -> null
     }
-    val composerSessionId = (page as? PageId.Thread)?.threadId?.let(::SessionId)
     val composerBindingReady = conversationState.host == conversationHost &&
-        conversationState.selectedSessionId == composerSessionId
+        conversationState.selectedSessionId == null
     val composerState = if (composerBindingReady) conversationState else
-        ConversationState(host = conversationHost, selectedSessionId = composerSessionId)
-    fun composerIsCurrent(): Boolean = navigation.currentPage == page &&
+        ConversationState(host = conversationHost)
+    fun homeComposerIsCurrent(): Boolean = navigation.currentPage == PageId.Home &&
         conversation.state.value.host == conversationHost &&
-        conversation.state.value.selectedSessionId == composerSessionId
+        conversation.state.value.selectedSessionId == null
     val submitReason = when {
         !composerBindingReady -> "正在切换会话…"
         !conversationState.connected -> "请连接可用的 Host 后发送消息。"
         pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
         page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "所选项目尚未加载，请刷新项目后再发送。"
         page == PageId.Home && localProjectsState.mutation != null -> "正在保存项目变更，请稍候。"
-        page == PageId.Home && transport == ConnectionTransport.Local && effectiveNewModel == null -> "请选择本机目录中的模型。"
+        transport == ConnectionTransport.Local && effectiveNewModel == null -> "请选择本机目录中的模型。"
         else -> null
     }
-    val liveComposer: @Composable () -> Unit = {
+    val homeComposer: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (page == PageId.Home && transport == ConnectionTransport.Local) LocalProjectPicker(localProjectsState,
             onSelect = { localProjects.select(it); projectPreparationError = null; pendingWorktreeChat = null },
@@ -805,9 +794,9 @@ public fun HarnessApp(
             }
         }
         LiveConversationComposer(
-            state = composerState, onDraftChange = { if (composerIsCurrent()) conversation.updateDraft(it) },
+            state = composerState, onDraftChange = { if (homeComposerIsCurrent()) conversation.updateDraft(it) },
             onSubmit = {
-                if (submitReason == null && composerIsCurrent()) {
+                if (submitReason == null && homeComposerIsCurrent()) {
                     var target: ValidatedLocalProjectTarget? = null
                     val expectedProjectId = localProjectsState.selectedProjectId
                     val expectedProjectBinding = projectBinding
@@ -816,7 +805,8 @@ public fun HarnessApp(
                     val useProject = page == PageId.Home && expectedProjectId != null && worktreeDirectory == null
                     projectPreparationError = null
                     conversation.submit(
-                        agentOptions = if (page == PageId.Home) AgentOptions(provider = effectiveNewModel?.providerId, model = effectiveNewModel?.modelId) else AgentOptions(),
+                        agentOptions = AgentOptions(provider = effectiveNewModel?.providerId, model = effectiveNewModel?.modelId,
+                            reasoningEffort = effectiveNewEffort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }),
                         prepareCreation = if (worktreeDirectory != null) ({ CreateSessionOptions(cwd = worktreeDirectory) })
                             else if (!useProject) null else ({
                                 if (expectedProjectBinding == null || !localProjects.isBoundTo(expectedProjectBinding) ||
@@ -829,20 +819,29 @@ public fun HarnessApp(
                                     }
                                 }
                             }),
-                        onSessionCreated = if (worktreeDirectory != null) ({ pendingWorktreeChat = null; true })
-                            else if (!useProject) null else ({ summary ->
-                                target?.let { captured ->
+                        onSessionCreated = { summary ->
+                            composerPreferences[summary.id] = (composerPreferences[null] ?: homePreferences).copy(model = effectiveNewModel,
+                                effort = effectiveNewEffort, modelConfigurationKnown = effectiveNewModel != null)
+                            composerPreferences.remove(null)
+                            if (worktreeDirectory != null) { pendingWorktreeChat = null; true }
+                            else if (!useProject) true else target?.let { captured ->
                                     pendingProjectAssociation = captured to summary
                                     attachProjectSession(captured, summary)
                                 } ?: false
-                            }),
+                        },
                     )
                 }
             },
-            onCancel = { if (composerIsCurrent()) conversation.cancel() }, models = modelChoices,
-            selectedModel = if (page is PageId.Thread) historicalModel else effectiveNewModel,
+            onCancel = { if (homeComposerIsCurrent()) conversation.cancel() }, models = modelChoices,
+            selectedModel = effectiveNewModel,
             onModelSelect = { selectedNewModel = it }, modelUnavailableReason = modelReason,
             submitUnavailableReason = submitReason,
+            selectedReasoningEffort = effectiveNewEffort,
+            onReasoningEffortSelect = { selectedNewEffort = it },
+            onConfigureModels = if (transport == ConnectionTransport.Local) ({ navigation = navigation.navigate(PageId.Settings(SettingsSection.Models)) }) else null,
+            useHostDefaultModel = transport == ConnectionTransport.Relay,
+            permission = homePreferences.permission,
+            onPermissionSelect = { if (homeComposerIsCurrent()) composerPreferences[null] = homePreferences.copy(permission = it) },
         )
         }
     }
@@ -951,9 +950,8 @@ public fun HarnessApp(
         // The conversation's own title, drawn in the title-bar segment the tab strip does not own — the
         // whole bar while the panel is closed, the conversation's half of it while the panel is open. The
         // side panel's segment draws the strip instead, so it never needs one.
-        titleStrip?.content = {
-            conversationTitle(page, threadSurfaceState)?.let { HarnessPaneTitle(it) }
-        }
+        val paneHeading = conversationTitle(page, threadSurfaceState)?.takeIf { it.isNotBlank() }
+        titleStrip?.content = paneHeading?.let { heading -> { HarnessPaneTitle(heading) } }
         // The side panel hangs off the conversation, so the reference mounts it on a chat page only: it
         // is on 首页 and every 会话, and on none of the other pages. The window owns the panel, so the
         // page tells it which kind of page it is, exactly as it tells the bar whether it has a navigator.
@@ -1011,6 +1009,7 @@ public fun HarnessApp(
         val paneController = conversation
         val sessionId = (page as? PageId.Thread)?.threadId?.let(::SessionId)
         val bound = paneState.host == conversationHost && paneState.selectedSessionId == sessionId
+        val preferences = composerPreferences[sessionId] ?: ComposerSessionPreferences()
         // The composer acts on the pane's live binding, so a callback that lands after the pane moved
         // to another tab cannot draft into, send to or stop the session the pane has left.
         fun stillBound(): Boolean = paneController.state.value.host == conversationHost &&
@@ -1021,17 +1020,18 @@ public fun HarnessApp(
             onSubmit = { if (bound && stillBound()) paneController.submit(agentOptions = AgentOptions()) },
             onCancel = { if (stillBound()) paneController.cancel() },
             models = modelChoices,
-            selectedModel = paneState.history.mapNotNull { it.source as? ModelMessageSource }.lastOrNull()?.let {
-                ConversationModelChoice(it.provider, it.model, it.provider + " / " + it.model)
-            },
-            onModelSelect = { selectedNewModel = it },
-            // The reference offers no model switch inside a session, and 会话 pages say so.
+            selectedModel = if (bound) composerModel(paneState, modelChoices, preferences) else null,
+            onModelSelect = {}, // Existing sessions expose their configuration read-only.
             modelUnavailableReason = "当前会话暂不支持更换模型。",
             submitUnavailableReason = when {
                 !bound -> "正在切换会话…"
                 !paneState.connected -> "请连接可用的 Host 后发送消息。"
                 else -> null
             },
+            selectedReasoningEffort = preferences.effort,
+            reasoningEffortKnown = preferences.modelConfigurationKnown,
+            permission = preferences.permission,
+            onPermissionSelect = { if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(permission = it) },
         )
     }
     // The dock exists while the conversation holds one; each pane then decides for itself whether to
@@ -1277,7 +1277,7 @@ public fun HarnessApp(
                 val paneConversationState = conversationState
                 val paneConversation = conversation
                 when (val current = panePage) {
-                    PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = liveComposer)
+                    PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = homeComposer)
 
                     PageId.NewTab -> NewTabPage(
                         onOpenTool = { tool ->
@@ -1372,6 +1372,8 @@ public fun HarnessApp(
                         onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
                         modelSettings = modelSettings,
                         onModelsRefresh = { modelScope.launch { models.load() } },
+                        onModelsRetryApplication = { modelScope.launch { models.retryApplication() } },
+                        onModelsDiscover = { id, revision -> modelScope.launch { models.discoverModels(id, revision) } },
                         onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
                         onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
                         onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
@@ -1525,7 +1527,7 @@ private fun isChatPage(page: PageId): Boolean = page == PageId.Home || page is P
  */
 private fun conversationTitle(page: PageId, thread: ThreadSurfaceState?): String? =
     when (page) {
-        PageId.Home -> ""
+        PageId.Home -> null
         is PageId.Thread -> thread?.title ?: pageTitle(page)
         else -> null
     }
@@ -1862,6 +1864,8 @@ private fun SettingsScreen(
     onAppearanceRetry: () -> Unit,
     modelSettings: ModelSettingsState,
     onModelsRefresh: () -> Unit,
+    onModelsRetryApplication: () -> Unit,
+    onModelsDiscover: (String, Long) -> Unit,
     onProviderSave: (ProviderConfiguration, Long) -> Unit,
     onProviderRemove: (String, Long) -> Unit,
     onCredentialSet: (String, String) -> Unit,
@@ -1891,7 +1895,7 @@ private fun SettingsScreen(
       when (section) {
         SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins)
         SettingsSection.Appearance -> SettingsAppearancePage(appearanceState, onAppearanceChange, onAppearanceRetry)
-        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet)
+        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover)
         SettingsSection.Connections -> SettingsConnectionsPage(connectionsState, onConnectionsRefresh, onConnectionSelect)
         SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository)
         SettingsSection.Plugins -> InstalledPluginsPage(pluginsState, onPluginAction)

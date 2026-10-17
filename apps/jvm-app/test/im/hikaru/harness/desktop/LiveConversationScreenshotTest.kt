@@ -100,6 +100,8 @@ class LiveConversationScreenshotTest {
     private fun FixtureComposer(initialState: ConversationState) {
         var state by remember(initialState) { mutableStateOf(initialState) }
         var model by remember { mutableStateOf(fixtureModels.first()) }
+        var effort by remember { mutableStateOf<String?>("low") }
+        var permission by remember { mutableStateOf(im.hikaru.harness.client.app.ComposerPermission.Ask) }
         LiveConversationComposer(
             state = state,
             onDraftChange = { state = state.copy(draft = it, draftRevision = state.draftRevision + 1) },
@@ -110,6 +112,9 @@ class LiveConversationScreenshotTest {
             onModelSelect = { model = it },
             modelUnavailableReason = if (state.selectedSessionId != null) "已有会话沿用创建时的模型。" else null,
             submitUnavailableReason = null,
+            selectedReasoningEffort = effort,
+            onReasoningEffortSelect = { effort = it },
+            permission = permission, onPermissionSelect = { permission = it },
         )
     }
 
@@ -225,7 +230,7 @@ class LiveConversationScreenshotTest {
         val fixtureSessionId = SessionId("screenshot-conversation")
         val fixturePanelScope = ThreadPanelScope(fixtureHost.hostId, fixtureSessionId)
         val fixtureModels = listOf(
-            ConversationModelChoice("screenshot-provider", "screenshot-model", "Screenshot model"),
+            ConversationModelChoice("screenshot-provider", "screenshot-model", "Screenshot model", listOf("low", "medium", "high")),
             ConversationModelChoice("screenshot-provider", "screenshot-model-2", "Screenshot model 2"),
         )
 

@@ -31,7 +31,85 @@ import kotlin.test.*
  */
 @OptIn(ExperimentalTestApi::class)
 class HarnessTabsInteractionTest {
+    @Test fun windowsNavigationLivesAboveDockAndIsNotDuplicated() = runSkikoComposeUiTest(size = Size(1200f, 600f)) {
+        val state = HarnessTabStripState(HarnessFixtureTabs, HarnessFixtureTabs.first().id)
+        val drag = HarnessTabDragState()
+        var toggles = 0
+        setContent {
+            HarnessTheme {
+                Column {
+                    Box(Modifier.height(HarnessTokens.Control.Titlebar)) {
+                        HarnessWindowNavigation(state, drag, null, { toggles++ }, null, null, { this })
+                    }
+                    HarnessPaneHeader(state, drag, panel = true, title = null)
+                }
+            }
+        }
+        onAllNodesWithTag("harness-tab-back").assertCountEquals(1)
+        onAllNodesWithTag("harness-tab-forward").assertCountEquals(1)
+        onAllNodesWithTag("harness-tab-navigator").assertCountEquals(1)
+        val navigation = onNodeWithTag("harness-tab-navigator").fetchSemanticsNode().boundsInRoot
+        val dock = onNodeWithTag("harness-pane-header").fetchSemanticsNode().boundsInRoot
+        assertTrue(navigation.bottom <= dock.top)
+        onNodeWithTag("harness-tab-navigator").performMouseInput { click() }
+        runOnIdle { assertEquals(1, toggles) }
+    }
+
+    @Test fun homePaneDoesNotReserveAnEmptyHeader() = runSkikoComposeUiTest(size = Size(1200f, 600f)) {
+        val state = HarnessTabStripState(HarnessFixtureTabs, HarnessFixtureTabs.first().id)
+        val drag = HarnessTabDragState()
+        setContent {
+            HarnessTheme {
+                val region = rememberHarnessTabMainRegion(state, drag, paneHeaders = true)
+                region.Panes(Modifier.fillMaxSize()) { modifier -> Box(modifier.testTag("home-body")) }
+            }
+        }
+        onNodeWithTag("harness-pane-header").assertDoesNotExist()
+        assertEquals(0f, onNodeWithTag("home-body").fetchSemanticsNode().boundsInRoot.top)
+    }
+
     private fun state() = HarnessTabStripState(HarnessFixtureTabs, HarnessFixtureTabs.first().id)
+
+    @Test fun paneHeadersFollowToolVisibilityAndFullView() = runSkikoComposeUiTest(size = Size(1200f, 600f)) {
+        val state = state()
+        val drag = HarnessTabDragState()
+        setContent {
+            HarnessTheme {
+                Column {
+                    Box(Modifier.height(HarnessTokens.Control.Titlebar)) {
+                        HarnessWindowNavigation(state, drag, null, null, null, null, { this })
+                    }
+                    val region = rememberHarnessTabMainRegion(state, drag, paneHeaders = true)
+                    region.Panes(Modifier.weight(1f)) { modifier ->
+                        Box(modifier.testTag(if (LocalHarnessPaneTab.current == null) "conversation-body" else "tool-body"))
+                    }
+                }
+            }
+        }
+        onNodeWithTag("harness-pane-header").assertDoesNotExist()
+        onNodeWithTag("harness-tab-show").performClick()
+        onAllNodesWithTag("harness-pane-header").assertCountEquals(1)
+        onNodeWithTag("harness-conversation-header").assertDoesNotExist()
+        onNodeWithTag("harness-tool-header").assertIsDisplayed()
+        val body = onNodeWithTag("conversation-body").fetchSemanticsNode().boundsInRoot
+        val header = onNodeWithTag("harness-tool-header").fetchSemanticsNode().boundsInRoot
+        assertEquals(body.top, header.top)
+        val hideBounds = onNodeWithTag("harness-tab-hide").fetchSemanticsNode().boundsInRoot
+        onNodeWithTag("harness-tab-hide").performClick()
+        onAllNodesWithTag("harness-tab-show").assertCountEquals(1)
+        val showBounds = onNodeWithTag("harness-tab-show").fetchSemanticsNode().boundsInRoot
+        assertEquals(hideBounds, showBounds, "hiding tabs must keep the toggle at the same position")
+        onNodeWithTag("harness-tab-show").performClick()
+        assertEquals(hideBounds, onNodeWithTag("harness-tab-hide").fetchSemanticsNode().boundsInRoot)
+        onNodeWithTag("harness-tab-split").performClick()
+        onNodeWithTag("conversation-body").assertDoesNotExist()
+        onNodeWithTag("harness-tool-header").assertIsDisplayed()
+        onNodeWithTag("harness-tab-hide").performClick()
+        onNodeWithTag("harness-tab-hide").performClick()
+        onNodeWithTag("harness-pane-header").assertDoesNotExist()
+        onNodeWithTag("harness-tab-show").assertIsDisplayed().performClick()
+        onNodeWithTag("harness-tool-header").assertIsDisplayed()
+    }
 
     /**
      * The real geometry: the rail sits left of the main region, so the region the title bar lays its
