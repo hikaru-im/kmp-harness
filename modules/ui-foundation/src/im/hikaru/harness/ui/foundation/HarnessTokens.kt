@@ -244,31 +244,76 @@ public val LocalHarnessColors = staticCompositionLocalOf { HarnessLightColors }
 
 /** Shared visual values. Components should consume these values instead of Material defaults. */
 public object HarnessTokens {
-    /** Shared geometry for welcome and docked conversation composers. */
+    /**
+     * Shared geometry for welcome and docked conversation composers, measured on the live Codex
+     * composer (`_ComposerLayoutRoot`, 736×98): 14 top + 44 editor + 4 gap + 28 footer + 8 bottom.
+     */
     public object Composer {
         public val Radius: Dp = 22.dp
-        public val PaddingX: Dp = 16.dp
-        public val PaddingTop: Dp = 16.dp
-        public val PaddingBottom: Dp = 12.dp
-        public val SectionGap: Dp = 12.dp
-        public val ControlGap: Dp = 6.dp
+        /** Input inset; the fixed `0 12px` padding of the reference editor wrapper. */
+        public val PaddingX: Dp = 12.dp
+        /** Footer inset; `_ComposerLayoutFooter` keeps `0 8px`. */
+        public val FooterPaddingX: Dp = 8.dp
+        public val PaddingTop: Dp = 14.dp
+        public val PaddingBottom: Dp = 8.dp
+        public val SectionGap: Dp = 4.dp
+        public val ControlGap: Dp = 5.dp
+        /** Chip inset: the reference permission chip keeps `0 6px`. */
+        public val ButtonInsetX: Dp = 6.dp
         public val DockInset: Dp = 16.dp
         public val PageInset: Dp = 24.dp
         public val WelcomeGap: Dp = 24.dp
         public val MaxWidth: Dp = 760.dp
         public val WelcomeEditorMinHeight: Dp = 72.dp
-        public val ThreadEditorMinHeight: Dp = 40.dp
+        public val ThreadEditorMinHeight: Dp = 44.dp
         public val EditorMaxHeight: Dp = 160.dp
         public const val ViewportFraction: Float = 0.25f
-        public val ActionSize: Dp = 32.dp
+        /** Every footer control is a 28px slot; the reference draws a 16px icon inside. */
+        public val ActionSize: Dp = 28.dp
+        /** Composer body text: 14 / 20 on the live `ProseMirror`. */
+        public val TextSize: TextUnit = 14.sp
+        public val TextLineHeight: TextUnit = 20.sp
+        /** Footer labels: 13 / 18 on the live permission chip. */
+        public val LabelSize: TextUnit = 13.sp
+        public val LabelLineHeight: TextUnit = 18.sp
         public val PopupWidth: Dp = 280.dp
+        /** Live model picker: 254 wide (menu measured 254×96). */
+        public val ModelPopupWidth: Dp = 254.dp
         public val PermissionPopupWidth: Dp = 320.dp
         public val PopupMaxHeight: Dp = 360.dp
+        /** Live permission popup: 320 wide, radius 20, 4 inset; rows are 312×42.6 at radius 15. */
+        public val PopupRadius: Dp = 20.dp
+        public val PopupContainerInset: Dp = 4.dp
+        public val PopupItemInsetX: Dp = 8.dp
+        public val PopupItemInsetY: Dp = 5.dp
+        public val PopupItemRadius: Dp = 15.dp
+        /** Live permission rows are 312×42.5625, model-list rows 235×28.5625. A fixed height also
+         *  keeps Material3's 48dp minimum interactive size from inflating them. */
+        public val PermissionItemHeight: Dp = 42.5.dp
+        public val ModelItemHeight: Dp = 28.5.dp
+        /** Live row content gap between the 18px icon and the label column. */
+        public val PopupItemGap: Dp = 6.dp
+        public val PopupShadow: Dp = 16.dp
         public val PopupInset: Dp = 12.dp
-        public val BorderWidth: Dp = 1.dp
+        /** Live permission header: 26 high, `5px 8px`, 13/16 description ink. */
+        public val PopupHeaderHeight: Dp = 26.dp
+        /** Model picker header: 48 chip row, 32 inset, 182 chip, 32 reset slot. */
+        public val ModelChipHeight: Dp = 48.dp
+        public val ModelChipRadius: Dp = 8.dp
+        public val ModelChipInset: Dp = 32.dp
+        public val ModelResetSize: Dp = 32.dp
+        /** Effort slider (live `_Container_xwb5v_1`): 32 slot, 24 track, 28 knob, 8 inset → 230 track. */
+        public val EffortRowHeight: Dp = 32.dp
+        public val EffortTrackHeight: Dp = 24.dp
+        public val EffortKnobSize: Dp = 28.dp
+        public val EffortTrackInset: Dp = 8.dp
+        /** Live `_Tick_xwb5v_40`: 4px dots, 30% white when reached and 25% otherwise. */
+        public val EffortTickSize: Dp = 4.dp
+        /** No outer border; the reference renders a 1px inset glow instead. */
+        public val BorderWidth: Dp = 0.5.dp
         public const val FocusAlpha: Float = 0.45f
         /** Permission selection emphasis, not an execution-status indicator. */
-        public val FullAccessColor: Color = Color(0xFFE76F24)
+        public val FullAccessColor: Color = Color(0xFFFF8549)
     }
     public object Slider {
         public val TrackHeight: Dp = 24.dp

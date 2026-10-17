@@ -31,6 +31,8 @@ public fun LiveConversationComposer(
     onModelSelect: (ConversationModelChoice) -> Unit,
     modelUnavailableReason: String?,
     submitUnavailableReason: String?,
+    /** Blocks submit without printing a hint: the model chip already shows that a model is needed. */
+    submitBlocked: Boolean = false,
     selectedReasoningEffort: String? = null,
     onReasoningEffortSelect: ((String?) -> Unit)? = null,
     onConfigureModels: (() -> Unit)? = null,
@@ -41,7 +43,8 @@ public fun LiveConversationComposer(
 ) {
     val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight)
     val suppliedViewport = LocalConversationViewportHeight.current
-    val canSend = state.canSubmit && submitUnavailableReason == null && state.composerPrimaryAction() == ComposerPrimaryAction.Send
+    val canSend = state.canSubmit && submitUnavailableReason == null && !submitBlocked &&
+        state.composerPrimaryAction() == ComposerPrimaryAction.Send
     val latestCanSend by rememberUpdatedState(canSend)
     val latestSubmit by rememberUpdatedState(onSubmit)
     val hostId = state.host?.hostId
@@ -52,7 +55,6 @@ public fun LiveConversationComposer(
         mutableStateOf(TextFieldValue(state.draft, TextRange(state.draft.length)))
     }
     var enterHeld by remember(hostId, identity, sessionId) { mutableStateOf(false) }
-    var editorFocused by remember { mutableStateOf(false) }
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     LaunchedEffect(windowFocused) { if (!windowFocused) enterHeld = false }
     LaunchedEffect(hostId, identity, sessionId, state.draft) {
@@ -65,14 +67,14 @@ public fun LiveConversationComposer(
             (viewport * HarnessTokens.Composer.ViewportFraction).coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight))
         Surface(
             Modifier.fillMaxWidth().semantics { testTag = "live-composer" },
-            color = HarnessTokens.Colors.SurfaceElevated,
-            contentColor = HarnessTokens.Colors.Text,
+            // Live `_ComposerLayoutRoot`: rgb(54,54,54) in dark, radius 22, no outer border, and a
+            // `rgba(255,255,255,.2) 0 0 1px 0 inset` glow — approximated by a 0.5dp light ring.
+            color = ConversationAppearance.composer,
+            contentColor = ConversationAppearance.ink,
             shape = RoundedCornerShape(HarnessTokens.Composer.Radius),
-            border = BorderStroke(HarnessTokens.Composer.BorderWidth, if (editorFocused)
-                HarnessTokens.Colors.BorderFocused.copy(alpha = HarnessTokens.Composer.FocusAlpha) else HarnessTokens.Colors.SurfaceRing),
+            border = BorderStroke(HarnessTokens.Composer.BorderWidth, ConversationAppearance.composerGlow),
         ) {
-            Column(Modifier.padding(start = HarnessTokens.Composer.PaddingX, end = HarnessTokens.Composer.PaddingX,
-                top = HarnessTokens.Composer.PaddingTop, bottom = HarnessTokens.Composer.PaddingBottom),
+            Column(Modifier.padding(top = HarnessTokens.Composer.PaddingTop, bottom = HarnessTokens.Composer.PaddingBottom),
                 verticalArrangement = Arrangement.spacedBy(HarnessTokens.Composer.SectionGap)) {
                 BasicTextField(
                     value = editor,
@@ -81,9 +83,11 @@ public fun LiveConversationComposer(
                         editor = value
                         if (value.text != previousText) onDraftChange(value.text)
                     },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = minOf(if (welcome) HarnessTokens.Composer.WelcomeEditorMinHeight
+                    // Live editor: the wrapper keeps `0 12px`; the thread input row measures 44 high.
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Composer.PaddingX)
+                        .heightIn(min = minOf(if (welcome) HarnessTokens.Composer.WelcomeEditorMinHeight
                         else HarnessTokens.Composer.ThreadEditorMinHeight, editorCap), max = editorCap)
-                        .onFocusChanged { editorFocused = it.isFocused; if (!it.isFocused) enterHeld = false }
+                        .onFocusChanged { if (!it.isFocused) enterHeld = false }
                         .onPreviewKeyEvent { event ->
                             when {
                                 event.key != Key.Enter && event.key != Key.NumPadEnter -> false
@@ -104,33 +108,39 @@ public fun LiveConversationComposer(
                             }
                         }
                         .semantics { testTag = "live-composer-editor"; contentDescription = "消息" },
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = HarnessTokens.Colors.Text),
-                    cursorBrush = SolidColor(HarnessTokens.Colors.Text),
+                    // Live `ProseMirror`: 14 / 20, white ink; placeholder `与 Codex 协作` in 0.498 white.
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = ConversationAppearance.ink,
+                        fontSize = HarnessTokens.Composer.TextSize, lineHeight = HarnessTokens.Composer.TextLineHeight),
+                    cursorBrush = SolidColor(ConversationAppearance.ink),
                     singleLine = false,
                     decorationBox = { inner ->
                         Box {
-                            if (editor.text.isEmpty()) HarnessText(if (welcome) "描述你想构建的内容…" else "继续提问，或补充任务细节…", color = HarnessTokens.Colors.TextMuted)
+                            if (editor.text.isEmpty()) HarnessText(if (welcome) "随心输入" else "与 Codex 协作",
+                                color = ConversationAppearance.tertiary,
+                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = HarnessTokens.Composer.TextSize,
+                                    lineHeight = HarnessTokens.Composer.TextLineHeight))
                             inner()
                         }
                     },
                 )
                 ConversationComposerToolbar(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
                     selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown, useHostDefaultModel,
-                    permission, onPermissionSelect, onConfigureModels)
+                    permission, onPermissionSelect, onConfigureModels, draftEmpty = editor.text.isBlank())
+                val notices = Modifier.padding(horizontal = HarnessTokens.Composer.PaddingX)
                 composerFeedback(state, modelUnavailableReason, submitUnavailableReason, models.isEmpty(), useHostDefaultModel)?.let { feedback ->
                     if (feedback.configureModels && onConfigureModels != null) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Row(notices.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             HarnessText(feedback.text, Modifier.weight(1f).semantics { testTag = feedback.tag },
                                 color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                             HarnessButton("配置模型", onConfigureModels, variant = HarnessButtonVariant.Ghost,
                                 size = HarnessControlSize.Compact, testTag = "live-composer-configure-models")
                         }
-                    } else ConversationNotice(feedback.text, feedback.tag)
+                    } else ConversationNotice(feedback.text, feedback.tag, modifier = notices)
                 }
                 // Home has no timeline slot: preserve create/prompt/cancel errors beside its draft.
                 state.errors.values.filter { it.kind in listOf(ConversationErrorKind.Create, ConversationErrorKind.Association, ConversationErrorKind.Prompt,
                     ConversationErrorKind.Cancel, ConversationErrorKind.Completion) }.forEach {
-                    ConversationNotice(it.message, "live-composer-error-${it.kind.name}", isError = true)
+                    ConversationNotice(it.message, "live-composer-error-${it.kind.name}", isError = true, modifier = notices)
                 }
             }
         }

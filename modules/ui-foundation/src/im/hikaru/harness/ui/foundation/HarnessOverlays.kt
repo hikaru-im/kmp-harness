@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -117,6 +118,11 @@ public fun HarnessPopover(
     popupModifier: Modifier = Modifier,
     popupWidth: Dp? = null,
     popupMaxHeight: Dp = Dp.Unspecified,
+    popupShape: Dp = HarnessTokens.Corners.Medium,
+    popupColor: Color = HarnessTokens.Colors.SurfaceElevated,
+    popupBorder: Color = HarnessTokens.Colors.BorderSubtle,
+    popupBorderWidth: Dp = 1.dp,
+    popupShadow: Dp = HarnessTokens.Spacing.Two,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     require(sideOffset >= 0.dp) { "Popover sideOffset must be non-negative" }
@@ -145,11 +151,11 @@ public fun HarnessPopover(
             ) {
                 Surface(
                     modifier = Modifier.widthIn(max = maxWidth).heightIn(max = maxHeight),
-                    color = HarnessTokens.Colors.SurfaceElevated,
+                    color = popupColor,
                     contentColor = HarnessTokens.Colors.Text,
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(HarnessTokens.Corners.Medium),
-                    border = BorderStroke(1.dp, HarnessTokens.Colors.BorderSubtle),
-                    shadowElevation = HarnessTokens.Spacing.Two,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(popupShape),
+                    border = BorderStroke(popupBorderWidth, popupBorder),
+                    shadowElevation = popupShadow,
                 ) {
                     val width = if (popupWidth == null) Modifier else Modifier.width(popupWidth.coerceAtMost(maxWidth))
                     Column(Modifier.then(width).then(popupModifier).widthIn(max = maxWidth)

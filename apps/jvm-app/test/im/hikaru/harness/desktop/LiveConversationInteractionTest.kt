@@ -65,7 +65,9 @@ class LiveConversationInteractionTest {
                 onNodeWithTag("live-composer-model-select").performClick()
                 savePopup(onNodeWithTag("live-composer-model-popup"), "models-$mode")
                 onNodeWithTag(menuTag(SECOND)).performClick()
-                onNodeWithTag("live-composer-effort-slider").assertIsNotEnabled()
+                // A model without effort stops closes the picker instead of showing an empty,
+                // disabled slider panel (Codex filters that view out entirely).
+                onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
             }
         }
     }
@@ -191,15 +193,17 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-model-select").performClick()
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
         onNodeWithTag(menuTag(SECOND)).performClick()
-        onNodeWithTag("live-composer-effort-slider").assertIsNotEnabled()
+        // SECOND declares no efforts, so the picker closes rather than swapping to the slider view.
+        onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
         runOnIdle { assertEquals(listOf(SECOND), owner.selected); assertTrue(owner.submitted.isEmpty()) }
-        onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(Key.Escape) }
+        onNodeWithTag("live-composer-model").performClick()
+        onNodeWithTag("live-composer-model-popup").performKeyInput { pressKey(Key.Escape) }
         onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
         runOnIdle { owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
         onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
-        onNodeWithTag("live-composer-effort-slider").assertIsNotEnabled()
-        onNodeWithTag("live-composer-model-select").performClick()
-        onNodeWithTag(menuTag(FIRST)).assertDoesNotExist()
+        // Read-only still opens the list for a model with no effort stops, but choosing is inert.
+        onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
+        onNodeWithTag(menuTag(FIRST)).performClick()
         runOnIdle { assertEquals(listOf(SECOND), owner.selected) }
     }
 
@@ -212,7 +216,7 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-permissions").assertIsEnabled().performClick()
         onNodeWithTag("live-composer-permission-FullAccess").performClick()
         onNodeWithTag("live-composer-permission-popup").assertDoesNotExist()
-        onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问权限")
+        onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问")
         onNodeWithTag("live-composer-permissions").performClick()
         onNodeWithTag("live-composer-permission-FullAccess").assertIsSelected()
         onNodeWithTag("live-composer-permission-Ask").performKeyInput { pressKey(Key.Escape) }

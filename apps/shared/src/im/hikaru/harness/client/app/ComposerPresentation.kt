@@ -10,9 +10,11 @@ public data class ConversationModelChoice(
 )
 
 public enum class ComposerPermission(val label: String, val description: String) {
-    Ask("请求批准", "编辑外部文件和访问互联网前请求批准"),
+    Ask("请求批准", "编辑外部文件和使用互联网时始终询问"),
     Automatic("帮我批准", "仅对检测到的风险操作请求批准"),
-    FullAccess("完全访问权限", "不限制访问互联网和电脑上的文件"),
+    FullAccess("完全访问权限", "可不受限制地访问互联网和你电脑上的任何文件"),
+    // Measured fourth row of the live menu. Like every other entry this is a UI preference only.
+    Custom("自定义 (config.toml)", "使用 config.toml 中定义的权限"),
 }
 
 /** UI selection only: permission is deliberately never serialized into AgentOptions. */
@@ -66,16 +68,22 @@ internal fun composerModel(
         ?: ConversationModelChoice(source.provider, source.model, "${source.provider} / ${source.model}")
 }
 
+/**
+ * Live Codex effort names (`composer.mode.local.reasoning.*.label`, zh-CN), read from the asar and
+ * confirmed by the picker's sr-only label list: 无 / 极低 / 轻度 / 中 / 高 / 极高 / Max / Ultra / 持续.
+ * `max` and `ultra` have no zh-CN translation in the bundle, so they stay Latin.
+ */
 internal fun effortLabel(value: String?): String = when (value) {
     null -> "默认"
-    "none" -> "关闭"
+    "none" -> "无"
     "minimal" -> "极低"
     "low" -> "轻度"
-    "medium" -> "中等"
-    "high" -> "深度"
-    "xhigh" -> "超高"
-    "max" -> "最高"
-    "ultra" -> "极高"
+    "medium" -> "中"
+    "high" -> "高"
+    "xhigh" -> "极高"
+    "max" -> "Max"
+    "ultra" -> "Ultra"
+    "persistent" -> "持续"
     else -> value
 }
 

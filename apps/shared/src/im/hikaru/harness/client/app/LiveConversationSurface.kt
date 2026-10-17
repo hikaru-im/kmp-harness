@@ -224,8 +224,10 @@ public fun LiveThreadSurface(state: ConversationState, onRetry: () -> Unit) {
 }
 
 @Composable
-internal fun ConversationNotice(text: String, tag: String, isError: Boolean = false) {
-    HarnessText(text, Modifier.semantics { testTag = tag; if (isError) error(text) },
+internal fun ConversationNotice(
+    text: String, tag: String, isError: Boolean = false, modifier: Modifier = Modifier,
+) {
+    HarnessText(text, modifier.semantics { testTag = tag; if (isError) error(text) },
         color = if (isError) HarnessTokens.Colors.Danger else HarnessTokens.Colors.TextMuted,
         style = MaterialTheme.typography.bodySmall)
 }

@@ -750,9 +750,11 @@ public fun HarnessApp(
         pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
         page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "所选项目尚未加载，请刷新项目后再发送。"
         page == PageId.Home && localProjectsState.mutation != null -> "正在保存项目变更，请稍候。"
-        transport == ConnectionTransport.Local && effectiveNewModel == null -> "请选择本机目录中的模型。"
         else -> null
     }
+    // A local session cannot start without a provider/model, but the reference composer never prints
+    // an inline hint for it; the model chip is the affordance, so keep the block silent.
+    val submitBlockedWithoutHint = transport == ConnectionTransport.Local && effectiveNewModel == null
     val homeComposer: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (page == PageId.Home && transport == ConnectionTransport.Local) LocalProjectPicker(localProjectsState,
@@ -835,7 +837,7 @@ public fun HarnessApp(
             onCancel = { if (homeComposerIsCurrent()) conversation.cancel() }, models = modelChoices,
             selectedModel = effectiveNewModel,
             onModelSelect = { selectedNewModel = it }, modelUnavailableReason = modelReason,
-            submitUnavailableReason = submitReason,
+            submitUnavailableReason = submitReason, submitBlocked = submitBlockedWithoutHint,
             selectedReasoningEffort = effectiveNewEffort,
             onReasoningEffortSelect = { selectedNewEffort = it },
             onConfigureModels = if (transport == ConnectionTransport.Local) ({ navigation = navigation.navigate(PageId.Settings(SettingsSection.Models)) }) else null,

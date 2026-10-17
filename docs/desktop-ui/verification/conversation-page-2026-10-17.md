@@ -88,6 +88,99 @@ activity 折叠行的实测结构（只读 DOM，`/tmp/actprobe5.mjs` / `actprob
 | composer 上方渐隐 | 32px |
 | 回到底部按钮 | 32×32，背景 `#181818`，位于 composer 顶部上方 24px |
 
+#### 合并后的 composer 回归（2026-10-17 19:26 实测）
+
+合并 `origin/main` 带入了新的 `LiveConversationComposer.kt` / `ConversationComposerToolbar.kt`（权限 chip、模型与推理强度弹窗、附件位、发送/停止），但它同时用一套未经本页实测的样式（`SurfaceElevated`、1dp 外描边、16/16/12 内边距、32px 控件）替换了已对齐的视觉。按“结构可以采纳、样式以 Codex 为准”的原则，保留上游控件与交互，把外观改回下表的实测值（tokens 在 `HarnessTokens.Composer`）：
+
+| 项 | 实现值（实测来源） |
+| --- | --- |
+| 背景 / 圆角 | `#363636`（深）/ 白（浅）；22 |
+| 边缘 | 无外描边；0.5dp 白色 20% 内侧微光（近似 `0 0 1px inset`） |
+| 内边距 | 上 14、下 8；输入区水平 12、footer 水平 8 |
+| 输入行 | 44 高；14 / 20 白色；占位 0.498 白，会话内「与 Codex 协作」、首页「随心输入」 |
+| footer | 行高 28；控件 28×28、间距 5；文字 13 / 18 |
+| 权限 chip | 6px 内边距、16 图标 + 4 gap；完全访问整体用 `rgb(255,133,73)`，chip 取实测短标题「完全访问」（弹窗项仍是「完全访问权限」） |
+| 主操作 | `#2C67C5`（深）/ `#3A83F7`（浅），白色 16px 图标 |
+| 弹窗 | 320 宽、圆角 20、4 内缩、0.5px 白色 8.2% 环、`0 8px 16px -4px` 阴影；行 312×42.6（8/5 内边距、圆角 15、13/18 标签 + 12/14 描述）；四项权限 + 右侧「了解更多」下划线链接 |
+| chip 悬停/展开 | 填充白色 8%（实测于展开态） |
+| 上方渐隐 / 底部内缩 | 32px / 16px |
+
+补充实测：当前实时窗口里的 `_ComposerLayoutRoot` 为 736×98（x=461.5，y=764），footer 首行 y=62；`+` 在 x=8、权限 chip 在 x=41（gap 5）、模型按内容右对齐、听写与主操作各 28，右内边距 8。输入包装层 `0 12px`，`ProseMirror` 14/20。权限弹窗行内标签在 DOM 里同时存在白色与橙色的两层 span，按像素取样，完全访问的可见文字是橙色（`rgb(255,133,73)`）。
+
+#### footer 逐项复刻与两个弹窗（2026-10-17 20:24–20:33 实测）
+
+此轮把参考 footer 的每个插槽、权限弹窗与模型弹窗都按 DOM + 像素重测了一遍，并补齐了此前未采纳的第四项与「了解更多」链接。参考窗口仍为 1630×882，CDP target `66ABDF2C…`；测量结束已用 Escape 关闭弹窗，没有改动真实应用设置。
+
+footer（参考 `_ComposerLayoutFooter`，根 736×98，x=461.5 / y=764）：
+
+| 项 | 实测值 |
+| --- | --- |
+| footer 行 | 高 28，位于根底部上方 8；左右内边距 8 |
+| 加号槽 | 28×28，位于 x=469.5（根左 +8）；白色 16px 加号 |
+| 权限 chip | 28 高，内边距 `0 6`，16 图标 + 4 gap + 13/18 文字；展开/悬停填充白色 8% |
+| 左簇间距 | 加号与权限 chip 之间 5 |
+| 模型 chip | 内边距 `0 8`，内容 gap 5；模型名 13/18 白色，强度 13/18 `#3A83F7`，右侧 16px chevron（tertiary） |
+| 右簇 | 模型 chip 右缘与听写槽左缘重合（1125.5）；听写 28×28；再空 8；主操作 28×28；右内边距 8 |
+| 主操作 | 深色 `#2C67C5` / 浅色 `#3A83F7`，白色 16px 图标；空输入为波形，有文字为向上箭头，运行中为停止方块 |
+
+图标路径按参考 SVG 原样转录：加号/麦克风/向上箭头/chevron/重置/对勾/手/盾牌/齿轮（齿轮即第四项的 `20 20` “自定义”图标，依赖 evenodd 挖孔）。权限 chip 的短标题此前已实测为「自定义」（chip 73×28）；「请求批准 / 帮我批准」的 chip 图标仍未在参考里切换到对应状态实测，当前用手形与对勾盾牌推断。
+
+权限弹窗（参考 DOM）：
+
+| 项 | 实测值 |
+| --- | --- |
+| 容器 | 320×204.25，位于 chip 左缘（504, 620）；圆角 20，内缩 4；表面 `surface-elevated-secondary/90`（像素上 `rgba(43,43,43)`）；0.5px 白 8.2% 环 + `0 8px 16px -4px` 阴影 |
+| 头部 | 312×26，内边距 `5 8`，13/16，`rgba(255,255,255,.498)`；右侧「了解更多」下划线链接 52×16 |
+| 行 | 312×42.5625，x=508，首行 y=650；圆角 15、内边距 `5 8`、内容 gap 6；图标 20 viewBox 以 18 绘制、75% 不透明度；标签 13/18.5714 白色，描述 12/14 `rgba(255,255,255,.498)`；选中项右侧 16px 对勾 |
+| 第四行 | 「自定义 (config.toml)」/「使用 config.toml 中定义的权限」，齿轮图标 |
+| 完全访问 | 标签与描述同为 `rgb(255,133,73)`；描述文案「可不受限制地访问互联网和你电脑上的任何文件」 |
+
+实现把权限选项扩为四项（`ComposerPermission.Custom`），文案与参考逐字一致；和其余三项一样，它只是 UI 偏好（`ComposerPermission` 从不写入 AgentOptions）。「了解更多」没有可跳转的文档，按附件/听写的同样做法渲染为禁用链接 + 「文档暂不可用」提示。此前弹窗底部有一行本实现自己的「仅保存界面选择，执行权限仍由 Host 管理。」说明，按用户要求已删除；现在弹窗与参考一样以第四行为结尾，实测高 203.5（参考 204.25）。
+
+模型弹窗（参考实测 254 宽）：
+
+| 项 | 实测值 |
+| --- | --- |
+| 容器 | 254 宽、内缩 4、圆角 20、同一表面色与阴影；左缘与模型 chip 左缘对齐 |
+| 头部 | 48 高：左缩进 32，chip 182×48 圆角 8，右上角 32×32 重置；强度 14/20 `#3A83F7` 在模型名上方（`max` 时改用 `--color-chart-purple`，深色 `#C8A4FB`），模型名 12/16 白 65% + 12px chevron |
+| 滑杆行 | 40 高（`--spacing` 4 上下），容器 242×32 内边距 `2 6`，root 230×28；轨道 230×24、圆角 12、未填充 `color(srgb 1 1 1 / 0.1)`、填充 `#3A83F7`；每档一个 4px 圆点，距轨道两端 13px，已到达 30% 白、未到达 25% 白；旋钮 Ø28 纯白；圆点 = 档位、左右方向键切换 |
+| 触发器 | 强度面板展开时，footer 的模型 chip 文字换成居中的「选择强度」（13px，0.498 白），宽度保持关闭时的模型名宽度，并保持 `data-[state=open]` 的 8% 白色填充 |
+| 菜单表面 | 90% 不透明：在 `#181818` 页面上呈现 `rgb(43,43,43)`，在 `#363636` composer 上呈现 `rgb(46,46,46)`（像素反推，无额外底板） |
+| 列表视图（同弹窗第二屏） | 内容内边距 `0 4 4`；分组标题「选择模型」235×26.5625（内边距 `5 8`，文字 x=弹窗+12，13px `rgba(255,255,255,.498)`）；模型行为 `role=menuitemradio` 235×28.5625，x=弹窗+4，圆角 15、内边距 `5 8`，标签 13/18.5714 白色，选中行右侧 17×17 对勾；行与行之间没有间隙，行距等于行高 |
+| 列表右侧留白 | 行右缘距弹窗右缘 15（弹窗 254 = 4 内缩 + 235 行 + 11px 滚动条槽 + 4 内缩）；参考里模型多于可视高度时该槽出现，实测列表只有 8 项也保留了这一槽 |
+| 参考专属项 | 列表首行是 Codex 专属的「默认 / 推荐模型集」两行入口（42.5625 高）；harness 没有对应概念，未实现 |
+
+本构建的渲染复核（离线夹具 `…-variants`，1467×870，dark）：composer 外沿 `x=534/1269`、`y=752/849`，即 736×98；footer 高 28、底距 8；加号字形 550–561，权限图标 583–594 / 文字到 652；模型文字 1000–1167、chevron 1179–1184、麦克风 1206–1217、主操作圆盘 1234–1261，得到 chip 右缘 = 听写左缘 1197.5、+8 = 圆盘左缘 1233.5、右内边距 8，与参考结构一致。权限弹窗四项、橙色完全访问、选中对勾、齿轮与「了解更多」均已在截图中核对；模型弹窗实测约 254 宽，重置位于右上角，只读会话下滑杆禁用并显示原因。
+
+21:11–21:18 又用带模型配置的离线夹具（`/tmp/kmp-harness-fixture-models-home-20261017`，三个 fixture 模型）复核首页 composer 与模型列表：首页不再出现「请选择本机目录中的模型。」提示或「配置模型」行（发送按钮仍静默禁用）；点开「选择模型」后，弹窗外沿 `x=1053/1306`（含 0.5 环即 254）、表面 `y=465.5/588`（约 122 高 = 4 内缩 + 26 标题 + 3×28.5 行 + 4），三行文字顶边 `508/537/566`（行距 29 ≈ 28.56），文字左缘 1066 = 弹窗 +12，均与参考一致。权限弹窗在固定行高后重测：弹窗外沿 `x=631.5/950.5`（319 + 环 = 320）、`y=384.5/588`（203.5，参考 204.25），四行标签顶边 `421/464/507/550`（行距 43 ≈ 42.5625），行高此前被 Material3 `minimumInteractiveComponentSize` 撑到 48dp，给行固定高度（权限 42.5、模型 28.5）后不再膨胀。选中模型后再从强度弹窗头部进入列表，选中行右侧出现 17×17 对勾（见 `final-home-model-list-selected-dark-1467x870.png`）。
+
+#### 思考等级（推理强度）复刻（2026-10-17 21:20–21:45 实测）
+
+参考的「思考等级」就是模型弹窗的强度视图（`data-model-picker-view` 的第二屏）。此前本实现只画了滑杆的外形，档位名称、刻度和展开态都没有对齐；这轮按 DOM 与打包产物重做。证据：
+
+- 实时窗口（CDP target `66ABDF2C…`，仍为只读测量，未改动设置）打开强度视图后得到 DOM：popup 254×96；`_Container_xwb5v_1` 242×32（padding `2 6`），root 230×28；track 230×24、圆角 12、背景 `color(srgb 1 1 1 / 0.1)`；range `rgb(58,131,247)`、圆角 `12 0 0 12`；thumb 28×28 纯白；tick 4×4，位置 `calc(0% + 13px)` / `calc(50% + 0px)` / `calc(100% - 13px)`，已到达 `rgba(255,255,255,.3)`、未到达 `rgba(255,255,255,.25)`。头部 chip 182×48（强度 14/20 + 模型 12/16 + 12 chevron），重置 32×32；`aria-valuemin=0 / max=2 / now=1`。
+- 档位名称来自 asar 的 zh-CN 文案键 `composer.mode.local.reasoning.*.label`，并用 DOM 里触发器内的 sr-only 列表逐项核对：无 / 极低 / 轻度 / 中 / 高 / 极高 / Max / Ultra / 持续。旧实现把 medium/high/xhigh/max/ultra 写成「中等 / 深度 / 超高 / 最高 / 极高」，与参考不符，已按此表改正（`max`、`ultra` 在 zh-CN 包里没有译文，保持英文）。
+- 强度视图展开时 footer 触发器换成「选择强度」（`composer.modelPicker.selectEffort.label`）：实测 chip 由 870–1125 变为 878–1128，宽度基本不变、文字 0.498 白居中、底为打开态 8% 白。
+- `data-maximum`（`max`）时强度读数改用 `--color-chart-purple`（深色 `#C8A4FB`）。
+
+本构建渲染复核（同一临时夹具，为三个模型补了 `reasoningEfforts`）：强度弹窗外沿 `x=892/1145`、`y=492/588`，即 254×96；蓝色填充 `904..1134`（弹窗 +12 起、230 宽），圆点中心 917/1018/1119（距轨道两端 13），旋钮 28px 实测 1106..1133；选 `high` 时头部是蓝色「高」，选 `max` 时是 `rgb(199,164,251)` 的「Max」；footer chip 同步显示「Fixture Provider / Fixture Alpha 高」，展开时显示「选择强度」。
+
+harness 差异：模型设置里没有「默认档位」元数据，参考则知道每个模型的默认 effort。为避免伪造档位，滑杆的点数严格等于声明的 effort 数（参考同样是 3 档 3 点）；effort 未设置时旋钮停在第一档、头部显示「默认」，重置按钮清回未设置。
+
+#### 强度弹窗头部与无档位模型（2026-10-17 22:45–22:55 实测）
+
+再次只读测量实时窗口（同一 CDP target；测完把参考的模型选择恢复为 Deepseek V4.1 Flash (ClinePass) / 高，弹窗关闭，窗口尺寸未动）：
+
+- 头部不是整行 chip：`_SliderTopRowMotion` 246×48 内是左 32×32 的 `_FastModeToggle`（闪电、顶对齐）、居中的内容宽 `_ViewToggle`（本例 118×48、padding 4、radius 8、背景只在悬停时出现）、右 32×32 的 `_ResetToDefa`。`_ViewToggle` 内两行：effort 14/20 `rgb(58,131,247)`，模型名 12/16 `rgba(255,255,255,.65)`，chevron 12×12，行间 4px。此前 harness 把 chip 拉成整行宽、chevron 甩到最右，本轮改为内容宽并在两侧 32px 槽之间居中。
+- 无推理档位的模型：实时 `powerSelections` 只包含有档位的 3 个模型；打包产物 `app.asar` 里强度视图过滤后 `p==null` 直接渲染空的 `SimpleView`，外层用 `C.length>=2` 决定是否进入强度视图（否则直接 `advanced`）。即 Codex 对没有（或只有 1 个）档位的模型不显示任何提示文字，弹窗直接进入模型列表。harness 已按此处理：删除「此模型未提供可调整的推理档位。」，档位 <2 时点开即列表；选中该类模型后直接关闭弹窗（不再切强度视图）。
+- 模型列表视图（`advanced`，254×320）：`选择模型` 标题、`默认 / 推荐模型集` 分组标签、纯模型名行、右侧 16px 对勾。
+
+本构建渲染复核（同一离线夹具）：选中 Fixture Gamma（无档位）后弹窗直接关闭、footer 只显示模型名，再次点开进入模型列表；选中 Fixture Alpha 后强度视图 254×96，chip 内容宽 182（夹具模型名带 provider 前缀，结构与参考的 118 相同）、左 32 槽 + 居中 + 右 32 重置，模型名右侧 4px 处是 12px chevron。构建 22:34 `Build successful`。
+
+23:03 再次复核（同一夹具、新构建 23:02 `Build successful`）：Gamma 未选中时先开强度视图（`请先选择模型。`），经头部 chip 进列表选中 Gamma 后弹窗直接关闭；再次点开直接是列表，当前项 17px 勾选。只读会话（fixture-short）点开弹窗同样是列表视图（视图只看档位数，不看 `canChoose`），行可悬停/点击但选择不变，随后的 `LiveConversationInteractionTest` 两处断言按此更新。
+
+仍未闭合的差异：Ask/Automatic/Custom 的 chip 图标、发送/停止的启用态（夹具线程始终 `canCancel`，只能看到停止态）没有参考原型；「自定义」被选中时的 chip 只实测到短标题与 73×28 宽度，图标沿用齿轮。模型列表里参考独有的「默认 / 推荐模型集」两行入口（42.56 高）未实现，因为 harness 没有对应概念；列表行在参考里是 `role=menuitemradio`，本实现复用同一个 TextButton 行并只上报 `selected`。
+
 ## 2. Markdown 依据
 
 从 asar（`/Applications/ChatGPT.app/Contents/Resources/app.asar`，CSS 偏移约 66435101）提取 Markdown CSS，存为 `reference-markdown-css.txt`。采用的换算（16px 基准，1rem=16dp）：
@@ -115,7 +208,9 @@ activity 折叠行的实测结构（只读 DOM，`/tmp/actprobe5.mjs` / `actprob
 - `ConversationAppearance.kt` 新增 `ConversationGlyph.ActivityChevron`：把上面那条参考 path 原样放进 `conversationArtwork`（20 的 viewBox，按 14dp 缩放），用 `ConversationIcon` 填充绘制。此前用的是 `HarnessIconName.ChevronRight`（细描边 chevron），形状与参考不符。
 - `ConversationComponents.kt`：时间线 `LazyColumn`；外层左右各 11dp 模拟 `stable both-edges`；条目 `widthIn(max=768).padding(horizontal=16)`；`contentPadding top=32`，`bottom = 底部占位 + 20`；turn 间距 12；末尾 0 高锚点；底部占位变化与内容变化都只在“原本贴底”时重新对齐末尾，用户主动上滚后不会被拉回。
 - `ConversationMarkdown.kt`：标题、段落、强调、删除线、行内代码、链接/引用链接/自动链接、嵌套列表/引用/任务框、分隔线、对齐表格、围栏/缩进代码；图片只显示 alt，不加载远程资源；HTML/数学等保持原文。
-- `LiveConversationSurface.kt`：composer 98px 结构、22 圆角、`#363636`、0.5dp 内侧微光（近似 1px inset 阴影）、多行输入上限、Enter/Shift+Enter、占位文字按首页/会话切换、footer 控件右侧对齐。
+- `LiveConversationComposer.kt`：合并后承载输入区。保留上游的多行输入上限与 Enter/Shift+Enter 提交，按实测改为 98px 结构（14 + 44 + 4 + 28 + 8）、22 圆角、`#363636`、0.5dp 内侧微光、输入区 12 / footer 8 的分别内缩、14/20 正文，占位文字按首页/会话切换。
+- `ConversationComposerToolbar.kt`：保留上游的权限 chip、模型与推理强度弹窗、附件位和发送/停止，按实测改为 28px 控件、5px 间距、13/18 标签、0.498 白 ink；权限 chip 用「完全访问 / 自定义」短标题，完全访问橙色前景；主操作使用实测蓝色与波形/箭头/停止三种 16px 图标。权限弹窗按实测补齐第四项「自定义 (config.toml)」与头部「了解更多」，行 312×42.6、图标 18@75%、文案逐字对齐参考；模型弹窗为 254 宽、48 头部（32 内缩 + 182 chip + 32 重置）+ 32 滑杆行；列表视图为 26 标题 + 28.5 行距 + 右侧 15 留白，选中行 17px 对勾。权限行与模型行都给固定高度，避免 Material3 把行撑到 48dp；权限弹窗底部的 Host 说明已删除。强度视图按参考改正档位名称（无 / 极低 / 轻度 / 中 / 高 / 极高 / Max / Ultra / 持续）、每档一个 4px 圆点、28px 旋钮与 30%/25% 圆点色，`max` 时读数用紫色；强度面板展开时触发器显示居中的「选择强度」。
+- `HarnessTokens.Composer` / `HarnessComposerControls.kt` / `HarnessOverlays.kt`：把上面这些实测值收进共享 tokens，并给弹窗增加可选形状/颜色/描边/阴影参数（默认值保持其它页面不变）。
 - `AppShell.kt`：仅 `PageId.Thread` 走全尺寸会话布局，composer 悬浮在底部，实测高度通过 `onGloballyPositioned` 写入 `LocalConversationBottomInset`；其它页面仍走原布局，标题栏阴影未改动。
 - 时间戳：`Message.timestampMillis` 来自会话事件 `event.time`，经 `SessionProjection`、client `Message`、`LocalConnection` 传到 UI；没有时间就不画时间，未伪造。显示格式为“星期X + 24 小时制”。
 
@@ -123,13 +218,21 @@ activity 折叠行的实测结构（只读 DOM，`/tmp/actprobe5.mjs` / `actprob
 
 ```
 apps/shared/module.yaml
-apps/shared/src/im/hikaru/harness/client/app/ConversationAppearance.kt   (新增)
+apps/shared/src/im/hikaru/harness/client/app/ConversationAppearance.kt   (新增；含 footer/权限/模型图标的参考 SVG path)
 apps/shared/src/im/hikaru/harness/client/app/ConversationMarkdown.kt     (新增)
 apps/shared/src/im/hikaru/harness/client/app/ConversationComponents.kt
 apps/shared/src/im/hikaru/harness/client/app/LiveConversationSurface.kt
+apps/shared/src/im/hikaru/harness/client/app/LiveConversationComposer.kt      (合并后按实测回归)
+apps/shared/src/im/hikaru/harness/client/app/ConversationComposerToolbar.kt  (合并后按实测回归)
+apps/shared/src/im/hikaru/harness/client/app/ComposerPresentation.kt         (四项权限、参考文案、chip 短标题)
 apps/shared/src/im/hikaru/harness/client/shell/AppShell.kt
+modules/ui-foundation/src/im/hikaru/harness/ui/foundation/HarnessTokens.kt
+modules/ui-foundation/src/im/hikaru/harness/ui/foundation/HarnessComposerControls.kt
+modules/ui-foundation/src/im/hikaru/harness/ui/foundation/HarnessOverlays.kt
 apps/shared/src/im/hikaru/harness/client/connection/Connection.kt
 apps/jvm-app/src/im/hikaru/harness/desktop/connection/LocalConnection.kt
+apps/jvm-app/test/im/hikaru/harness/desktop/LiveConversationInteractionTest.kt          (chip 短标题断言)
+apps/jvm-app/test/im/hikaru/harness/desktop/LiveHarnessConversationInteractionTest.kt   (chip 短标题断言)
 modules/llm/src/im/hikaru/harness/llm/Message.kt
 modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 ```
@@ -171,6 +274,23 @@ modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 | `final-activity-expanded-dark-1467x870.png` | activity 行展开：chevron 旋转 90° 并保持可见（17:04 构建） |
 | `final-reasoning-expanded-dark-1467x870.png` | 思考展开 |
 | `final-multiline-dark-1467x870.png` | 多行输入，composer 增高后末条消息仍可见 |
+| `final-composer-thread-dark-1467x870.png` | footer 逐项复刻后的会话 composer：736×98、加号/盾牌 chip/模型 chip/麦克风/蓝色停止（20:33 构建） |
+| `final-composer-permissions-dark-1467x870.png` | 权限弹窗：320 宽、四项权限、橙色完全访问、齿轮自定义、「了解更多」下划线链接（20:33 构建） |
+| `final-composer-model-dark-1467x870.png` | 模型弹窗：254 宽、48 头部（182 chip + 右上重置）、32 滑杆行；只读会话下滑杆禁用（20:33 构建） |
+| `final-home-composer-dark-1467x870.png` | 首页 composer：`随心输入`、波形主按钮（20:33 构建） |
+| `final-home-composer-typed-dark-1467x870.png` | 首页输入 `hi` 后：主按钮切换为向上箭头（无模型时 35% 禁用色）（20:33 构建） |
+| `final-home-composer-models-dark-1467x870.png` | 首页 composer（夹具配置了 3 个模型）：chip 为「选择模型」，不再显示模型缺失提示或「配置模型」行（21:15 构建） |
+| `final-home-model-list-dark-1467x870.png` | 模型列表：254 弹窗、26 标题、三行 28.5 行距、文字 x=弹窗+12、右侧 15 留白（21:15 构建） |
+| `final-home-model-list-selected-dark-1467x870.png` | 选中 Fixture Beta 后再进列表：选中行右侧 17×17 对勾，首行悬停填充（21:15 构建） |
+| `final-home-permissions-dark-1467x870.png` | 首页权限弹窗（已删除 Host 说明）：320×203.5、四行 42.5 行距（21:15 构建） |
+| `final-home-effort-default-dark-1467x870.png` | 强度视图（未设置 effort）：254×96、230 轨道、3 个 4px 圆点、28px 旋钮；触发器显示「选择强度」（21:42 构建） |
+| `final-home-effort-high-dark-1467x870.png` | 强度视图选 `high`：蓝色「高」、蓝色填充到右端（21:42 构建） |
+| `final-home-effort-max-dark-1467x870.png` | 强度视图选 `max`：读数变紫（`rgb(199,164,251)`）「Max」（21:42 构建） |
+| `effort-popup-content-chip-dark-1467x870.png` | 头部 chip 改为内容宽并居中、chevron 紧贴模型名（22:34 构建） |
+| `no-effort-model-closed-dark-1467x870.png` | 选中无档位模型 Fixture Gamma：弹窗直接关闭、footer 无强度、无提示文字（22:34 构建） |
+| `no-effort-model-list-dark-1467x870.png` | 无档位模型再次点开：直接进入模型列表（22:34 构建） |
+| `no-effort-model-readonly-dark-1467x870.png` | 只读会话点开模型弹窗：同样是列表视图、选择不可改 |
+| `reference-composer-live-1630x882.png` | 实时 Codex 窗口：同一 composer 的参考外观（含听写/语音按钮） |
 | `final-markdown-light-1090x760.png` | 浅色 + 窄窗口：标题、列表、代码块、引用、表格 |
 
 错误卡片描边与 activity 折叠行改完后重新构建（`Build successful`）并重启夹具（home `…-variants`，选中 `fixture-error-20261017`），重新截取了 `final-error-dark-1467x870.png`（替换掉改动前无描边的版本）与两张 activity 状态图；截图前等待动画稳定，测量后已把展开的折叠行收回、鼠标移开。
@@ -178,6 +298,14 @@ modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 把工具失败改回 activity 折叠行后再次构建（`Build successful`，17:48 刷新共享 jar）并重启同一夹具，重新截取 `final-error-dark-1467x870.png`；展开态在本机与参考对照后确认：折叠行展开时 chevron 下向、正文为工具输出。
 
 加入「用时」头、工具结果折叠与动作行合并后再次构建（`Build successful`，18:39 刷新共享 jar）并重启夹具，错误会话与长会话都重新截图核对：活动行只剩一条「已读取 summary.txt」，展开体是折叠进来的工具输出，动作行只出现在末次回复下。
+
+合并 `origin/main` 后按实测回归 composer（`Build successful`，19:26 刷新共享 jar）并重启同一夹具：会话 composer 的纯色区实测 734×96（加 0.5dp 描边约 736×98，与实时 `_ComposerLayoutRoot` 一致），权限切到「完全访问」后 chip 与图标整体变橙；权限弹窗重新截图核对 320 宽、4 内缩、行高 42.6；首页 composer 同步取图。测量用的实时窗口只在读取 DOM 时短暂展开过权限弹窗，随后用 Escape 关闭，没有改动应用设置。
+
+20:24–20:33 补齐 footer 图标、权限第四项与「了解更多」、模型弹窗版式后再次构建（构建目录 `/tmp/kmp-harness-merge-20261017-build`，`Build successful`）并重启夹具。注意：本轮 `./kotlin build -m jvm-app` 只刷新了 `jvm-app-jvm.jar`，`tasks/_shared_jarJvm/shared-jvm.jar` 仍是 20:13 的旧包（即使删掉 jar 与 `incremental.state/_shared_jarJvm-*` 也不会重建）；改用 `./kotlin package -m jvm-app --build-dir=…` 后才生成 20:33 的新共享 jar，夹具类路径才会包含 `ComposerPermission.Custom`。重启后逐项截图核对：footer 736×98 与各槽位像素位置、权限弹窗四项与链接、模型弹窗 254 宽与右上重置、首页空/输入两态的主按钮图标。实时窗口的权限弹窗在这次 DOM 读取后同样用 Escape 关闭。
+
+21:38–21:44 按实测补做思考等级：修正 `effortLabel` 的全部档位名称、滑杆几何（230 轨道、4px 圆点、28px 旋钮、30%/25% 圆点色、`max` 紫色）、强度面板展开时的「选择强度」触发器，`./kotlin package -m jvm-app --build-dir=/tmp/kmp-harness-merge-20261017-build` 报 `Build successful`（21:42 刷新共享 jar）；给临时夹具的三个模型补上 `reasoningEfforts` 后重启，逐档截图并像素复核弹窗 254×96、轨道 904–1134、圆点 917/1018/1119、旋钮 1106–1133、`Max` 颜色 `rgb(199,164,251)`。
+
+21:11–21:16 为模型列表对齐再做一次构建：在权限行与模型行上给固定高度（`HarnessTokens.Composer.PermissionItemHeight = 42.5dp`、`ModelItemHeight = 28.5dp`），否则 Material3 的最小交互尺寸会把行撑到 48dp；`./kotlin package -m jvm-app --build-dir=/tmp/kmp-harness-merge-20261017-build` 报 `Build successful` 并刷新共享 jar（21:15），随后用带 3 个模型配置的临时夹具（`/tmp/kmp-harness-fixture-models-home-20261017`，仓库外）重启，逐个截图测量首页、模型列表（选中前后）与权限弹窗，测量完关闭弹窗并结束夹具进程。
 | `reference-layout.json` / `reference-icons.json` / `reference-fades.json` / `reference-markdown.json` / `reference-markdown-css.txt` | 参考 DOM 与 SVG/CSS 证据 |
 
 像素取样（截图转 sRGB 后读取原始像素）：
@@ -186,7 +314,7 @@ modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 | --- | --- |
 | 画布 | `#181818` |
 | composer 主体 | `#363636` |
-| composer 边缘描边 | `#404040`（近似微光，非真实 1px blur） |
+| composer 边缘 | `#363636` 上一条白色 20% 的 1px 内侧微光（参考 `rgba(255,255,255,.2) 0 0 1px 0 inset`；实现用 0.5dp 描边近似，像素落在 `#404040` 一带） |
 | 用户气泡 | `#163f75`~`#173d74`（目标 `#173e76`，受显示色彩配置与抗锯齿影响） |
 | 单行用户气泡高度 | 42px（10 + 22.75 + 10 ≈ 42.75） |
 | composer 总高 | 98px（实测 752→850 边界） |
@@ -197,6 +325,14 @@ modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 ## 7. 已知限制（未声称完整复刻）
 
 - composer 内侧微光用 0.5dp 描边近似 1px inset 阴影，没有实现真正的模糊。
+- 主操作按钮只实测到参考的蓝色（空输入时那里显示的是语音按钮，不是发送）：发送/停止的禁用态与生成中态样式没有参考原型，实现沿用实测蓝色，禁用态用 35% 透明度。
+- 参考的听写/语音按钮已按实测画入（16px 麦克风、28px 槽位），但仍是禁用占位并提示「听写暂不可用」；模型 chip 里的 provider 图标没有对应资源，未实现。
+- 权限弹窗第四项「自定义 (config.toml)」与「了解更多」已补齐外观；前者只是 UI 选项（harness 不读取 config.toml），后者没有文档地址，渲染为禁用链接并提示「文档暂不可用」。
+- 权限 chip 的图标只实测到「完全访问」的橙色警告图标；「请求批准 / 帮我批准 / 自定义」的 chip 图标按弹窗内同款图标推断（手形 / 对勾盾牌 / 齿轮）。「自定义」的 chip 短标题有实测依据（参考 chip 73×28 时显示「自定义」），但没有在参考里切换权限复测（那会改真实应用的设置）。
+- 模型列表按参考保留右侧 15（4 内缩 + 11px 滚动槽）留白，但不绘制滚动条；行高为固定的 28.5，未上报 `menuitemradio` 语义，也没有键盘上下切换。参考独有的「默认 / 推荐模型集」入口未实现。
+- 强度滑杆只渲染模型声明的档位（与参考一致），但没有「默认档位」元数据：effort 未设置时旋钮停在第一档并显示「默认」，参考会显示该模型的默认档位；`max` 的紫色取自 `--color-chart-purple` 深色值，浅色未实测。
+- 强度弹窗头部左侧的 32px 快速模式（闪电）开关没有实现：harness 没有 service tier 概念，该槽位留空以保持 chip 居中与整体几何；模型列表行仍带 `provider / model` 前缀，也没有参考的「默认 / 推荐模型集」分组标题。
+- 本机（Local）模式未选模型时，首页 composer 不显示任何提示（按用户要求删除了「请选择本机目录中的模型。」），发送保持静默禁用；模型 chip 是唯一的可发现入口。
 - 错误卡片的两层 CSS 阴影用 `Modifier.shadow(6dp)` 近似，模糊半径与偏移未逐像素对齐；在 `#181818` 画布上这两层（黑 5% / 2%）本身几乎不可见，可见边界来自 0.5dp 描边。
 - 错误卡片保留了一个参考里没有的“重试”文字按钮（仅在调用方传入 `onRetry` 时出现，用于真实的提交/取消/历史重试）；参考卡片没有该控件。
 - 错误卡片浅色描边取自样式表声明的 12% 前景色，未做浅色像素实测。
@@ -211,8 +347,8 @@ modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 - assistant 操作行（复制/朗读/评价/分支）在参考中未能在默认状态下测量到（未悬停时不出现），实现沿用先前记录的 26×26 / gap 2 / top 6 / offset -4。
 - 代码块头部不吸顶；展开按钮为禁用占位；没有语法高亮。
 - Markdown 不支持数学、脚注、原始 HTML 渲染、远程图片加载与文内锚点；表格列宽为 Compose 估算后均分剩余宽度，未复刻 CSS 的 `data-col-size` 自动布局。
-- 附件、权限调整、听写/语音、朗读、评价、分支均为禁用控件并给出原因，没有新增真实功能。
-- 部分图标（Up/Stop/Chevron/Code/Expand）为手绘路径，未逐像素对齐原 SVG；activity 折叠行的 chevron 已改为参考原 path。
+- 附件、听写/语音、朗读、评价、分支均为禁用控件并给出原因；权限四选项可选，但只是 UI 偏好（不写入 AgentOptions、不改变执行权限），弹窗底部对此有说明。没有新增真实功能。
+- 部分图标（Up/Stop/Chevron/Code/Expand）为手绘路径，未逐像素对齐原 SVG；activity 折叠行的 chevron、footer 的加号/麦克风/发送箭头/对勾/重置/手/盾牌/齿轮，以及模型弹窗的 chevron 已按参考 SVG path 原样转录。
 - 时间显示固定“星期六14:30”样式，未复刻参考的完整相对日期/local 规则。
 - 工具 activity 文案按工具名启发式分类，运行中的 reasoning 动态状态未单独区分。
 - 最终构建的自动化滚动注入未再送达窗口（列表状态日志确认未收到滚轮事件），上滚/回到底部交互以 15:24 构建截图为准；该手势不涉及后续改动，建议验收时手动复核一次。

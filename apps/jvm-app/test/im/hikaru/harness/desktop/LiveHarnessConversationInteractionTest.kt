@@ -41,7 +41,7 @@ class LiveHarnessConversationInteractionTest {
         onNodeWithTag("recent-${second.value}").performClick()
         onNodeWithTag("live-composer-permissions").assertTextEquals("请求批准")
         onNodeWithTag("recent-${first.value}").performClick()
-        onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问权限")
+        onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问")
         runOnIdle { assertTrue(api.creates.isEmpty()); assertTrue(api.prompts.isEmpty()) }
     }
 
@@ -121,7 +121,7 @@ class LiveHarnessConversationInteractionTest {
                 onNodeWithText("Reply from the test Session API").assertExists()
                 onNodeWithTag("live-composer-stop").assertIsEnabled()
                 onNodeWithTag("live-composer-send").assertDoesNotExist()
-                onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问权限")
+                onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问")
                 runOnIdle {
                     assertEquals(listOf("create", "prompt"), api.commands.toList())
                     assertNull(api.creates.single().requestedId)
