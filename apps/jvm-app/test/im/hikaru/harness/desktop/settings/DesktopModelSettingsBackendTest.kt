@@ -15,6 +15,98 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class DesktopModelSettingsBackendTest {
+    @Test
+    fun discoveryPersistsRemoteCatalogAndDoesNotOverwriteOnFailureOrConcurrentEdit() = runBlocking {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        val runtime = host(InMemorySettingsDocumentStore())
+        val backend = DesktopModelSettingsBackend(runtime.context)
+        val code = java.util.concurrent.atomic.AtomicInteger(200)
+        val editDuringFetch = java.util.concurrent.atomic.AtomicBoolean(false)
+        server.createContext("/") { exchange ->
+            if (editDuringFetch.getAndSet(false)) runBlocking {
+                val latest = backend.read()
+                backend.save(latest.providers.single { it.id == "custom" }.configuration!!.copy(displayName = "Concurrent edit"), latest.revision)
+            }
+            val bytes = """{"data":[{"id":"remote-model","name":"Remote Model","context_window":32000}]}""".toByteArray()
+            exchange.sendResponseHeaders(code.get(), bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val original = ProviderConfiguration("custom", baseUrl = "http://127.0.0.1:${server.address.port}",
+                credentialName = "MODEL_TEST_KEY", modelIds = listOf("old-model"))
+            backend.save(original, backend.read().revision)
+            backend.discoverModels("custom", backend.read().revision)
+            val imported = backend.read().providers.single { it.id == "custom" }
+            assertEquals(listOf("remote-model"), imported.configuration!!.modelIds)
+            assertEquals("Remote Model", imported.models.single().name)
+            assertEquals(32000, imported.models.single().contextWindow)
+            code.set(401)
+            assertFailsWith<IllegalStateException> { backend.discoverModels("custom", backend.read().revision) }
+            assertEquals(imported.configuration, backend.read().providers.single { it.id == "custom" }.configuration)
+            code.set(200)
+            editDuringFetch.set(true)
+            assertFailsWith<ProviderRevisionConflict> { backend.discoverModels("custom", backend.read().revision) }
+            assertEquals("Concurrent edit", backend.read().providers.single { it.id == "custom" }.displayName)
+        } finally { server.stop(0); runtime.context.dispose() }
+    }
+
+    @Test
+    fun legacyMissingReferenceIsNotReportedAsConfiguredAndCanBeRepairedAfterRestart() = runBlocking {
+        val store = InMemorySettingsDocumentStore()
+        store.write(buildJsonObject {
+            putJsonObject("llm-koog") {
+                putJsonObject("providers") {
+                    putJsonObject("openai") { put("api", "openai-chat-completions") }
+                }
+            }
+        })
+        val secrets = InMemoryCredentialProvider(mapOf(CredentialRef("OPENAI_API_KEY") to "synthetic-default-value"))
+        val runtime = host(store, secrets)
+        try {
+            val backend = DesktopModelSettingsBackend(runtime.context)
+            val before = backend.read()
+            val broken = before.providers.single()
+            assertFalse(broken.active)
+            assertFalse(broken.credentialConfigured)
+            assertFalse(broken.credentialWritable)
+            assertTrue(broken.applicationError!!.contains("未绑定凭据"))
+            assertFailsWith<IllegalArgumentException> {
+                backend.save(broken.configuration!!, before.revision)
+            }
+            backend.save(broken.configuration!!.copy(credentialName = "MODEL_TEST_KEY", modelIds = listOf("custom-model")), before.revision)
+            assertTrue(backend.read().providers.single().applicationError!!.contains("凭据不存在"))
+            backend.setCredential("MODEL_TEST_KEY", "synthetic-repaired-value")
+            backend.retryApplication()
+            val repaired = backend.read().providers.single()
+            assertTrue(repaired.active)
+            assertTrue(repaired.credentialConfigured)
+            assertNull(repaired.applicationError)
+            assertEquals(listOf("custom-model"), repaired.models.map { it.id })
+            assertFalse(backend.read().toString().contains("synthetic-repaired-value"))
+        } finally { runtime.context.dispose() }
+    }
+
+    @Test
+    fun failedUpdateRetainsOldRouteAndReportsFailureUntilCredentialRepair() = runBlocking {
+        val runtime = host(InMemorySettingsDocumentStore())
+        try {
+            val backend = DesktopModelSettingsBackend(runtime.context)
+            val original = ProviderConfiguration("custom", credentialName = "MODEL_TEST_KEY", modelIds = listOf("old-model"))
+            backend.save(original, backend.read().revision)
+            backend.save(original.copy(credentialName = "MISSING_KEY", modelIds = listOf("new-model")), backend.read().revision)
+            val failed = backend.read().providers.single { it.id == "custom" }
+            assertTrue(failed.active)
+            assertNotNull(failed.applicationError)
+            assertEquals(listOf("old-model"), failed.models.map { it.id })
+            backend.setCredential("MISSING_KEY", "synthetic-new-value")
+            val recovered = backend.read().providers.single { it.id == "custom" }
+            assertTrue(recovered.active)
+            assertNull(recovered.applicationError)
+            assertEquals(listOf("new-model"), recovered.models.map { it.id })
+        } finally { runtime.context.dispose() }
+    }
+
     private fun credentials() = InMemoryCredentialProvider(mapOf(CredentialRef("MODEL_TEST_KEY") to "synthetic-test-value"))
     private suspend fun host(store: SettingsDocumentStore, credentials: CredentialProvider = credentials()): Runtime {
         val runtime = Runtime()

@@ -3,10 +3,12 @@ package im.hikaru.harness.bundle.desktop
 import im.hikaru.harness.credentials.CredentialRef
 import im.hikaru.harness.credentials.CredentialsKey
 import im.hikaru.harness.llm.LlmRuntime
+import im.hikaru.harness.llm.LlmSettingsFailure
 import im.hikaru.harness.llm.llm
 import im.hikaru.harness.llm.koog.KoogLlmSettings
 import im.hikaru.harness.llm.koog.KoogProviderSettings
 import im.hikaru.harness.llm.koog.openai.catalog.OpenAiKoogCatalog
+import im.hikaru.harness.llm.koog.openai.client.OpenAiModelDiscovery
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.settings.SettingsDescriptor
 import im.hikaru.harness.settings.SettingsConflictException
@@ -40,7 +42,8 @@ public data class DesktopProviderConfiguration(
                 "地址须为 HTTP(S) URL，且不能包含账号、查询参数或片段"
             }
         }
-        credentialName?.let { require(validDesktopCredentialName(it)) { "凭据名称格式无效" } }
+        require(!credentialName.isNullOrBlank()) { "请填写凭据引用名称" }
+        require(validDesktopCredentialName(credentialName)) { "凭据名称格式无效" }
         listOf(requestTimeoutMillis, connectTimeoutMillis, socketTimeoutMillis, defaultContextWindow, defaultMaxTokens).forEach {
             require(it == null || it > 0) { "超时和模型容量须为正整数" }
         }
@@ -64,6 +67,8 @@ public data class DesktopConfigurableProvider(
     val credentialWritable: Boolean = false, val credentialSource: String? = null,
     val canRemove: Boolean = false, val models: List<DesktopProviderModel> = emptyList(),
     val catalogError: String? = null,
+    val applicationError: String? = null,
+    val applying: Boolean = false,
 )
 public data class DesktopProviderSettingsSnapshot(
     val providers: List<DesktopConfigurableProvider> = emptyList(),
@@ -104,10 +109,19 @@ public class DesktopProviderSettings(private val context: Context) {
         val directory = context.llm.listConfigurableProviders().filter { it.settingsNamespace == namespace.value }
         val active = context.llm.listProviders().map { it.id }.toSet()
         val credentials = context.require(CredentialsKey)
+        val application = context.llm.settingsApplication(namespace.value)?.applicationState
         val providers = (directory.map { it.provider } + configuration.keys).distinct().map { id ->
             val configured = configuration[id]
-            val reference = CredentialRef(configured?.credential?.name ?: "OPENAI_API_KEY")
-            val credential = credentials.describe(reference)
+            val reference = configured?.credential?.name?.let(::CredentialRef)
+            val credential = reference?.let { credentials.describe(it) }
+            val applicationError = when {
+                configured != null && reference == null -> "未绑定凭据，请编辑 Provider 并填写凭据引用名称。"
+                configured != null && credential?.configured != true -> "引用的凭据不存在，请配置凭据后重试应用。"
+                application?.failure == LlmSettingsFailure.Credential -> "凭据加载失败，请检查已配置 Provider 的凭据后重试应用。"
+                application?.failure == LlmSettingsFailure.Configuration -> "配置应用失败，请检查 API 协议、模型和连接配置后重试应用。"
+                application?.failure == LlmSettingsFailure.Load -> "配置加载失败，请重试应用。"
+                else -> null
+            }
             var catalogError: String? = null
             val models = if (id !in active) emptyList() else try {
                 context.llm.listModels(id).map { model ->
@@ -125,9 +139,10 @@ public class DesktopProviderSettings(private val context: Context) {
             DesktopConfigurableProvider(
                 id = id, displayName = configured?.displayName ?: directory.firstOrNull { it.provider == id }?.displayName ?: id,
                 configuration = configured?.clientConfiguration(), active = id in active,
-                credentialConfigured = credential.configured, credentialWritable = credential.writable, credentialSource = credential.source,
+                credentialConfigured = credential?.configured == true, credentialWritable = credential?.writable == true, credentialSource = credential?.source,
                 canRemove = configured != null && (descriptor.base["providers"] as? JsonObject)?.containsKey(id) != true,
                 models = models, catalogError = catalogError,
+                applicationError = applicationError, applying = application?.applying == true,
             )
         }
         return DesktopProviderSettingsSnapshot(providers, protocols, descriptor.revision)
@@ -186,6 +201,51 @@ public class DesktopProviderSettings(private val context: Context) {
         val service = context.require(CredentialsKey)
         check(service.describe(reference).writable) { "当前凭据来源不可写入" }
         service.set(reference, value)
+        // Await application before publishing readback; credential watchers are asynchronous.
+        retryApplication()
+    }
+
+    public suspend fun retryApplication() {
+        checkNotNull(context.llm.settingsApplication(namespace.value)) { "模型配置应用服务不可用" }.retry()
+    }
+
+    public suspend fun discoverModels(providerId: String, expectedRevision: Long) {
+        val scope = settings()
+        val before = scope.describe()
+        checkRevision(before, expectedRevision)
+        val provider = KoogLlmSettings.fromJson(before.value).providers[providerId]
+            ?: error("请先保存 Provider 配置。")
+        require(provider.api in protocols.map { it.id }) { "此协议暂不支持自动获取模型。" }
+        val reference = provider.credential?.name?.let(::CredentialRef) ?: error("请先绑定凭据引用。")
+        val secret = context.require(CredentialsKey).resolve(reference)?.value ?: error("请先配置该 Provider 的凭据。")
+        val discovered = OpenAiModelDiscovery().fetch(provider.baseUrl, secret, provider.requestTimeoutMillis ?: 30_000)
+        // The network request may outlive an external edit: never overwrite a newer revision.
+        val current = scope.describe()
+        checkRevision(current, expectedRevision)
+        val user = current.user?.toMutableMap() ?: mutableMapOf()
+        val providers = (user["providers"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+        val fields = (providers[providerId] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+        val oldModels = (current.value["providers"] as? JsonObject)?.get(providerId)?.jsonObject?.get("models")
+            ?.jsonArray?.associateBy { it.jsonObject["id"]?.jsonPrimitive?.content }.orEmpty()
+        fields["models"] = JsonArray(discovered.map { model ->
+            val old = oldModels[model.id]?.jsonObject?.toMutableMap() ?: mutableMapOf()
+            old["id"] = JsonPrimitive(model.id)
+            model.name?.let { old["name"] = JsonPrimitive(it) }
+            model.contextWindow?.let { old["contextWindow"] = JsonPrimitive(it) }
+            JsonObject(old)
+        })
+        // modelOverrides and an explicit replacement catalog are mutually exclusive. Preserve
+        // user overrides for surviving IDs by merging them into the explicit model entries.
+        val overrides = current.value["providers"]?.jsonObject?.get(providerId)?.jsonObject?.get("modelOverrides") as? JsonObject
+        if (overrides != null) {
+            fields["models"] = JsonArray(fields.getValue("models").jsonArray.map { model ->
+                JsonObject(model.jsonObject + (overrides[model.jsonObject.getValue("id").jsonPrimitive.content] as? JsonObject).orEmpty())
+            })
+            fields["modelOverrides"] = buildJsonObject {}
+        }
+        providers[providerId] = JsonObject(fields)
+        user["providers"] = JsonObject(providers)
+        replace(scope, JsonObject(user), expectedRevision)
     }
 
     private fun checkRevision(descriptor: SettingsDescriptor, expected: Long) {

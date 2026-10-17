@@ -14,6 +14,7 @@ public data class ModelSettingsState(
     val saveRevision: Long = 0,
     val completedOperation: String? = null,
     val confirmedProviderConfiguration: ProviderConfiguration? = null,
+    val discoveringProviderId: String? = null,
 ) {
     public val canEdit: Boolean get() = loaded && snapshot.available && snapshot.writable && !loading && !saving && !refreshRequired
 }
@@ -52,6 +53,18 @@ public class ModelSettingsRepository(private val backend: ModelSettingsBackend =
     public suspend fun setCredential(name: String, value: String): Boolean = mutate("credential:" + name, secret = true) {
         require(validCredentialName(name) && value.isNotBlank())
         backend.setCredential(name, value)
+    }
+
+    public suspend fun retryApplication(): Boolean = mutate("apply") { backend.retryApplication() }
+
+    public suspend fun discoverModels(providerId: String, expectedRevision: Long): Boolean {
+        if (!state.value.canEdit) return false
+        mutableState.value = state.value.copy(discoveringProviderId = providerId)
+        try {
+            return mutate("models:$providerId") { backend.discoverModels(providerId, expectedRevision) }
+        } finally {
+            mutableState.value = state.value.copy(discoveringProviderId = null)
+        }
     }
 
     private suspend fun mutate(operation: String, secret: Boolean = false, configuration: ProviderConfiguration? = null, write: suspend () -> Unit): Boolean {

@@ -16,11 +16,8 @@ import androidx.compose.ui.unit.Density
 import im.hikaru.harness.client.fixture.HarnessReferenceFixture
 import im.hikaru.harness.client.app.HarnessApp
 import im.hikaru.harness.client.app.HarnessDestination
-import im.hikaru.harness.client.page.HomeComposer
-import im.hikaru.harness.client.page.HomePage
 import im.hikaru.harness.client.page.ProjectContextPanel
 import im.hikaru.harness.client.page.SettingsGeneralPage
-import im.hikaru.harness.client.page.ThreadComposer
 import im.hikaru.harness.client.page.ThreadPage
 import im.hikaru.harness.client.settings.GeneralSettingsState
 import im.hikaru.harness.client.shell.AppShell
@@ -597,7 +594,7 @@ private fun ReferenceThreadShell(
         onSelectRecent = {},
         onOpenProjectContext = {},
 
-        composer = { ThreadComposer(draft = "", onDraftChange = {}) },
+        composer = { ReferenceLiveComposer(thread = true) },
         contextPanel = { ProjectContextPanel(thread = fixture) },
         content = { ThreadPage(thread = fixture) },
     )
@@ -630,19 +627,23 @@ private fun HomeShell(themeMode: HarnessThemeMode) {
         onSelectNode = {},
         onSelectRecent = {},
 
-        composer = { HomeComposer(prompt = "", onPromptChange = {}, onSend = {}, enabled = true) },
         content = {
-            HomePage(
-                hostLabel = fixture.projectName,
-                canOpenThread = true,
-                recentTasks = fixture.recentTasks,
-                onOpenThread = {},
-                onOpenRecent = {},
-            )
+            im.hikaru.harness.client.app.LiveHomeSurface(fixture.projectName) { ReferenceLiveComposer(thread = false) }
         },
     )
 }
 
+@Composable
+private fun ReferenceLiveComposer(thread: Boolean) {
+    im.hikaru.harness.client.app.LiveConversationComposer(
+        state = im.hikaru.harness.client.conversation.ConversationState(
+            selectedSessionId = if (thread) im.hikaru.harness.client.connection.SessionId("screenshot") else null,
+        ),
+        onDraftChange = {}, onSubmit = {}, onCancel = {}, models = emptyList(), selectedModel = null,
+        onModelSelect = {}, modelUnavailableReason = null, submitUnavailableReason = null,
+        permission = im.hikaru.harness.client.app.ComposerPermission.Ask, onPermissionSelect = {},
+    )
+}
 @Composable
 private fun AccountShell(themeMode: HarnessThemeMode) {
     val fixture = HarnessReferenceFixture.thread

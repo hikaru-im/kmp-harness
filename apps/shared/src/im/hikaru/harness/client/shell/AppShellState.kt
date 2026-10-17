@@ -120,22 +120,6 @@ public data class ProjectContextState(
     val visible: Boolean = true,
 )
 
-public enum class ComposerStatus {
-    Idle,
-    Sending,
-    Stopping,
-    Error,
-}
-
-public data class ComposerState(
-    val draft: String = "",
-    val attachments: List<String> = emptyList(),
-    val mode: String? = null,
-    val model: String? = null,
-    val status: ComposerStatus = ComposerStatus.Idle,
-    val error: String? = null,
-)
-
 public data class AppShellState(
     val sidebar: SidebarState = SidebarState(),
     /**
@@ -165,7 +149,6 @@ public data class AppShellState(
     val thread: ThreadSurfaceState? = null,
     val connection: ConnectionIndicatorState = ConnectionIndicatorState.Connecting,
     val panel: PanelState = PanelState(),
-    val composer: ComposerState = ComposerState(),
     val projectContext: ProjectContextState = ProjectContextState(),
 )
 

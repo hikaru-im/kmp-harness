@@ -62,7 +62,7 @@ class ModelSettingsRepositoryTest {
         val repository = ModelSettingsRepository(backend)
         repository.load()
         backend.failAfterCommit = true
-        val candidate = ProviderConfiguration("custom")
+        val candidate = ProviderConfiguration("custom", credentialName = "CUSTOM_KEY")
         assertFalse(repository.save(candidate))
         assertTrue(repository.state.value.refreshRequired)
         assertEquals(candidate, repository.state.value.confirmedProviderConfiguration)
@@ -83,14 +83,14 @@ class ModelSettingsRepositoryTest {
         val repository = ModelSettingsRepository(backend)
         repository.load()
         backend.snapshot = backend.snapshot.copy(revision = 9)
-        assertFalse(repository.save(ProviderConfiguration("custom"), 0))
+        assertFalse(repository.save(ProviderConfiguration("custom", credentialName = "CUSTOM_KEY"), 0))
         assertEquals(0, backend.writes)
         assertTrue(repository.state.value.refreshRequired)
         repository.load()
         assertEquals(9, repository.state.value.snapshot.revision)
-        assertFalse(repository.save(ProviderConfiguration("custom"), 0))
+        assertFalse(repository.save(ProviderConfiguration("custom", credentialName = "CUSTOM_KEY"), 0))
         repository.load()
-        assertTrue(repository.save(ProviderConfiguration("custom"), 9))
+        assertTrue(repository.save(ProviderConfiguration("custom", credentialName = "CUSTOM_KEY"), 9))
     }
 
     @Test
@@ -121,7 +121,7 @@ class ModelSettingsRepositoryTest {
         }
         val repository = ModelSettingsRepository(delayed)
         repository.load()
-        val candidate = ProviderConfiguration("custom")
+        val candidate = ProviderConfiguration("custom", credentialName = "CUSTOM_KEY")
         val first = async { repository.save(candidate) }
         entered.await()
         assertFalse(repository.save(candidate))
@@ -143,7 +143,7 @@ class ModelSettingsRepositoryTest {
         assertFalse(repository.state.value.canEdit)
         cancelRead = false
         repository.load()
-        assertFailsWith<CancellationException> { repository.save(ProviderConfiguration("custom")) }
+        assertFailsWith<CancellationException> { repository.save(ProviderConfiguration("custom", credentialName = "CUSTOM_KEY")) }
         assertFalse(repository.state.value.saving)
         assertNull(repository.state.value.completedOperation)
     }
@@ -152,10 +152,12 @@ class ModelSettingsRepositoryTest {
     fun providerValidationRejectsInvalidNumbersReferencesUrlsAndDuplicateModels() {
         ProviderConfiguration("custom", baseUrl = "http://localhost:8080/v1", credentialName = "CUSTOM_KEY", modelIds = listOf("model-a", "model-b")).validate()
         listOf("file:///tmp/models", "https://user:pass@example.test", "https://example.test?key=value", "https://white space.test").forEach { url ->
-            assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", baseUrl = url).validate() }
+            assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", baseUrl = url, credentialName = "CUSTOM_KEY").validate() }
         }
         assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", credentialName = "invalid-name").validate() }
-        assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", requestTimeoutMillis = 0).validate() }
-        assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", modelIds = listOf("same", "same")).validate() }
+        assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom").validate() }
+        assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", credentialName = " ").validate() }
+        assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", credentialName = "CUSTOM_KEY", requestTimeoutMillis = 0).validate() }
+        assertFailsWith<IllegalArgumentException> { ProviderConfiguration("custom", credentialName = "CUSTOM_KEY", modelIds = listOf("same", "same")).validate() }
     }
 }
