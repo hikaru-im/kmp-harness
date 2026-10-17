@@ -137,6 +137,13 @@ public fun HarnessTabStrip(
     // The columns come from the region the shell laid out. It is one frame behind on the very first
     // pass, so the leading chrome falls back to the rail and the pane segment fills.
     val region = drag.regionBounds
+    // Where this strip really starts in window coordinates. Jewel insets the title bar's content by its
+    // native chrome, and that inset is not exactly the 88px the leading cluster is measured against — on
+    // a 1467px window it lands at 84. Assuming the constant instead of measuring it put the segment, and
+    // the hairline that closes the leading column, 4px left of the shell's own edges below, so the rule
+    // stopped just short of the navigator boundary it is meant to continue.
+    var measuredOrigin by remember { mutableStateOf<Dp?>(null) }
+    val origin = measuredOrigin ?: contentInset
     val buttons = 2 + (if (onToggleNavigator != null) 1 else 0) + (if (onNewChat != null) 1 else 0)
     // Codex's start slot is `width: rail` with `min-w-max`: the panes keep the shell's own columns —
     // measured, the live split cuts the title bar at the seam (1452 of a 52..1452 viewport) — while the
@@ -146,13 +153,13 @@ public fun HarnessTabStrip(
         HarnessTokens.Control.TitlebarGap * buttons + HarnessTokens.Control.TitlebarGap
     // In strip coordinates: the cluster's own leading inset, and the leading column (rail + navigator)
     // the shell published, both shifted by the strip's window origin.
-    val clusterInset = (leadInset - contentInset).coerceAtLeast(0.dp)
-    val lead = (with(density) { region.left.toDp() }.coerceAtLeast(HarnessTokens.Control.RailWidth) - contentInset)
+    val clusterInset = (leadInset - origin).coerceAtLeast(0.dp)
+    val lead = (with(density) { region.left.toDp() }.coerceAtLeast(HarnessTokens.Control.RailWidth) - origin)
         .coerceAtLeast(0.dp)
     // Where the leading column ends: the rail plus the navigator column while the navigator is pushed
     // (measured 340px), the cluster's own trailing edge while it is hidden (measured 230px). The hairline
     // sits there and the pane's content clears it, which is the measured 238px header start.
-    val leadingRule = (cluster - contentInset - lead).coerceAtLeast(0.dp)
+    val leadingRule = (cluster - origin - lead).coerceAtLeast(0.dp)
     val panes = with(density) { region.width.toDp() }
     val seam = HarnessTokens.Control.SplitSeamWidth
     CompositionLocalProvider(LocalTabClientRegion provides clientRegion) {
@@ -161,6 +168,15 @@ public fun HarnessTabStrip(
         // paints the background itself instead of letting whatever is composed under it show through.
         Row(
             modifier.fillMaxWidth().height(HarnessTokens.Control.Titlebar)
+                // Read the strip's own origin rather than trusting the constant: the native inset the
+                // window controls take is not fixed, and every column below is in window coordinates.
+                .onGloballyPositioned { coordinates ->
+                    val measured = with(density) { coordinates.positionInWindow().x.toDp() }
+                    val current = measuredOrigin
+                    if (current == null || kotlin.math.abs((current - measured).value) >= 0.5f) {
+                        measuredOrigin = measured
+                    }
+                }
                 .background(HarnessTokens.Colors.AppBackground)
                 .testTag("harness-tab-strip"),
             verticalAlignment = Alignment.CenterVertically,
@@ -288,23 +304,31 @@ private fun PaneSegment(
     tag: String,
     panel: Boolean,
 ) {
+    // When the navigator is pushed the leading column already ends on the shell's own 1px border, and
+    // this segment starts one pixel past it (measured 340 below, 341 here), so the rule slides one
+    // pixel left to continue that border. With the navigator hidden the column closes on the cluster's
+    // trailing edge inside the pane, where there is no shell edge underneath to meet.
     val insetStart = (leadingRule ?: 0.dp) + HarnessTokens.Control.TabStripInsetStart
+    val onNavigatorEdge = leadingRule?.value == 0f
+    val ruleStart = if (onNavigatorEdge) (-1).dp else leadingRule ?: 0.dp
     Box(
-        modifier.fillMaxHeight().clipToBounds().semantics { testTag = tag },
+        modifier.fillMaxHeight().semantics { testTag = tag },
         contentAlignment = Alignment.CenterStart,
     ) {
         if (leadingRule != null) {
-            Box(Modifier.align(Alignment.CenterStart).offset(x = leadingRule)) {
+            Box(Modifier.align(Alignment.CenterStart).offset(x = ruleStart)) {
                 TitlebarRule(HarnessTokens.Control.TitlebarRule, "harness-tab-lead-rule")
             }
         }
-        if (panel) {
-            TabRow(state, drag, insetStart, fullView = state.layout == HarnessTabLayout.Full)
-        } else {
-            // The conversation's own title bar. `null` is deliberate: the pane is telling the shell it is
-            // not a tab, so the shell titles it with the conversation's page, not with a tab's.
-            Box(Modifier.fillMaxSize().padding(start = insetStart), contentAlignment = Alignment.CenterStart) {
-                CompositionLocalProvider(LocalHarnessPaneTab provides null) { paneTitle?.invoke() }
+        Box(Modifier.fillMaxSize().clipToBounds(), contentAlignment = Alignment.CenterStart) {
+            if (panel) {
+                TabRow(state, drag, insetStart, fullView = state.layout == HarnessTabLayout.Full)
+            } else {
+                // The conversation's own title bar. `null` is deliberate: the pane is telling the shell it
+                // is not a tab, so the shell titles it with the conversation's page, not with a tab's.
+                Box(Modifier.fillMaxSize().padding(start = insetStart), contentAlignment = Alignment.CenterStart) {
+                    CompositionLocalProvider(LocalHarnessPaneTab provides null) { paneTitle?.invoke() }
+                }
             }
         }
     }
@@ -396,14 +420,19 @@ private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, inset
                     ) {
                         if (fullView) {
                             key("conversation") {
-                                TabSlot(slot, separatorDimmed = state.activeId.isEmpty()) {
-                                    ConversationChip(state, chipWidth)
+                                // Measured: the chip is a selectable tab beside the panel's own, not a way
+                                // out of 完整视图 — with it selected the layout controls still read
+                                // 退出完整视图 / 进入分屏视图, and the panel's tab drops to unselected.
+                                TabSlot(slot, separatorDimmed = state.fullViewShowsChat) {
+                                    ConversationChip(state, chipWidth, selected = state.fullViewShowsChat)
                                 }
                             }
                         }
                         state.tabs.forEachIndexed { index, tab ->
                             key(tab.id) {
-                                val selected = tab.id == state.activeId
+                                // The panel's tabs drop their selection while the full view is showing the
+                                // conversation: measured, only one of them carries `aria-selected`.
+                                val selected = tab.id == state.activeId && !state.fullViewShowsChat
                                 TabSlot(
                                     slot,
                                     // Measured: a separator between two tabs goes away while **either**
@@ -473,22 +502,34 @@ private fun TabSeparator(dimmed: Boolean) {
  * selection) and choosing it brings the conversation back beside the panel.
  */
 @Composable
-private fun ConversationChip(state: HarnessTabStripState, width: Dp) {
+private fun ConversationChip(state: HarnessTabStripState, width: Dp, selected: Boolean) {
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(HarnessTokens.Control.TabChipRadius)
     Box(
         Modifier.width(width).height(HarnessTokens.Control.TabChipHeight)
-            .clip(RoundedCornerShape(HarnessTokens.Control.TabChipRadius))
-            .background(if (hovered) HarnessTokens.Colors.ChromeFill else Color.Transparent)
             .hoverable(source)
-            .clickable(role = Role.Tab) { state.unsplit() }
-            .semantics { testTag = "harness-tab-conversation" },
+            // Measured on the live chip: clicking it hands the region to the conversation and leaves the
+            // layout where it is, so the two trailing controls keep saying 退出完整视图 / 进入分屏视图.
+            .clickable(role = Role.Tab) { state.showConversationInFullView() }
+            .semantics { testTag = "harness-tab-conversation"; this.selected = selected },
         contentAlignment = Alignment.CenterStart,
     ) {
+        // Same pill as a panel tab's: measured, the selected 聊天 is the elevated surface with the ring,
+        // and unselected it is bare text — its label step is the only other difference (`text-default`
+        // against the tabs' `text-tertiary`).
+        Box(
+            Modifier.matchParentSize().clip(shape)
+                .background(if (selected) HarnessTokens.Colors.SurfaceElevated else Color.Transparent)
+                .then(if (selected) Modifier.border(1.dp, HarnessTokens.Colors.SurfaceRingStrong, shape) else Modifier),
+        )
+        if (!selected && hovered) {
+            Box(Modifier.matchParentSize().clip(shape).background(HarnessTokens.Colors.ChromeFill))
+        }
         Box(Modifier.matchParentSize().padding(start = 10.dp), contentAlignment = Alignment.CenterStart) {
             HarnessText(
                 "聊天",
-                color = HarnessTokens.Colors.ChromeIcon,
+                color = if (selected) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

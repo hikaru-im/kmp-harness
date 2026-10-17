@@ -101,9 +101,12 @@ public fun HarnessSplitMainRegion(
             !state.onChatPage -> ConversationPane { surface(Modifier.fillMaxSize()) }
             // The panel is closed: the conversation is the window.
             state.tabsHidden -> ConversationPane { surface(Modifier.fillMaxSize()) }
-            // 完整视图: the panel has the whole main region and the conversation is off screen.
+            // 完整视图: the panel has the whole main region and the conversation is off screen — unless
+            // the strip's 聊天 chip has taken the region back for the conversation, which is a switch
+            // *inside* the layout and not a way out of it.
             state.layout == HarnessTabLayout.Full ->
-                PaneTab(panelTab) { surface(Modifier.fillMaxSize()) }
+                if (state.fullViewShowsChat) ConversationPane { surface(Modifier.fillMaxSize()) }
+                else PaneTab(panelTab) { surface(Modifier.fillMaxSize()) }
             else -> Row(Modifier.fillMaxSize()) {
                 val fraction = state.splitFraction
                 // The left half keeps `splitFraction` of the workspace whichever pane it is, so the

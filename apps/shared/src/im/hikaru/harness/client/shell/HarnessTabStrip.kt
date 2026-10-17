@@ -126,11 +126,37 @@ public class HarnessTabStripState(
     public var onChatPage: Boolean by mutableStateOf(true)
 
     /**
+     * Whether 完整视图 is currently showing the **conversation** rather than the side panel's tab.
+     *
+     * Measured on the live shell, entering 完整视图 does not pick a fixed page: it keeps whatever the
+     * side panel had selected, so the region opens on that tab and not on the conversation — the panel's
+     * tab stays `aria-selected` and the conversation's `聊天` chip reads `aria-selected="false"`. The
+     * chip inside the full view then switches the region to the conversation *without leaving the
+     * layout*: the chat panel takes the whole region (341..1086 in a 1090-wide window) while the two
+     * trailing controls still say 退出完整视图 / 进入分屏视图. Exiting and re-entering returns to the
+     * panel's tab, so this does not survive the layout switch — it is a choice inside the full view,
+     * not a second kind of layout.
+     */
+    public var fullViewShowsChat: Boolean by mutableStateOf(false)
+        private set
+
+    /**
      * Trade places with the side panel — the reference's `UW(e, {mode, contentSide})`, which it triggers
      * by dropping a tab on the other half. The strip follows the side panel, so it crosses with it.
      */
     public fun swapSides() {
         contentSide = sidePanelSide
+    }
+
+    /** 完整视图's `聊天` chip: show the conversation there, and leave the layout alone. */
+    public fun showConversationInFullView() {
+        if (layout != HarnessTabLayout.Full) return
+        fullViewShowsChat = true
+    }
+
+    /** Selecting a side panel tab in 完整视图 brings that tab back to the region. */
+    private fun showPanelTabInFullView() {
+        if (layout == HarnessTabLayout.Full) fullViewShowsChat = false
     }
 
     /**
@@ -162,6 +188,7 @@ public class HarnessTabStripState(
         // Opening the panel brings it back beside the conversation, which is the layout the live shell
         // returns to whichever way it was closed.
         layout = HarnessTabLayout.Split
+        fullViewShowsChat = false
     }
 
     private var history: List<String> by mutableStateOf(listOf(initialActive).filter { id -> initialTabs.any { it.id == id } })
@@ -193,6 +220,7 @@ public class HarnessTabStripState(
     private fun focus(id: String) {
         activeId = id
         selectionEpoch++
+        showPanelTabInFullView()
     }
 
     public fun back() {
@@ -258,9 +286,15 @@ public class HarnessTabStripState(
         tabsHidden = false
     }
 
-    /** 进入完整视图 / 退出完整视图: hand the whole main region to one side or to both. */
+    /**
+     * 进入完整视图 / 退出完整视图: hand the whole main region to the panel, or split it again.
+     *
+     * Entering always lands on the panel's tab, measured: whatever 聊天 the previous full view was
+     * showing does not come back with it, and the panel's tab is still the selected one.
+     */
     public fun toggleSplit() {
         layout = if (layout == HarnessTabLayout.Split) HarnessTabLayout.Full else HarnessTabLayout.Split
+        fullViewShowsChat = false
     }
 
     /** Clamped to a fifth of the workspace per side so neither pane can be dragged shut. */
@@ -279,7 +313,10 @@ public class HarnessTabStripState(
     }
 
     /** Back beside the conversation: what 进入分屏视图 and 退出完整视图 both do. */
-    public fun unsplit() { layout = HarnessTabLayout.Split }
+    public fun unsplit() {
+        layout = HarnessTabLayout.Split
+        fullViewShowsChat = false
+    }
 
     private companion object {
         const val DEFAULT_SPLIT_FRACTION = 0.5f
