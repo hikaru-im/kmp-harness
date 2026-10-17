@@ -262,7 +262,7 @@ private class TabMainRegion(
                         surface(Modifier.weight(1f).fillMaxWidth())
                     }
                     Box(Modifier.align(Alignment.TopEnd)) {
-                        HarnessEmptyWorkspaceAction(state)
+                        HarnessHiddenWorkspaceActions(state)
                     }
                 }
             }

@@ -245,15 +245,14 @@ internal fun HarnessWindowNavigation(
     CompositionLocalProvider(LocalTabClientRegion provides clientRegion) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             LeadingChrome(width, inset, state, drag, backShortcut, onToggleNavigator, navigatorShortcut, onNewChat, null)
-            if (state.tabsHidden && state.tabs.isNotEmpty()) TrailingCluster(state)
         }
     }
 }
 
-/** Empty-workspace action rendered at the client area's trailing edge. */
+/** Hidden-panel actions stay at the client area's trailing edge, including existing tabs. */
 @Composable
-internal fun HarnessEmptyWorkspaceAction(state: HarnessTabStripState) {
-    if (state.onChatPage && state.tabsHidden && state.tabs.isEmpty()) {
+internal fun HarnessHiddenWorkspaceActions(state: HarnessTabStripState) {
+    if (state.onChatPage && state.tabsHidden) {
         Box(Modifier.height(HarnessTokens.Control.Titlebar)) { TrailingCluster(state) }
     }
 }

@@ -94,6 +94,13 @@ class HarnessTabsInteractionTest {
         val body = onNodeWithTag("conversation-body").fetchSemanticsNode().boundsInRoot
         val header = onNodeWithTag("harness-tool-header").fetchSemanticsNode().boundsInRoot
         assertEquals(body.top, header.top)
+        val hideBounds = onNodeWithTag("harness-tab-hide").fetchSemanticsNode().boundsInRoot
+        onNodeWithTag("harness-tab-hide").performClick()
+        onAllNodesWithTag("harness-tab-show").assertCountEquals(1)
+        val showBounds = onNodeWithTag("harness-tab-show").fetchSemanticsNode().boundsInRoot
+        assertEquals(hideBounds, showBounds, "hiding tabs must keep the toggle at the same position")
+        onNodeWithTag("harness-tab-show").performClick()
+        assertEquals(hideBounds, onNodeWithTag("harness-tab-hide").fetchSemanticsNode().boundsInRoot)
         onNodeWithTag("harness-tab-split").performClick()
         onNodeWithTag("conversation-body").assertDoesNotExist()
         onNodeWithTag("harness-tool-header").assertIsDisplayed()
