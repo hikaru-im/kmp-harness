@@ -184,6 +184,7 @@ import im.hikaru.harness.client.shell.NavigatorPreferredWidth
 import im.hikaru.harness.client.shell.OverlayId
 import im.hikaru.harness.client.shell.PageId
 import im.hikaru.harness.client.projects.*
+import im.hikaru.harness.client.page.LocalProjectStatus
 import im.hikaru.harness.client.page.LocalProjectsPage
 import im.hikaru.harness.client.page.NewTabPage
 import im.hikaru.harness.client.page.NewTabTool
@@ -757,11 +758,11 @@ public fun HarnessApp(
     val submitBlockedWithoutHint = transport == ConnectionTransport.Local && effectiveNewModel == null
     val homeComposer: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (page == PageId.Home && transport == ConnectionTransport.Local) LocalProjectPicker(localProjectsState,
-            onSelect = { localProjects.select(it); projectPreparationError = null; pendingWorktreeChat = null },
-            onManage = { navigation = navigation.navigate(PageId.Projects()) },
-            enabled = conversationState.action == im.hikaru.harness.client.conversation.ConversationAction.Idle && localProjectsState.mutation == null,
-            currentBinding = projectBinding)
+        // Project selection lives in the composer rail below; only the loading/error feedback stays here.
+        if (page == PageId.Home && transport == ConnectionTransport.Local &&
+            localProjectsState.phase !in listOf(LocalProjectsPhase.Ready, LocalProjectsPhase.Empty)) {
+            LocalProjectStatus(localProjectsState)
+        }
         projectPreparationError?.let { HarnessText(it, Modifier.semantics { testTag = "local-project-prepare-error" }, color = HarnessTokens.Colors.Danger) }
         pendingProjectAssociation?.let { pending ->
             val pendingName = localProjectsState.snapshot?.project(pending.first.projectId)?.name ?: pending.first.projectId.value
@@ -844,6 +845,18 @@ public fun HarnessApp(
             useHostDefaultModel = transport == ConnectionTransport.Relay,
             permission = homePreferences.permission,
             onPermissionSelect = { if (homeComposerIsCurrent()) composerPreferences[null] = homePreferences.copy(permission = it) },
+            topRail = if (page == PageId.Home && transport == ConnectionTransport.Local) ({
+                ComposerProjectRail(
+                    state = localProjectsState,
+                    binding = projectBinding,
+                    enabled = conversationState.action == im.hikaru.harness.client.conversation.ConversationAction.Idle &&
+                        localProjectsState.mutation == null,
+                    onSelect = { localProjects.select(it); projectPreparationError = null; pendingWorktreeChat = null },
+                    onQueryChange = localProjects::setQuery,
+                    onManage = { navigation = navigation.navigate(PageId.Projects()) },
+                    onConfigureEnvironment = { navigation = navigation.navigate(PageId.Settings(SettingsSection.Worktrees)) },
+                )
+            }) else null,
         )
         }
     }

@@ -309,6 +309,34 @@ public object HarnessTokens {
         public val EffortTrackInset: Dp = 8.dp
         /** Live `_Tick_xwb5v_40`: 4px dots, 30% white when reached and 25% otherwise. */
         public val EffortTickSize: Dp = 4.dp
+        /**
+         * Home composer rail (`data-composer-rail=above`): a 710×38 strip attached to the 736 card,
+         * inset 13 on both sides, with a ~16 radius top. The live rail box is 42 high and the card
+         * covers its last 4px, which is why [RailOverlap] exists.
+         */
+        public val RailInset: Dp = 13.dp
+        public val RailHeight: Dp = 38.dp
+        public val RailOverlap: Dp = 4.dp
+        public val RailRadius: Dp = 16.dp
+        /** Rail chips: 28 high pills, `0 8px`, a 16px icon, 6px gap, and 8px between chips. */
+        public val RailChipHeight: Dp = 28.dp
+        public val RailChipInsetX: Dp = 8.dp
+        public val RailChipGap: Dp = 6.dp
+        public val RailChipSpacing: Dp = 8.dp
+        public val RailChipInset: Dp = 4.dp
+        /** Environment gear: 30×28, radius 10, 16px icon inset 6. */
+        public val RailGearWidth: Dp = 30.dp
+        public val RailGearRadius: Dp = 10.dp
+        /** Project dropdown: 260 wide; work-location menu: 280 wide; both radius 20 with a 4 inset. */
+        public val ProjectPopupWidth: Dp = 260.dp
+        public val WorkPopupWidth: Dp = 280.dp
+        public val ProjectPopupMaxHeight: Dp = 320.dp
+        /** Live menu rows are 28.5625 high at radius 15; the search row keeps `5px 8px`. */
+        public val RailMenuRowHeight: Dp = 28.5.dp
+        public val RailMenuRowRadius: Dp = 15.dp
+        public val RailSearchHeight: Dp = 28.5.dp
+        /** `工作位置` section label: 26.5625 high with `4px 8px`. */
+        public val RailSectionHeight: Dp = 26.5.dp
         /** No outer border; the reference renders a 1px inset glow instead. */
         public val BorderWidth: Dp = 0.5.dp
         public const val FocusAlpha: Float = 0.45f

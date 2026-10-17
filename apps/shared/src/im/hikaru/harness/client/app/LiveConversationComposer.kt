@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
 import im.hikaru.harness.client.conversation.ConversationErrorKind
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.ui.foundation.*
@@ -40,6 +41,8 @@ public fun LiveConversationComposer(
     permission: ComposerPermission,
     onPermissionSelect: (ComposerPermission) -> Unit,
     reasoningEffortKnown: Boolean = state.selectedSessionId == null,
+    /** Home rail (`data-composer-rail`, placement above): painted behind the card's top edge. */
+    topRail: (@Composable () -> Unit)? = null,
 ) {
     val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight)
     val suppliedViewport = LocalConversationViewportHeight.current
@@ -65,8 +68,12 @@ public fun LiveConversationComposer(
         val viewport = suppliedViewport ?: if (constraints.hasBoundedHeight) maxHeight else null
         val editorCap = if (viewport == null) configuredCap else minOf(configuredCap,
             (viewport * HarnessTokens.Composer.ViewportFraction).coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight))
+        Box(Modifier.fillMaxWidth()) {
+        topRail?.invoke()
         Surface(
-            Modifier.fillMaxWidth().semantics { testTag = "live-composer" },
+            // The live card overlaps the rail's last 4dp, so it starts `RailHeight` below the strip.
+            Modifier.fillMaxWidth().padding(top = if (topRail != null) HarnessTokens.Composer.RailHeight else 0.dp)
+                .semantics { testTag = "live-composer" },
             // Live `_ComposerLayoutRoot`: rgb(54,54,54) in dark, radius 22, no outer border, and a
             // `rgba(255,255,255,.2) 0 0 1px 0 inset` glow — approximated by a 0.5dp light ring.
             color = ConversationAppearance.composer,
@@ -143,6 +150,7 @@ public fun LiveConversationComposer(
                     ConversationNotice(it.message, "live-composer-error-${it.kind.name}", isError = true, modifier = notices)
                 }
             }
+        }
         }
     }
 }

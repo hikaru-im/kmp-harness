@@ -94,8 +94,12 @@ class ProjectsRecentInteractionTest {
                         }
                     }
                 }
-                waitUntil(timeoutMillis = 10_000) { projectsRecentHasTag("local-project-manage") }
+                // The home rail owns project selection; "manage" is its 新建项目 row.
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
                 dismissNavigatorIfOpen()
+                pointer("local-project-picker-open")
                 pointer("local-project-manage")
                 waitUntil(timeoutMillis = 10_000) { projectsRecentHasTag("local-projects-empty") }
                 pointer("local-project-create")
@@ -115,7 +119,7 @@ class ProjectsRecentInteractionTest {
                 waitUntil(timeoutMillis = 10_000) { projectsRecentHasTag("local-project-picker-open") }
                 dismissNavigatorIfOpen()
                 pointer("local-project-picker-open")
-                pointer("默认工作目录")
+                pointer("local-project-picker-item-none")
                 onNodeWithTag("local-project-picker-menu").assertDoesNotExist()
                 pointer("local-project-picker-open")
                 pointer("local-project-picker-item-${project.id.value}")

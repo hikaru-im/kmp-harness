@@ -51,7 +51,11 @@ class LocalProjectsInteractionTest {
                         localProjectRepository = fixture.repository, modelSettingsRepository = fixture.models,
                         themeMode = HarnessThemeMode.Light)
                 }
-                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-project-manage").fetchSemanticsNodes().isNotEmpty() }
+                // Project management moved into the composer rail above the home editor.
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("local-project-picker-open").performClick()
                 onNodeWithTag("local-project-manage").performClick()
                 waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-projects-empty").fetchSemanticsNodes().isNotEmpty() }
                 onNodeWithTag("local-project-create").assertIsEnabled().performClick()
@@ -72,8 +76,8 @@ class LocalProjectsInteractionTest {
                 onNodeWithTag("new-task").performClick()
                 // Exercise both picker paths, rather than relying on create auto-selection.
                 onNodeWithTag("local-project-picker-open").performClick()
-                onNodeWithTag("默认工作目录").performClick()
-                onNodeWithTag("local-project-picker-open").assertTextEquals("默认工作目录").performClick()
+                onNodeWithTag("local-project-picker-item-none").performClick()
+                onNodeWithTag("local-project-picker-open").assertTextEquals("选择项目").performClick()
                 // Picker entries are keyed by project id, not by display name.
                 onNodeWithTag("local-project-picker-item-${project.id.value}").performClick()
                 onNodeWithTag("local-project-picker-open").assertTextEquals(project.name)
@@ -118,7 +122,11 @@ class LocalProjectsInteractionTest {
                         localProjectRepository = repository, modelSettingsRepository = fixture.models,
                         themeMode = HarnessThemeMode.Light)
                 }
-                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-project-manage").fetchSemanticsNodes().isNotEmpty() }
+                // Project management moved into the composer rail above the home editor.
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("local-project-picker-open").performClick()
                 onNodeWithTag("local-project-manage").performClick()
                 waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-projects-empty").fetchSemanticsNodes().isNotEmpty() }
                 onNodeWithTag("local-project-create").performClick()
@@ -244,7 +252,11 @@ class LocalProjectsInteractionTest {
                     HarnessApp(fixture.connection, connectionTransport = ConnectionTransport.Local,
                         localProjectRepository = fixture.repository, modelSettingsRepository = fixture.models)
                 }
-                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-project-manage").fetchSemanticsNodes().isNotEmpty() }
+                // Project management moved into the composer rail above the home editor.
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("local-project-picker-open").performClick()
                 onNodeWithTag("local-project-manage").performClick()
                 waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-projects-empty").fetchSemanticsNodes().isNotEmpty() }
                 onNodeWithTag("local-project-create").performClick()
@@ -273,7 +285,11 @@ class LocalProjectsInteractionTest {
                     HarnessApp(fixture.connection, connectionTransport = ConnectionTransport.Local,
                         localProjectRepository = fixture.repository, modelSettingsRepository = fixture.models)
                 }
-                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-project-manage").fetchSemanticsNodes().isNotEmpty() }
+                // Project management moved into the composer rail above the home editor.
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("local-project-picker-open").performClick()
                 onNodeWithTag("local-project-manage").performClick()
                 waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-projects-empty").fetchSemanticsNodes().isNotEmpty() }
                 onNodeWithTag("local-project-create").performClick()

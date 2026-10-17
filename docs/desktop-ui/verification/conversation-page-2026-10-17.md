@@ -352,3 +352,59 @@ modules/session/src/im/hikaru/harness/session/SessionProjection.kt
 - 时间显示固定“星期六14:30”样式，未复刻参考的完整相对日期/local 规则。
 - 工具 activity 文案按工具名启发式分类，运行中的 reasoning 动态状态未单独区分。
 - 最终构建的自动化滚动注入未再送达窗口（列表状态日志确认未收到滚轮事件），上滚/回到底部交互以 15:24 构建截图为准；该手势不涉及后续改动，建议验收时手动复核一次。
+
+## 8. 编辑框上方项目栏（composer rail，2026-10-18）
+
+实时 Codex 首页 composer 上方的 `data-composer-rail` 层已按 DOM 与像素实测复刻；会话页没有这一层（实时线程里该元素为 0×0），因此只在首页 + 本机传输时挂载。
+
+参考 DOM（ChatGPT 1630×882，窗口 id 318）：
+
+- `[data-codex-composer-root]` 与 rail 之间 8px 间距；rail 为 `_rail_1hrlq_1 _attached_1hrlq_36`，placement `above`，710×62，圆角 `20 20 0 0`，`overflow: clip`，`padding-bottom: 20`。
+- rail 内的 `_item_` 710×42、背景 `rgb(40,40,40)`、`padding: 0 4 4`；`_ComposerFooter` 702×38、`padding: 5 0`；工具组 668×32（`role=group`，`aria-label=编辑器工具栏`）+ 齿轮 30×28。卡片 736×98 从 rail 底部往上盖住 4px 后可见条带为 710×38。
+- 项目 chip：`_ActiveProjectSelectorTrigger` 按钮 121×28、胶囊圆角、`padding: 0 8`、间距 6、16px 文件夹图标、13/18 白字，`aria-label=切换项目：<name>`；叠加的清除按钮 28×28（`aria-label=不在项目中工作`）平时 `opacity: 0`，悬停时显示为圆圈叉并替换文件夹图标；悬停 chip 背景 `rgba(255,255,255,.08)`，提示浮层「更改此聊天的项目 ⇧⌘O」。
+- 工作位置 chip 92×28（显示器图标 + 此计算机，`aria-label=工作位置`）；齿轮只在已选项目时出现，30×28、圆角 10、图标 16 且为 49.8% 白。
+- 项目弹窗 260×168.8、圆角 20、内缩 4，背景 `oklab(0.297 … / 0.9)`（叠在深色页面上约 `#2B2B2B`）：搜索行 252×28.6（`padding: 5 8`、间距 6、14px 放大镜 @49.8%、「搜索项目」占位）、分割行 252×9（`padding: 4 8`、1px `rgba(255,255,255,.082)`）、行 252×28.6（圆角 15、`padding: 5 8`、16px 文件夹图标、13/18.57 白字 + 49.8% 白的目录名、选中行 8% 白底 + 16px 对勾）、`新建项目`（20 viewBox 加号）、`不在项目中工作`（21 viewBox 叉，未选项目时该行不出现）。弹窗向上展开，左缘与 chip 对齐。
+- 未选项目时 chip 文案为「选择项目」；工作位置弹窗 280×91.7、圆角 20、内缩 4：`工作位置` 标签行 272×26.6（`padding: 4 8`、13/18.57、49.8% 白）+ `此计算机`、`云端` 两行 272×28.6（显示器 / 云图标 + 选中行对勾）。
+- 图标 path 直接从实时 SVG 转录：文件夹、放大镜、圆圈叉的源 SVG 声明 `fillRule: evenodd`（也在 `app.asar` 中确认），显示器、云、齿轮、20 加号、21 叉、16 对勾为默认填充规则。
+
+本仓库实现（`ConversationComposerRail.kt`，新增）：
+
+- `LiveConversationComposer` 增加可选 `topRail` 槽位：rail 先画，卡片从 rail 顶部下移 38dp，盖住 rail 的最后 4dp；`HarnessApp` 只在 `PageId.Home` + `Local` 传输时传入 rail，其余页面/传输为 `null`。
+- rail 条带：横向内缩 13dp、顶部圆角 16dp、`#282828`、内容行上内缩 5dp、chip 间距 8dp、两侧 4dp 内缩。
+- chip：28dp 胶囊、`padding: 0 8`、图标 16 + 间距 6 + 13/18 文字；悬停背景 = 墨色 8%；已选项目时左侧 28dp 槽位点击清除（`不在项目中工作`），悬停显示圆圈叉；chip 上仍保留 `local-project-picker` / `local-project-picker-open` 测试标签，行保留 `local-project-picker-item-<id>`。
+- 弹窗：260 宽、圆角 20、`#2B2B2B`、0.5dp `rgba(255,255,255,.082)` 描边，向上展开；搜索框打开时自动聚焦，输入即时过滤；行高 28.5、圆角 15、选中行 8% 白底 + 16 对勾；`新建项目` 跳转到项目页，`不在项目中工作` 清空选择。
+- 工作位置弹窗 280 宽：`工作位置` 标签 + `此计算机` 行；齿轮只在已选项目时出现，点击进入设置里的 Worktrees 页。
+- 颜色与图标收进 `ConversationAppearance`（`railSurface`、`railHover`、`railDivider`；`Folder`、`Monitor`、`Search`、`Gear`、`PlusLarge`、`CrossLarge`、`CheckSmall`、`CircleX`；云端图标的 path 已测出但未使用，因此未收录），几何收进 `HarnessTokens.Composer`（`RailInset/Height/Overlap/Radius`、`RailChip*`、`RailGear*`、`ProjectPopupWidth`、`WorkPopupWidth`、`RailMenuRow*`、`RailSearchHeight`、`RailSectionHeight`）。
+
+构建：`./kotlin package -m jvm-app --build-dir=/tmp/kmp-harness-merge-20261017-build` → `Build successful`。夹具以独立 home `/tmp/kmp-rail-home` 启动（登记了临时目录 `/tmp/rail-project-demo` 作为 `RailDemo` 项目，仓库与真实应用数据均未改动），截图后关闭弹窗。
+
+截图（`docs/desktop-ui/captures/conversation-page-2026-10-17/`）：
+
+| 文件 | 内容 |
+| --- | --- |
+| `rail-project-dark-1467x870.png` | 首页 rail：`RailDemo` 项目 chip、`此计算机` 工作位置、右侧齿轮 |
+| `rail-no-project-dark-1467x870.png` | 未选项目：chip 为「选择项目」、齿轮隐藏 |
+| `rail-project-menu-dark-1467x870.png` | 项目弹窗：搜索、项目行（目录名 49.8% 白、选中对勾）、新建项目、不在项目中工作 |
+| `rail-chip-hover-dark-1467x870.png` | chip 悬停：8% 白底、文件夹换成圆圈叉、提示「更改此聊天的项目 ⇧⌘O」 |
+| `rail-work-menu-dark-1467x870.png` | 工作位置弹窗：`工作位置` + `此计算机` 选中行 |
+
+像素取样（夹具 1467×870 截图，1x）：
+
+| 位置 | 实测 |
+| --- | --- |
+| rail 条带 | `rgb(40,40,40)`（`#282828`），与实时 `rgb(40,40,40)` 一致 |
+| 卡片 / 页面 | `#363636` / `#171717`（本轮夹具主题色） |
+| 条带几何 | 上缘 y=447、卡片上缘 y=486（可见 38~39px）；条带 x 603–1200（598px），卡片 x 591–1212（622px），两侧内缩 12–13px；首行水平内缩 11px，与半径 16 的圆角吻合 |
+| chip 悬停 | `rgb(57,57,57)` = `rgb(40,40,40)` 上叠 8% 白，与 `rgba(255,255,255,.08)` 一致 |
+| 弹窗 / 行 | 260 宽、行高 28.5、圆角 15、选中行 8% 白底，对勾 16px；投影与描边同其它弹窗 |
+
+已知限制：
+
+- 工作位置弹窗里实时的 `云端` 行没有实现：harness 没有云端执行位置，保留一个不可用的入口会误导；菜单因此只有 `此计算机` 一行。
+- 实时齿轮点开的是「Configure local environment」弹窗（新建工作树开关、Branch、Environment）；本实现改为进入设置 → Worktrees，避免做一组没有真实状态的假控件。
+- 浅色主题的 rail 颜色未实测（实时应用只有深色），`#F4F4F4` 是按卡片上方的中性层级推断的；chip 悬停同样按墨色 8% 推断。
+- 项目行里项目名与目录名之间用 6dp 间距，实时是一段文本内的空格；搜索无匹配时只保留「新建项目」，实时没有测得无结果态。
+- 项目弹窗固定在 chip 下方 6dp 向上展开，未逐像素对齐实时的弹出偏移；弹窗关闭后搜索词会被清空（实时未测量）。
+- 首行会替代旧首页的「默认工作目录 / 管理项目」控件；原先依赖这些文案或 `local-project-picker-root`（工作目录行）的首页测试需要按 rail 的选择流程调整。
+
+测试适配（只改选择器，不运行测试）：`LocalProjectsInteractionTest` 现在先等 rail 的 `local-project-picker-open` 可用再点开、再点 `local-project-manage`（原首页「管理项目」按钮），并改用 `local-project-picker-item-none` 与「选择项目」文案；`ProjectsRecentInteractionTest` 的应用级用例同样先展开 rail 再点 `local-project-manage`、用 `local-project-picker-item-none` 清空项目。`LocalProjectPicker` 仍保留在项目页，其组件级与截图测试未改动。`./kotlin build -m jvm-app --build-dir=/tmp/kmp-harness-merge-20261017-build` 编译成功（含测试源集），按约定未运行任何测试套件。
