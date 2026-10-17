@@ -20,6 +20,7 @@ class PageNavigatorMatrixAuditTest {
     private val matrix: List<Pair<PageId, NavigatorKind>> =
         listOf(
             PageId.Home to NavigatorKind.Workspace,
+            PageId.NewTab to NavigatorKind.Workspace,
             PageId.Library to NavigatorKind.None,
             PageId.Projects() to NavigatorKind.None,
             PageId.Project("kmp-harness") to NavigatorKind.None,
@@ -32,12 +33,12 @@ class PageNavigatorMatrixAuditTest {
         )
 
     /**
-     * The audit covers every `PageId` shape exactly once. `PageId` currently has ten shapes; adding
+     * The audit covers every `PageId` shape exactly once. `PageId` currently has eleven shapes; adding
      * one without extending this list fails here, which keeps the page -> navigator map auditable.
      */
     @Test
     fun auditCoversEveryPageShapeExactlyOnce() {
-        assertEquals(10, matrix.size, "one audit row per in-scope PageId shape")
+        assertEquals(11, matrix.size, "one audit row per in-scope PageId shape")
         val pages = matrix.map { it.first }
         assertEquals(pages.size, pages.toSet().size, "no PageId shape is audited twice")
     }
@@ -80,6 +81,7 @@ class PageNavigatorMatrixAuditTest {
             setOf(
                 PageId.Home,
                 PageId.Thread("thread-1"),
+                PageId.NewTab,
             ),
             workspacePages,
         )

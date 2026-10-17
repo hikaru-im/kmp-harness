@@ -187,12 +187,17 @@ import im.hikaru.harness.client.scheduling.ScheduledTaskSort
 import im.hikaru.harness.client.scheduling.ScheduledTaskStatus
 import im.hikaru.harness.client.scheduling.ScheduledValidationContext
 import im.hikaru.harness.client.scheduling.UnavailableScheduledStore
+import im.hikaru.harness.client.shell.HarnessChangesPage
+import im.hikaru.harness.client.shell.LocalHarnessPaneTab
+import im.hikaru.harness.client.shell.LocalHarnessTabStrip
 import im.hikaru.harness.client.shell.NavigationState
 import im.hikaru.harness.client.shell.NavigatorPreferredWidth
 import im.hikaru.harness.client.shell.OverlayId
 import im.hikaru.harness.client.shell.PageId
 import im.hikaru.harness.client.projects.*
 import im.hikaru.harness.client.page.LocalProjectsPage
+import im.hikaru.harness.client.page.NewTabPage
+import im.hikaru.harness.client.page.NewTabTool
 import im.hikaru.harness.client.page.LocalProjectDetailPage
 import im.hikaru.harness.client.page.LocalProjectPicker
 import im.hikaru.harness.client.page.localProjectsForBinding
@@ -441,6 +446,12 @@ public fun HarnessApp(
     val verifiedConversationConnection = connection.takeIf {
         phase == ConnectionsPhase.Online && host?.hostId == conversationHost?.hostId
     }
+    // A window's tabs belong to the **side panel**, and every one of them is a tool page — 新标签页,
+    // 变更, and the two the reference also lists but this client cannot draw. None of them is a 会话, so
+    // there is exactly one conversation in a window whatever the layout: the one `conversation` holds, in
+    // the pane the shell draws its own page into. That is why the window no longer needs a second
+    // controller for the other half.
+    val paneStrip = LocalHarnessTabStrip.current
     val localProjects = remember(conversationScope, localProjectRepository) {
         LocalProjectsController(conversationScope, localProjectRepository)
     }
@@ -878,6 +889,11 @@ public fun HarnessApp(
             isLoggedIn = accountState.session != null,
             canLogin = account != null,
         )
+    // The window's tab strip owns everything *but* the conversation: its tabs are the side panel's, and
+    // the page the conversation pane draws is this shell's. The two therefore have to agree on one value,
+    // and `navigation.currentPage` is it — every navigation runs through `selectPage` below, which reports
+    // the target back to the strip so a window with a strip can hand it on to the strip's own controls.
+    val tabStripState = LocalHarnessTabStrip.current
     val selectPage: (PageId) -> Unit = { target ->
         if (target.requiresConnection() && connection == null) {
             pendingPage = target
@@ -885,9 +901,27 @@ public fun HarnessApp(
         } else {
             navigation = navigation.navigate(target)
         }
+        tabStripState?.selectConversation(target)
     }
-    val pluginAction: (InstalledPluginsAction) -> Unit = { action ->
-        when (action) {
+    // Selecting a side panel tab does not navigate — that is the whole point of the split, and why the
+    // conversation is not a tab — so the shell only has to follow the *conversation* the strip reports,
+    // which is the page the navigator and every in-page gesture also move.
+    //
+    // The selection epoch is what makes a *re*-selection land: choosing 新聊天 while already on 首页 is a
+    // request to see 首页, so it has to navigate even though no other observed value changed.
+    val conversationPage = tabStripState?.conversationPage
+    val conversationSelection = tabStripState?.selectionEpoch
+    LaunchedEffect(conversationSelection, conversationPage) {
+        if (conversationPage != null && navigation.currentPage != conversationPage) {
+            if (conversationPage.requiresConnection() && connection == null) {
+                pendingPage = conversationPage
+                navigation = navigation.navigate(PageId.Account)
+            } else {
+                navigation = navigation.navigate(conversationPage)
+            }
+        }
+    }
+    val pluginAction: (InstalledPluginsAction) -> Unit = { action ->        when (action) {
             is InstalledPluginsAction.Select -> selectPage(PageId.PluginDetail(action.id.value))
             InstalledPluginsAction.Back -> selectPage(PageId.Plugins)
             else -> plugins.dispatch(action)
@@ -914,8 +948,16 @@ public fun HarnessApp(
     SideEffect {
         titleStrip?.navigatorToggle = toggleSidebar.takeIf { navigatorToggleVisible }
         titleStrip?.newChat = ({ selectPage(PageId.Home) }).takeIf { newChatVisible }
-        // Drawn once per pane while the tab strips are hidden (隐藏标签页).
-        titleStrip?.content = { HarnessPaneTitle(pageTitle(page)) }
+        // The conversation's own title, drawn in the title-bar segment the tab strip does not own — the
+        // whole bar while the panel is closed, the conversation's half of it while the panel is open. The
+        // side panel's segment draws the strip instead, so it never needs one.
+        titleStrip?.content = {
+            conversationTitle(page, threadSurfaceState)?.let { HarnessPaneTitle(it) }
+        }
+        // The side panel hangs off the conversation, so the reference mounts it on a chat page only: it
+        // is on 首页 and every 会话, and on none of the other pages. The window owns the panel, so the
+        // page tells it which kind of page it is, exactly as it tells the bar whether it has a navigator.
+        tabStripState?.onChatPage = isChatPage(page)
     }
     val back: () -> Unit = { navigation = navigation.back() }
     val shortcutBlocked by rememberUpdatedState(projectEditorOpen || accountMenu.isOpen || exploreMenu.isOpen || navigation.overlay != OverlayId.None)
@@ -960,8 +1002,41 @@ public fun HarnessApp(
             thread = threadSurfaceState,
             connection = connectionState.toIndicatorState(),
         )
-    val composer: (@Composable () -> Unit)? =
-        if (page is PageId.Thread) liveComposer else null
+    // The docked composer belongs to the **conversation**, which is the only pane that can hold a 会话:
+    // the side panel's tabs are tool pages, and the shell draws the dock only in the pane it hands no
+    // tab (see the composer gate in `AppShell.MainSurface`). 首页 draws its own richer composer (project
+    // picker, worktree binding) inside its page body and never reaches this one.
+    val paneComposer: @Composable () -> Unit = {
+        val paneState = conversationState
+        val paneController = conversation
+        val sessionId = (page as? PageId.Thread)?.threadId?.let(::SessionId)
+        val bound = paneState.host == conversationHost && paneState.selectedSessionId == sessionId
+        // The composer acts on the pane's live binding, so a callback that lands after the pane moved
+        // to another tab cannot draft into, send to or stop the session the pane has left.
+        fun stillBound(): Boolean = paneController.state.value.host == conversationHost &&
+            paneController.state.value.selectedSessionId == sessionId
+        LiveConversationComposer(
+            state = if (bound) paneState else ConversationState(host = conversationHost, selectedSessionId = sessionId),
+            onDraftChange = { if (stillBound()) paneController.updateDraft(it) },
+            onSubmit = { if (bound && stillBound()) paneController.submit(agentOptions = AgentOptions()) },
+            onCancel = { if (stillBound()) paneController.cancel() },
+            models = modelChoices,
+            selectedModel = paneState.history.mapNotNull { it.source as? ModelMessageSource }.lastOrNull()?.let {
+                ConversationModelChoice(it.provider, it.model, it.provider + " / " + it.model)
+            },
+            onModelSelect = { selectedNewModel = it },
+            // The reference offers no model switch inside a session, and 会话 pages say so.
+            modelUnavailableReason = "当前会话暂不支持更换模型。",
+            submitUnavailableReason = when {
+                !bound -> "正在切换会话…"
+                !paneState.connected -> "请连接可用的 Host 后发送消息。"
+                else -> null
+            },
+        )
+    }
+    // The dock exists while the conversation holds one; each pane then decides for itself whether to
+    // draw it, so 新标签页 never leaves the dock's gutter behind and a tool tab never borrows it.
+    val composer: (@Composable () -> Unit)? = if (page is PageId.Thread) paneComposer else null
     val panelScope = if (page is PageId.Thread && conversationHost != null)
         ThreadPanelScope(conversationHost.hostId, SessionId(page.threadId)) else null
     val panelOwner = panelScope?.let { scoped ->
@@ -1193,8 +1268,34 @@ public fun HarnessApp(
             },
             onDismissSummaryPanel = { summaryPanelOpen = false },
             content = {
-                when (val current = page) {
+                // A pane draws the page of the tab it holds (the window provides it around each
+                // surface), so a split shows the conversation's page beside the side panel's tab. A
+                // pane that holds no tab is the conversation, which draws the page the shell has
+                // navigated to and reads `conversation`; the panel's pane never touches it.
+                val paneTab = LocalHarnessPaneTab.current
+                val panePage = paneTab?.page ?: page
+                val paneConversationState = conversationState
+                val paneConversation = conversation
+                when (val current = panePage) {
                     PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = liveComposer)
+
+                    PageId.NewTab -> NewTabPage(
+                        onOpenTool = { tool ->
+                            when (tool) {
+                                // 变更 is the one 工具 card this client has a destination for: the
+                                // repository's own changes, which is the Settings Git page. Choosing it
+                                // opens it as another **side panel tab** beside this one — the panel's
+                                // tabs *are* its tool pages — rather than navigating the conversation
+                                // away, which on a page with no panel would take the panel off screen
+                                // with the card still under the pointer. A window with no strip
+                                // (mobile, previews) has no panel to open it in and navigates instead.
+                                NewTabTool.Changes ->
+                                    if (paneStrip != null) paneStrip.add(HarnessChangesPage)
+                                    else selectPage(HarnessChangesPage.page ?: PageId.Settings(SettingsSection.Git))
+                                NewTabTool.Terminal, NewTabTool.Files, NewTabTool.SideChat -> Unit
+                            }
+                        },
+                    )
 
                     PageId.Library -> LibraryPlaceholderPage()
 
@@ -1241,7 +1342,10 @@ public fun HarnessApp(
                             }
                         } else HarnessText("正在绑定当前 Host…", Modifier.semantics { testTag = "scheduled-binding-loading" })
 
-                    is PageId.Thread -> LiveThreadSurface(state = conversationState, onRetry = { conversation.refresh() })
+                    is PageId.Thread -> LiveThreadSurface(
+                        state = paneConversationState,
+                        onRetry = { paneConversation.refresh() },
+                    )
 
 
                     PageId.Plugins -> InstalledPluginsPage(pluginsState, pluginAction)
@@ -1263,7 +1367,7 @@ public fun HarnessApp(
                         )
 
                     is PageId.Settings -> SettingsScreen(
-                        page.section, appearanceState,
+                        current.section, appearanceState,
                         onAppearanceChange = { candidate -> appearanceScope.launch { appearance.save(candidate) } },
                         onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
                         modelSettings = modelSettings,
@@ -1398,9 +1502,38 @@ private fun HarnessPaneTitle(title: String) {
     )
 }
 
+/**
+ * Whether [page] is a **chat page**: the reference's 新聊天页 or a 会话 — the pages whose main area is a
+ * conversation, with the chat's own toolbar and a composer under it.
+ *
+ * Measured on the live shell, these are exactly the pages that mount `role="toolbar"
+ * aria-label="聊天工具栏"` in the title bar *and* the side panel (`aside` 1214 wide with its `任务选项卡`
+ * strip). Every other page mounts neither, and its main area takes the whole width right of the navigator:
+ * 定时任务's main surface reads `[341,44,2215,1272]` against the chat page's `[341,44,1001,1272]`.
+ */
+private fun isChatPage(page: PageId): Boolean = page == PageId.Home || page is PageId.Thread
+
+/**
+ * The conversation's title — the text the live shell puts in its `role="toolbar" aria-label="聊天工具栏"`,
+ * or null when the main area is not a [isChatPage] and the shell draws no such toolbar at all.
+ *
+ * Measured on the live shell: that toolbar exists on the chat page **only** — 资料库, 定时任务 and 插件 all
+ * render none of it, and the segment beside the tab strip is empty on them — while a 会话's carries the
+ * chat's own name (`解释 Amper 编译删除失败`). A **new** chat is the third case: the toolbar is there but
+ * its text is empty, so 新聊天 shows nothing where a 会话 shows its name. All three are why this returns a
+ * String? rather than a page label.
+ */
+private fun conversationTitle(page: PageId, thread: ThreadSurfaceState?): String? =
+    when (page) {
+        PageId.Home -> ""
+        is PageId.Thread -> thread?.title ?: pageTitle(page)
+        else -> null
+    }
+
 private fun pageTitle(page: PageId): String =
     when (page) {
         PageId.Home -> "主页"
+        PageId.NewTab -> "新标签页"
         PageId.Library -> "资料库"
         is PageId.Projects -> "项目"
         is PageId.Project -> "项目"

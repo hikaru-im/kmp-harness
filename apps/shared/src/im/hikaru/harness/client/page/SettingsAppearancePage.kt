@@ -2,7 +2,6 @@ package im.hikaru.harness.client.page
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
@@ -33,7 +32,7 @@ public fun SettingsAppearancePage(
 ) {
     val settings = state.settings
     val enabled = state.canEdit
-    val systemDark = isSystemInDarkTheme()
+    val systemDark = harnessSystemInDarkTheme()
     val currentMode = if (settings.mode == AppearanceMode.System) {
         if (systemDark) AppearanceMode.Dark else AppearanceMode.Light
     } else settings.mode

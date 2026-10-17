@@ -25,6 +25,10 @@ dependencies:
   - io.ktor:ktor-client-cio:3.5.1
   - org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0
   - $compose.desktop.currentOs
+  # skiko's `currentSystemTheme` is the pull API Compose's own `ProvideSystemTheme` reads to follow the
+  # host appearance. ui-desktop 1.11.1 depends on this exact version (its POM), which Compose's desktop
+  # runtime already ships at run time; the window needs it on its own compile classpath.
+  - org.jetbrains.skiko:skiko-awt:0.144.6
   - org.jetbrains.jewel:jewel-int-ui-standalone:0.39.1-262.9437.29
   - org.jetbrains.jewel:jewel-int-ui-decorated-window:0.39.1-262.9437.29
   - org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0

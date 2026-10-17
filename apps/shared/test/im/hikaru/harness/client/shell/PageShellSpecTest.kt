@@ -18,6 +18,7 @@ class PageShellSpecTest {
             listOf(
                 PageId.Home,
                 PageId.Thread("thread-1"),
+                PageId.NewTab,
             )
         workspacePages.forEach { page ->
             assertEquals(NavigatorKind.Workspace, pageShellSpec(page).navigator, "Workspace navigator for " + page)
@@ -49,6 +50,33 @@ class PageShellSpecTest {
         assertFalse(pageShellSpec(PageId.Plugins).resizable)
         assertFalse(pageShellSpec(PageId.ScheduledTasks()).resizable)
         assertFalse(pageShellSpec(PageId.Account).resizable)
+    }
+
+    /**
+     * 新标签页 draws its own 768 column, which is wider than the shared cap the shell lays the other
+     * pages out at (672), so it is the one page that asks for the whole surface. Every other page keeps
+     * the shared column, so the Settings/thread layouts cannot be handed a bare surface by accident.
+     */
+    @Test
+    fun onlyTheNewTabPageBringsItsOwnContentColumn() {
+        assertTrue(pageShellSpec(PageId.NewTab).ownContentColumn)
+
+        val sharedColumnPages: List<PageId> =
+            listOf(
+                PageId.Home,
+                PageId.Thread("thread-1"),
+                PageId.Settings(),
+                PageId.Plugins,
+                PageId.PluginDetail("desktop-client"),
+                PageId.ScheduledTasks(),
+                PageId.Library,
+                PageId.Projects(),
+                PageId.Project("kmp-harness"),
+                PageId.Account,
+            )
+        sharedColumnPages.forEach { page ->
+            assertFalse(pageShellSpec(page).ownContentColumn, "shared content column for " + page)
+        }
     }
 
     @Test
@@ -131,6 +159,7 @@ class PageShellSpecTest {
             listOf(
                 PageId.Home,
                 PageId.Thread("thread-1"),
+                PageId.NewTab,
                 PageId.Settings(),
                 PageId.Plugins,
                 PageId.PluginDetail("desktop-client"),

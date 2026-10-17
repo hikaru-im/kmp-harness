@@ -10,6 +10,14 @@ public sealed interface PageId {
     public data object Home : PageId
 
     /**
+     * The 新标签页 page: what a new tab opens on in the reference. It is a page of its own — not an
+     * empty Home — because the live tab strip draws a browser toolbar and a 工具 grid on it, and it
+     * mounts the Workspace navigator (the live title strip keeps its 隐藏侧边栏 toggle while the tab is
+     * on this page).
+     */
+    public data object NewTab : PageId
+
+    /**
      * The rail 资料库 destination. Codex's Library is a file product this client does not implement,
      * so the slot opens an explicit placeholder page instead of a fabricated library.
      */
@@ -169,6 +177,7 @@ public fun ShellDestination.toPageId(): PageId =
 public fun PageId.toShellDestination(): ShellDestination =
     when (this) {
         PageId.Home,
+        PageId.NewTab,
         PageId.Library,
         is PageId.Projects,
         is PageId.Project,

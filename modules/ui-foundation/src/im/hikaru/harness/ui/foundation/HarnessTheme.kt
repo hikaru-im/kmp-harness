@@ -10,7 +10,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.TextStyle
@@ -28,6 +30,28 @@ public enum class HarnessThemeMode {
 }
 
 /**
+ * The host appearance the composition should read for [HarnessThemeMode.System], or `null` while the
+ * platform has no live source for it — in which case [isSystemInDarkTheme] answers as it always did.
+ *
+ * A platform whose runtime re-reads the host appearance on every composition has no need to provide
+ * this. Compose's own desktop runtime does not: on 1.11 `isSystemInDarkTheme()` reads
+ * `LocalSystemTheme`, which has no provider there, so the value is taken once and never invalidated —
+ * switching 系统 settings would leave the window on whatever it started with. A host (see the desktop
+ * app) that samples the appearance itself publishes it here instead, which makes every consumer of
+ * [harnessSystemInDarkTheme] — the palette, the title bar, the appearance page's previews — follow the
+ * host live.
+ */
+public val LocalHarnessSystemDark: ProvidableCompositionLocal<Boolean?> = staticCompositionLocalOf { null }
+
+/**
+ * Whether the host is currently in dark appearance. Reads [LocalHarnessSystemDark] when it is provided
+ * and only falls back to [isSystemInDarkTheme] when it is not.
+ */
+@Composable
+@ReadOnlyComposable
+public fun harnessSystemInDarkTheme(): Boolean = LocalHarnessSystemDark.current ?: isSystemInDarkTheme()
+
+/**
  * Pure resolution of the effective palette from the requested [mode] and the host appearance.
  * Kept free of Compose APIs so the system-follow behaviour is covered by unit tests.
  */
@@ -41,7 +65,20 @@ public fun resolveDarkTheme(mode: HarnessThemeMode, systemInDarkTheme: Boolean):
 /** Effective [HarnessThemeMode] for the current composition; [HarnessThemeMode.System] reads the host. */
 @Composable
 @ReadOnlyComposable
-private fun HarnessThemeMode.effectiveDarkTheme(): Boolean = resolveDarkTheme(this, isSystemInDarkTheme())
+private fun HarnessThemeMode.effectiveDarkTheme(): Boolean = resolveDarkTheme(this, harnessSystemInDarkTheme())
+
+/**
+ * The palette [HarnessTheme] provides under [customization] for [dark], resolved without composing.
+ *
+ * [HarnessTheme] lays out a `Surface`, so a caller that must not introduce a layout node — Jewel's
+ * [org.jetbrains.jewel.window.TitleBar], which the decorated window only recognises as its title bar
+ * while it stays a direct child — cannot wrap itself in the theme. It provides the local itself with
+ * this instead, and its `HarnessTokens.Colors` then read the same palette everything else does.
+ */
+public fun harnessColors(dark: Boolean, customization: HarnessThemeCustomization): HarnessColors {
+    val variant = if (dark) customization.dark else customization.light
+    return variant.colors(if (dark) HarnessDarkColors else HarnessLightColors)
+}
 
 private fun HarnessColors.toColorScheme(dark: Boolean) =
     if (dark) {
@@ -111,7 +148,7 @@ public fun HarnessTheme(
 ) {
     val darkTheme = themeMode.effectiveDarkTheme()
     val variant = if (darkTheme) customization.dark else customization.light
-    val colors = variant.colors(if (darkTheme) HarnessDarkColors else HarnessLightColors)
+    val colors = harnessColors(darkTheme, customization)
     val baseDensity = LocalHarnessBaseDensity.current ?: LocalDensity.current
     val scale = customization.uiFontSize / 14f
     fun TextStyle.withUiFont(): TextStyle = copy(

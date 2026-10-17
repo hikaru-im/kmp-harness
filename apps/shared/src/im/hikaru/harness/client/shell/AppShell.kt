@@ -372,13 +372,26 @@ public fun AppShell(
                                 // are outside it, so neither is ever duplicated by a split.
                                 val mainRegion = LocalHarnessMainRegion.current
                                 val pageSurface: @Composable (Modifier) -> Unit = { surfaceModifier ->
+                                    // While a split is up, this surface is one pane's, and a pane's column
+                                    // is its *own* page's — the shell's chrome follows the conversation,
+                                    // but a page never borrows the conversation's column cap, nor its
+                                    // composer dock.
+                                    val paneTab = LocalHarnessPaneTab.current
+                                    val paneSpec = paneTab?.page?.let(::pageShellSpec) ?: spec
                                     MainSurface(
                                         modifier = surfaceModifier.semantics { testTag = "main-surface" },
+                                        // The dock hangs off the shell's single composer, which drafts and
+                                        // sends on the **conversation**; a pane that is a tab never gets it.
+                                        docksComposer = paneSpec.docksComposer && paneTab == null,
                                         contentMaxWidth =
-                                            if (spec.navigator == NavigatorKind.Settings) {
-                                                HarnessTokens.Control.SettingsContentMaxWidth
-                                            } else {
-                                                HarnessTokens.Control.ContentMaxWidth
+                                            when {
+                                                // A page that brings its own column (新标签页) keeps the whole
+                                                // surface: its toolbar is pane-wide and its column is wider than
+                                                // the shared cap.
+                                                paneSpec.ownContentColumn -> null
+                                                paneSpec.navigator == NavigatorKind.Settings ->
+                                                    HarnessTokens.Control.SettingsContentMaxWidth
+                                                else -> HarnessTokens.Control.ContentMaxWidth
                                             },
                                         composerState = state.composer,
                                         content = content,
@@ -1850,7 +1863,10 @@ private fun ProjectChildRow(
 @Composable
 private fun MainSurface(
     modifier: Modifier = Modifier,
-    contentMaxWidth: Dp = HarnessTokens.Control.ContentMaxWidth,
+    /** The cap the page's content column is laid out at, or null when the page brings its own. */
+    contentMaxWidth: Dp? = HarnessTokens.Control.ContentMaxWidth,
+    /** Whether this pane's page docks a composer; a page with none drops the dock, gutter and all. */
+    docksComposer: Boolean = true,
     composerState: ComposerState,
     content: @Composable () -> Unit,
     composer: (@Composable () -> Unit)?,
@@ -1865,15 +1881,19 @@ private fun MainSurface(
             Box(
                 modifier =
                     Modifier
-                        .widthIn(max = contentMaxWidth)
-                        .fillMaxWidth()
-                        .fillMaxHeight()
+                        .then(
+                            if (contentMaxWidth == null) {
+                                Modifier.fillMaxSize()
+                            } else {
+                                Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().fillMaxHeight()
+                            },
+                        )
                         .semantics { testTag = "main-content-column" },
             ) {
                 content()
             }
         }
-        composer?.let { ComposerDock(composerState, it) }
+        if (docksComposer) composer?.let { ComposerDock(composerState, it) }
     }
 }
 

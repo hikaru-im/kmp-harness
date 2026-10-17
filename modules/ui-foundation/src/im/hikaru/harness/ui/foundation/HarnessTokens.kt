@@ -27,6 +27,18 @@ public data class HarnessColors(
     val SurfaceSecondary: Color,
     val SurfaceElevated: Color,
     val SurfaceSelected: Color,
+    /**
+     * The page canvas the 新标签页 page's content sits on, below its own toolbar. Measured on the live
+     * pane as `bg-surface-canvas` = `color(srgb 0.98 0.98 0.98)`, i.e. 250 (#FAFAFA) — one step below
+     * the white toolbar band above it.
+     */
+    val SurfaceCanvas: Color,
+    /**
+     * Keycap fill: the ink of [Text] at 6.5%, measured as `oklab(.2256 … / .065)` on the 新标签页 tool
+     * cards' keyboard chords, which reads 241 over the card's white. Lighter than [ChromeFill]: a 10%
+     * fill would read 232, nine levels away.
+     */
+    val SurfaceKeycap: Color,
     val Border: Color,
     val BorderSubtle: Color,
     val BorderStrong: Color,
@@ -34,6 +46,13 @@ public data class HarnessColors(
     val Text: Color,
     val TextMuted: Color,
     val TextDisabled: Color,
+    /**
+     * Secondary ink: the 新标签页 tool cards' leading glyphs, their keyboard chords and the browser
+     * toolbar's 搜索或输入网址 placeholder, all measured as `color(srgb 0.101961 0.109804 0.121569 /
+     * 0.65)` — [Text] at 65%. Distinguish it from the opaque grey [TextMuted] and from [ChromeIcon],
+     * which is the same ink at 49.4%.
+     */
+    val TextSecondary: Color,
     val Accent: Color,
     val AccentStrong: Color,
     val Danger: Color,
@@ -89,8 +108,18 @@ public data class HarnessColors(
      * Split-seam ink: the 1px line the panes draw when the seam is hovered or dragged, measured as
      * text at 25% (`oklab(.2256 … / .25)`). The line is a full-height *vertical* gradient — transparent
      * at both ends, this ink in the middle — and is invisible (`opacity: 0`) while the seam is idle.
+     * The seam is not empty at rest; the pane edge an idle seam shows is [ChromeSeamEdge].
      */
     val ChromeSeam: Color,
+    /**
+     * The split's own boundary hairline, the divider an idle split shows: ink at 7%, measured as 239
+     * in the boundary column of the live 1178 boundary — and 239 on *every* row sampled from 60 to 1300
+     * (the white pane reads 255 one pixel to its left). The live pane draws it with a `left-0 w-px`
+     * element carrying `shadow-[-8px_0_16px_-8px_rgb(0_0_0/0.18)]`: the shadow's peak lands under the
+     * 1px element itself, so what is visible at rest is one pixel, not a band (x 1170…1174 is the
+     * left pane's own white except in the few rows where its content does not reach the edge).
+     */
+    val ChromeSeamEdge: Color,
     /**
      * Title-bar hairline ink: the 1px rules that cut the title bar into its segments, measured on the
      * live shell as `--color-border` = `rgba(26,28,31,.078)` (ink at 8%). The rules are 20dp tall
@@ -119,6 +148,10 @@ public val HarnessLightColors: HarnessColors =
         SurfaceSecondary = Color(0xFFF3F3F3),
         SurfaceElevated = Color(0xFFFFFFFF),
         SurfaceSelected = Color(0xFFEDEDED),
+        // Measured `bg-surface-canvas` on the live 新标签页 pane.
+        SurfaceCanvas = Color(0xFFFAFAFA),
+        // Measured `oklab(.2256 … / .065)` on that page's keyboard-chord pills.
+        SurfaceKeycap = Color(0x111A1C1F),
         Border = Color(0x297F7F7F),
         // Measured #eeedee (238) over white on the settings card border, row dividers and control
         // outline in the reference capture. The app's border-subtle is a ~7 percent tint of
@@ -129,6 +162,8 @@ public val HarnessLightColors: HarnessColors =
         Text = Color(0xFF0D0D0D),
         TextMuted = Color(0xFF5D5D5D),
         TextDisabled = Color(0xFF8F8F8F),
+        // Measured 65% of the chrome ink on that page's tool cards.
+        TextSecondary = Color(0xA61A1C1F),
         Accent = Color(0xFF0169CC),
         AccentStrong = Color(0xFF004F99),
         Danger = Color(0xFFE02E2A),
@@ -147,6 +182,7 @@ public val HarnessLightColors: HarnessColors =
         ChromeText = Color(0xFF1A1C1F),
         ChromeFill = Color(0x1A1A1C1F),
         ChromeSeam = Color(0x401A1C1F),
+        ChromeSeamEdge = Color(0x121A1C1F),
         ChromeRule = Color(0x141A1C1F),
         CodeBackground = Color(0xFFF9F9F9),
         DiffAdded = Color(0xFF00A240),
@@ -165,6 +201,9 @@ public val HarnessDarkColors: HarnessColors =
         SurfaceSecondary = Color(0xFF1C1C1C),
         SurfaceElevated = Color(0xFF282828),
         SurfaceSelected = Color(0xFF303030),
+        // Dark counterpart is a project choice; the page canvas is measured light-only.
+        SurfaceCanvas = Color(0xFF1A1A1A),
+        SurfaceKeycap = Color(0x11FFFFFF),
         Border = Color(0xFF3A3A3A),
         BorderSubtle = Color(0xFF2E2E2E),
         BorderStrong = Color(0xFF4A4A4A),
@@ -172,6 +211,7 @@ public val HarnessDarkColors: HarnessColors =
         Text = Color(0xFFF2F2F2),
         TextMuted = Color(0xFFA8A8A8),
         TextDisabled = Color(0xFF6F6F6F),
+        TextSecondary = Color(0xA6FFFFFF),
         Accent = Color(0xFF8AB4F8),
         AccentStrong = Color(0xFFB8D1FF),
         Danger = Color(0xFFFF8F8F),
@@ -191,6 +231,7 @@ public val HarnessDarkColors: HarnessColors =
         ChromeText = Color(0xFFF2F2F2),
         ChromeFill = Color(0x1AFFFFFF),
         ChromeSeam = Color(0x40FFFFFF),
+        ChromeSeamEdge = Color(0x12FFFFFF),
         ChromeRule = Color(0x14FFFFFF),
         CodeBackground = Color(0xFF1A1A1A),
         DiffAdded = Color(0xFF8FD3A8),
@@ -236,6 +277,11 @@ public object HarnessTokens {
         public val HeadingSm: TextUnit = 18.sp
         public val HeadingMd: TextUnit = 20.sp
         public val HeadingLg: TextUnit = 24.sp
+        /**
+         * The Codex `heading-xl` the 新聊天 page's hero heading is set in: 28px on a 33.6px line
+         * (line-height 1.2) at weight 400, measured on the live page.
+         */
+        public val HeadingXl: TextUnit = 28.sp
     }
 
     public object Spacing {
@@ -315,20 +361,78 @@ public object HarnessTokens {
         /** Tab-strip control box: the Codex new-tab/split buttons and the tab close target. */
         public val TabStripControl: Dp = 28.dp
         public val TabClose: Dp = 20.dp
-        /** Tab chip: Codex lays each tab slot out 238x32 inside the 44px strip. */
+        /**
+         * The tab slot's ceiling, which is also its chip: measured over a viewport sweep, the live slot
+         * is `clamp(stripWidth / count, 90px, 240px)` and its chip is the slot less the 2px the slot's
+         * own wrapper reserves (`pe-0.5`), so chip 238 is what a slot at the 240px ceiling holds.
+         */
         public val TabChip: Dp = 238.dp
+        /** The tab slot's floor. Below it the live strip stops dividing and scrolls instead. */
+        public val TabSlotFloor: Dp = 90.dp
         public val TabChipHeight: Dp = 32.dp
-        /** Gap between tab slots (Codex slots at x=349 and x=590 with a 238px slot => 3px). */
-        public val TabChipGap: Dp = 3.dp
+        /** The width a slot reserves at its trailing edge for the 1px separator and the chip's own gap. */
+        public val TabChipGap: Dp = 2.dp
+        /** The gap the hidden trailing separator leaves before the plus (measured 6px). */
+        public val TabStripPlusGap: Dp = 6.dp
         /** Tab chip corner (10px) and its 1px 8% ink ring. */
         public val TabChipRadius: Dp = 10.dp
         /**
          * Split-seam hit area. Measured: the pane separator is a 16px `cursor-col-resize` band
          * (a 1px line at its centre, `after:` expanding the hit area), so the seam takes 16px of the
-         * split region and the panes divide what is left. The panes themselves paint no shadow.
+         * split region and the panes divide what is left. The panes themselves paint no shadow; the
+         * boundary they divide at is the 1px centre line, drawn in `ChromeSeamEdge`.
          */
         public val SplitSeamWidth: Dp = 16.dp
+        /**
+         * The divider's own width, and the width of the mark the pointer reveals. Measured: the live
+         * pane's edge element is `w-px`, and the idle hairline it paints is one pixel wide on every row
+         * of the seam — the boundary is a line, not a band.
+         */
         public val SplitSeamLine: Dp = 1.dp
+        /**
+         * The 新标签页 page's browser toolbar, measured on the live pane as
+         * `flex h-12 min-w-0 items-center gap-1.5 px-2 py-2` inside
+         * `relative h-12 w-full border-b border-default bg-surface`: a 48px white band across the top
+         * of the pane, its own padding 8px (see `Spacing.Two`) and 6px between controls, closed by a 1px
+         * [HarnessColors.ChromeRule] rule (`border-default`) instead of a page-surface edge.
+         */
+        public val BrowserToolbar: Dp = 48.dp
+        public val BrowserToolbarGap: Dp = 6.dp
+        /**
+         * A toolbar control. The 返回 / 前进 / 重新加载 controls and the 扩展程序 control are all 28x28
+         * pills (`rounded-full`, no fill of their own); 浏览器选项 is the one 32x32 pill.
+         */
+        public val BrowserControl: Dp = 28.dp
+        public val BrowserOptionsControl: Dp = 32.dp
+        /**
+         * The 搜索或输入网址 capsule's own cap. Measured 770px on the live toolbar — the page column's
+         * 768 (`max-w-3xl`) plus the pixel a side the reference's ring takes back — laid out centred in
+         * the space between the leading and trailing clusters, `padding: 2px` around a 28px field.
+         */
+        public val BrowserAddressMaxWidth: Dp = 770.dp
+        /**
+         * The 工具 section: heading, then a 2-column grid whose measured geometry is a function of the
+         * page column — cells 376 = (768 - 16) / 2 wide, 40 tall, 16 apart across and 4 apart down.
+         */
+        public val BrowserToolRow: Dp = 40.dp
+        public val BrowserToolCardPaddingX: Dp = 10.dp
+        /**
+         * The keyboard-chord pill: 16 tall with `padding: 2px 6px` around a 12sp/16 label, which fills
+         * the height exactly — so the pill needs no vertical padding of its own.
+         */
+        public val BrowserKeycap: Dp = 16.dp
+        public val BrowserKeycapPaddingX: Dp = 6.dp
+        /**
+         * The page's own content column, measured `mx-auto flex w-full max-w-3xl flex-col gap-10` at
+         * 768 inside a `px-panel py-8` (`padding: 32px 20px`) scrolling container. Wider than the
+         * shell's [ContentMaxWidth] (672), which is why the page asks the shell not to cap it
+         * (`PageShellSpec.ownContentColumn`).
+         */
+        public val BrowserPageColumn: Dp = 768.dp
+        public val BrowserPagePaddingY: Dp = 32.dp
+        public val BrowserPagePaddingX: Dp = 20.dp
+        /** The gap between the column's sections (the live `gap-10`); 16 between a heading and its grid. */
+        public val BrowserSectionGap: Dp = 40.dp
         /**
          * Title bar segmentation, measured on the live 44px strip. Codex cuts the bar into the leading
          * chrome, one segment per layout column and the trailing cluster with 1px `--color-border`
@@ -471,6 +575,32 @@ public object HarnessTokens {
         public val SettingsRowInsetX: Dp = 17.dp
         public val ComposerRadius: Dp = 22.dp
         public val ComposerGutter: Dp = 12.dp
+
+        /**
+         * The Codex mark above the 新聊天 page's hero heading: the reference's `size-14`, measured 56x56
+         * on the live page (the mark's own ink spans 47.5 of that box, the source `<svg>` carrying a
+         * 418-unit view box whose cloud reaches 354.9 units).
+         */
+        public val HomeHeroMark: Dp = 56.dp
+
+        /**
+         * The mark's own tone. The reference paints it with `--color-text-default` and then sets
+         * `opacity: .3` on the whole element, lifting it to `.4` while pointed at
+         * (`[@media(hover:hover)_and_(pointer:fine)]:hover:opacity-40`) rather than changing the ink.
+         */
+        public val HomeHeroMarkAlpha: Float = 0.3f
+
+        public val HomeHeroMarkHoverAlpha: Float = 0.4f
+
+        /**
+         * The dotted rule under the hero heading's project name. The reference underlines it with
+         * `decoration-dotted decoration-[1px] underline-offset-4`: scanning the live row of dots at
+         * y=664 against a baseline at 660 gives 1px dots on a 2px pitch, running the project's full
+         * 163px width.
+         */
+        public val HomeHeroUnderlineOffset: Dp = 4.dp
+
+        public val HomeHeroUnderlinePitch: Dp = 2.dp
 
         /**
          * Profile-dropdown menu, from the Codex menu primitive in app.asar

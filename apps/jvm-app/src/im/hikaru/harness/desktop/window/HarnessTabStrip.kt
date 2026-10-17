@@ -6,10 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
@@ -21,10 +21,13 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -32,7 +35,11 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import im.hikaru.harness.client.shell.HarnessPaneSide
+import im.hikaru.harness.client.shell.PageId
+import im.hikaru.harness.client.shell.SettingsSection
 import im.hikaru.harness.client.shell.HarnessWorkspaceTab
+import im.hikaru.harness.client.shell.LocalHarnessPaneTab
 import im.hikaru.harness.client.shell.HarnessTabLayout
 import im.hikaru.harness.client.shell.HarnessTabStripState
 import im.hikaru.harness.ui.foundation.*
@@ -72,15 +79,20 @@ public class HarnessTabDragState {
  *
  * ```
  * [ leading chrome | rule ][ pane 1 ][ rule ][ pane 2 ][ … ][ trailing cluster ]
- *    rail+navigator            tab strip    tab strip        布局 / 标签页 controls
+ *    rail+navigator        conversation    side panel       布局 / 标签页 controls
  * ```
  *
  * The leading chrome is as wide as the App Rail plus the navigator column and carries the history
  * cluster (返回 / 前进), the navigator toggle and 新聊天, inset to the measured 88px from the window's
  * left edge so they clear the native traffic lights. Each pane segment is one of the shell's main-region
- * columns, so a tab strip starts exactly where its pane's content starts: at the rail edge while the
+ * columns, so a segment starts exactly where its pane's content starts: at the rail edge while the
  * navigator is hidden or floating, after the navigator while it is pushed. The trailing cluster is
- * pinned to the right edge and holds the layout toggle plus the tabs toggle.
+ * pinned to the right edge.
+ *
+ * **Only the side panel's segment draws a tab strip.** The other one belongs to the *conversation*, which
+ * is not a tab, and draws the conversation's own title instead — which is what the live shell does with
+ * `聊天工具栏` on one side of the seam and `任务选项卡` on the other. The strip is never in both segments
+ * at once, and the conversation is never a tab outside 完整视图.
  *
  * [contentInset] is the one place the two coordinate systems meet: Jewel insets the title bar's content
  * by the macOS window controls, so the strip's own origin is not the window's. Every column the shell
@@ -93,8 +105,8 @@ public class HarnessTabDragState {
  * tabs starting 8px past it (the measured 238px header).
  *
  * [onToggleNavigator] is the page's navigator (sidebar) toggle, or null when the page on screen has no
- * navigator (`PageShellSpec.mountsNavigator`). [paneTitle] is the page's own title bar, drawn in place
- * of the tab strips while they are hidden (隐藏标签页).
+ * navigator (`PageShellSpec.mountsNavigator`). [paneTitle] is the conversation's own title bar, drawn in
+ * the segment that does not carry the strip.
  *
  * [backShortcut], [navigatorShortcut] and [newChatShortcut] are the chords the shell actually binds,
  * shown in the hover tips the way the live bar does. A null chord (no key adapter on this platform, or
@@ -154,20 +166,32 @@ public fun HarnessTabStrip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LeadingChrome(lead, clusterInset, state, drag, backShortcut, onToggleNavigator, navigatorShortcut, onNewChat, newChatShortcut)
-            val split = state.split
-            if (split == null || panes <= seam) {
-                // One pane: its segment takes everything from the rail to the trailing cluster, the way
-                // the live main titlebar is the flex-1 segment.
+            // Off a chat page there is no side panel to divide with: measured, the live shell mounts none
+            // on 资料库 / 定时任务 / 插件 / 代码审查, so the bar holds the conversation's segment alone.
+            val panel = state.onChatPage
+            val split = panel && state.layout == HarnessTabLayout.Split && !state.tabsHidden
+            if (!split || panes <= seam) {
+                // One pane. Closed, it is the conversation and draws the conversation's title; in
+                // 完整视图 it is the side panel and the strip owns the whole bar.
                 Box(Modifier.weight(1f)) {
-                    PaneSegment(state, drag, Modifier.fillMaxSize(), paneTitle, leadingRule, main = true)
+                    PaneSegment(
+                        state, drag, Modifier.fillMaxSize(), paneTitle, leadingRule,
+                        tag = "harness-tab-pane-main",
+                        panel = panel && !state.tabsHidden,
+                    )
                 }
             } else {
-                // The left pane keeps the region's own share, so its strip is cut where the panes divide
-                // below it; the right pane absorbs the leftover width.
+                // The two panes are the conversation and the side panel — never the same page twice. The
+                // strip belongs to the side panel's segment, so it crosses with the panel when the halves
+                // trade places. Measured on the live shell: with the panel open the left segment carried
+                // the 聊天工具栏 with the conversation's name and the right one the 任务选项卡 tablist.
+                val stripOnLeft = state.sidePanelSide == HarnessPaneSide.Left
+                // The left pane keeps the region's own share, so its segment is cut where the panes
+                // divide below it; the right pane absorbs the leftover width.
                 PaneSegment(
                     state, drag,
                     Modifier.width(((panes - seam) * state.splitFraction).coerceAtLeast(0.dp)),
-                    paneTitle, leadingRule, main = true,
+                    paneTitle, leadingRule, tag = "harness-tab-pane-main", panel = stripOnLeft,
                 )
                 // The seam's own band carries the boundary rule, so the title bar cuts exactly where the
                 // panes are divided below it.
@@ -177,7 +201,10 @@ public fun HarnessTabStrip(
                 // Only the pane that starts at the rail sits under the leading column, so the second
                 // pane's content starts at its own 8px inset, as measured.
                 Box(Modifier.weight(1f)) {
-                    PaneSegment(state, drag, Modifier.fillMaxSize(), paneTitle, null, main = false)
+                    PaneSegment(
+                        state, drag, Modifier.fillMaxSize(), paneTitle, null,
+                        tag = "harness-tab-pane-secondary", panel = !stripOnLeft,
+                    )
                 }
             }
             TrailingCluster(state)
@@ -242,8 +269,11 @@ private fun LeadingChrome(
 }
 
 /**
- * One pane's title-bar segment. Inset 8px from its start and 6px from its end, as measured; a pane
- * with the tabs hidden draws the page's own title bar instead of a strip.
+ * One pane's title-bar segment, inset 8px from its start and 6px from its end as measured.
+ *
+ * [panel] says whether this is the **side panel's** segment: that is the one that carries the tab strip,
+ * because the strip manages the panel's tabs. The conversation's segment — and either segment while the
+ * panel is closed — draws the pane's own title bar instead.
  *
  * [leadingRule] is where the leading column's hairline falls inside this segment, or null for a pane
  * that does not start at the rail. The strip's content clears it, so the rule never crosses a tab.
@@ -255,11 +285,12 @@ private fun PaneSegment(
     modifier: Modifier,
     paneTitle: (@Composable () -> Unit)?,
     leadingRule: Dp?,
-    main: Boolean,
+    tag: String,
+    panel: Boolean,
 ) {
     val insetStart = (leadingRule ?: 0.dp) + HarnessTokens.Control.TabStripInsetStart
     Box(
-        modifier.fillMaxHeight().clipToBounds().semantics { testTag = if (main) "harness-tab-pane-main" else "harness-tab-pane-secondary" },
+        modifier.fillMaxHeight().clipToBounds().semantics { testTag = tag },
         contentAlignment = Alignment.CenterStart,
     ) {
         if (leadingRule != null) {
@@ -267,97 +298,299 @@ private fun PaneSegment(
                 TitlebarRule(HarnessTokens.Control.TitlebarRule, "harness-tab-lead-rule")
             }
         }
-        if (state.tabsHidden) {
-            // 隐藏标签页: the strip is replaced in place by the pane's page title, which the page
-            // publishes. It keeps the toggle in the same slot, so the mode is one click away.
-            Box(Modifier.fillMaxSize().padding(start = insetStart), contentAlignment = Alignment.CenterStart) {
-                paneTitle?.invoke()
-            }
+        if (panel) {
+            TabRow(state, drag, insetStart, fullView = state.layout == HarnessTabLayout.Full)
         } else {
-            TabRow(state, drag, insetStart, main)
+            // The conversation's own title bar. `null` is deliberate: the pane is telling the shell it is
+            // not a tab, so the shell titles it with the conversation's page, not with a tab's.
+            Box(Modifier.fillMaxSize().padding(start = insetStart), contentAlignment = Alignment.CenterStart) {
+                CompositionLocalProvider(LocalHarnessPaneTab provides null) { paneTitle?.invoke() }
+            }
         }
     }
 }
 
 /**
- * A pane's tab row: the tabs it holds, the plus, and — between two adjacent tabs — the measured 1px
- * 12px separator, which the live strip hides as soon as either neighbour is hovered or focused.
+ * The side panel's tab row: the tabs it holds, the plus, and — between two adjacent tabs — the measured
+ * 1px 12px separator.
+ *
+ * [fullView] prepends the conversation as a `聊天` chip. Measured in 完整视图: the live strip lists
+ * `聊天` `[349,6,231,32]` first, unselected, while the panel's own tab carries the selection.
+ *
+ * **The slot has a floor and a ceiling, and the strip scrolls below the floor.** Measured on the live
+ * strip over a viewport sweep, every slot is `clamp(stripWidth / count, 90px, 240px)`:
+ *
+ * | viewport | slots | slot | what the strip does |
+ * | --- | --- | --- | --- |
+ * | 1090 (10 tabs) | 900 | **90** | floor — track is 900 wide inside a 259 box, `overflow-x: auto` |
+ * | 1090 (10 tabs), 2560 | — | 109.3 | division: 1093 / 10 |
+ * | 6000 | 2400 | **240** | ceiling — the strip stops growing at 2400 |
+ *
+ * So the plus reaches the row's right edge only once the slots have hit the 240px ceiling; with fewer
+ * tabs it sits immediately after the last one (the live plus is a `flex: 0 0 auto` sibling with a 6px
+ * leading pad and no growth of its own), and with none at all there is no strip to follow, so it stands
+ * at the strip's own start. **The division has no lower floor to hide content at:** the live minimum of
+ * 90px is above the 64px where `@container app-shell-tab not (width >= 4rem)` would put
+ * `visibility: hidden` on a tab's content, so that rule never fires and the slots stop shrinking at 90
+ * instead. Past that point the live strip does not divide further — it **scrolls** (`overflow-x: auto`
+ * plus `hide-scrollbar`, `scrollWidth 900` in a `clientWidth 259` box), which is what the strip here
+ * does too: the slots keep their 90px floor and the row scrolls horizontally.
  */
 @Composable
-private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, insetStart: Dp, main: Boolean) {
-    // A split gives each pane its own tab: the left pane's strip shows the left tab as selected, the
-    // right pane's strip the right one.
-    val split = state.split
-    val selectedId = if (split == null) state.activeId else if (main) split.left else split.right
-    var hoveredIndex by remember { mutableStateOf(-1) }
-    Row(
-        Modifier.fillMaxSize()
-            .padding(start = insetStart, end = HarnessTokens.Control.TabStripInsetEnd)
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Control.TabChipGap),
-        verticalAlignment = Alignment.CenterVertically,
+private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, insetStart: Dp, fullView: Boolean) {
+    // The row's own width decides the slots, so it has to be read before they are measured.
+    BoxWithConstraints(
+        Modifier.fillMaxSize().padding(start = insetStart, end = HarnessTokens.Control.TabStripInsetEnd),
     ) {
-        state.tabs.forEachIndexed { index, tab ->
-            key(tab.id) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    HarnessTabChip(
-                        tab, tab.id == selectedId, state, drag,
-                        onHoverChanged = { hovered -> hoveredIndex = if (hovered) index else if (hoveredIndex == index) -1 else hoveredIndex },
-                    )
-                    // The separator sits at the trailing edge of every tab but the last, and both of the
-                    // tabs it divides dismiss it while either is hovered.
-                    if (index < state.tabs.lastIndex) {
-                        Box(
-                            Modifier.width(1.dp).height(HarnessTokens.Control.TabSeparator)
-                                .alpha(if (hoveredIndex == index || hoveredIndex == index + 1) 0f else 1f)
-                                .background(HarnessTokens.Colors.ChromeRule)
-                                .testTag("harness-tab-separator-${tab.id}"),
-                        )
+        val count = state.tabs.size + if (fullView) 1 else 0
+        // Measured: the row is `[strip][6px][28px plus]`, so the strip divides what is left for it.
+        val stripMax = (maxWidth - HarnessTokens.Control.TabStripControl - HarnessTokens.Control.TabStripPlusGap)
+            .coerceAtLeast(0.dp)
+        // Measured `clamp(share, 90px, 240px)`; the floor is what makes the strip scroll rather than
+        // dividing its tabs down to slivers.
+        val slot = if (count == 0) 0.dp else (stripMax / count).coerceIn(TabSlotMin, TabSlotMax)
+        // Measured: a slot's chip is the slot less the 2px its own wrapper reserves (`pe-0.5`).
+        val chipWidth = (slot - HarnessTokens.Control.TabChipGap).coerceAtLeast(0.dp)
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            if (count > 0) {
+                // The strip's *box* is capped by what the row has left (the live `flex: 0 1 auto` box,
+                // measured 259px) while its *track* is the slots' full width (measured 900px) and
+                // scrolls inside that box. The box must not grow past the row: if the scroller took the
+                // track's width it would push the plus off the end, which is exactly what went wrong
+                // before — the plus is only ever displaced by the strip being wider than its share.
+                val scroll = rememberScrollState()
+                val trackWidth = minOf(slot * count, stripMax)
+                // Measured: the live scroller keeps the **selected** tab in view. Its class carries
+                // `scroll-px-1` (computed `scroll-padding: 2px auto`), and with the last tab selected it
+                // sits at `scrollLeft: 641`, its own maximum (a 900px track in a 259px box). Without
+                // this the tab the plus just added lands past the box's right edge, so the click reads
+                // as having done nothing.
+                val density = LocalDensity.current
+                val slotPx = with(density) { slot.toPx() }
+                val viewportPx = with(density) { trackWidth.toPx() }
+                val padPx = with(density) { TAB_SCROLL_PAD.toPx() }
+                // The 完整视图 conversation chip leads the track but is never selected, so the tabs'
+                // own indices carry a one-slot offset there.
+                val activeIndex = state.tabs.indexOfFirst { it.id == state.activeId }
+                    .let { if (it < 0) -1 else it + if (fullView) 1 else 0 }
+                LaunchedEffect(activeIndex, slotPx, viewportPx) {
+                    if (activeIndex < 0 || viewportPx <= 0f || slotPx <= 0f) return@LaunchedEffect
+                    val start = activeIndex * slotPx
+                    val end = start + slotPx
+                    // Only a selection outside the box moves it: a visible one leaves the scroll alone,
+                    // so selecting an already-visible tab never jumps the strip.
+                    val target = when {
+                        start - padPx < scroll.value -> start - padPx
+                        end + padPx > scroll.value + viewportPx -> end + padPx - viewportPx
+                        else -> return@LaunchedEffect
+                    }
+                    scroll.animateScrollTo(target.toInt().coerceIn(0, scroll.maxValue))
+                }
+                Row(
+                    Modifier.width(trackWidth).horizontalScroll(scroll),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        Modifier.width(slot * count).height(HarnessTokens.Control.TabChipHeight),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (fullView) {
+                            key("conversation") {
+                                TabSlot(slot, separatorDimmed = state.activeId.isEmpty()) {
+                                    ConversationChip(state, chipWidth)
+                                }
+                            }
+                        }
+                        state.tabs.forEachIndexed { index, tab ->
+                            key(tab.id) {
+                                val selected = tab.id == state.activeId
+                                TabSlot(
+                                    slot,
+                                    // Measured: a separator between two tabs goes away while **either**
+                                    // of them is selected, and stays put on hover.
+                                    separatorDimmed = selected || state.tabs.getOrNull(index + 1)?.id == state.activeId,
+                                ) {
+                                    HarnessTabChip(tab, selected, state, drag, width = chipWidth)
+                                }
+                            }
+                        }
                     }
                 }
+                Spacer(Modifier.width(HarnessTokens.Control.TabStripPlusGap))
             }
+            // With no tabs there is no strip to follow, so the plus stands at the strip's own start —
+            // the same place the panel's closed state draws it.
+            // The plus lives in the tab row, where Codex draws a 12.5px corner.
+            StripIconButton(HarnessIconName.Plus, "新标签页", "harness-tab-add", state::addNewTab,
+                radius = HarnessTokens.Control.TabRowControlRadius)
         }
-        // The plus lives in the tab row, where Codex draws a 12.5px corner.
-        StripIconButton(HarnessIconName.Plus, "新标签页", if (main) "harness-tab-add" else "harness-tab-add-secondary", state::addNewTab,
-            radius = HarnessTokens.Control.TabRowControlRadius)
-        Spacer(Modifier.width(HarnessTokens.Control.TabStripControl))
+    }
+}
+
+/** The measured slot ceiling: 240px of slot, holding a 238px chip and its 2px reserved trailing pad. */
+private val TabSlotMax = 240.dp
+
+/** The measured slot floor: below this the live strip stops dividing and scrolls instead. */
+private val TabSlotMin = HarnessTokens.Control.TabSlotFloor
+
+/**
+ * One slot of the strip: the chip, plus the 1px separator pinned to the slot's trailing edge. Measured on
+ * the live strip the separator is drawn after **every** slot, the last one included, where it is merely
+ * hidden — so a slot is always `slot` wide, and its chip is the slot less the 2px the slot's own wrapper
+ * reserves (`pe-0.5`). The chip is drawn at the slot's start, so that reserve is the gap the separator
+ * sits in; the separator itself lands flush at the slot's trailing edge.
+ */
+@Composable
+private fun TabSlot(slot: Dp, separatorDimmed: Boolean, chip: @Composable () -> Unit) {
+    Box(Modifier.width(slot)) {
+        chip()
+        Box(Modifier.align(Alignment.CenterEnd)) {
+            TabSeparator(dimmed = separatorDimmed)
+        }
     }
 }
 
 /**
- * The trailing cluster, pinned to the right edge: the layout toggle (退出完整视图 / 进入完整视图) and the
- * tabs toggle. While the tabs are shown the second control hides them (隐藏标签页, drawn engaged — it is
- * the mode the live shell shows with its strip up); while they are hidden it becomes 新建标签页, which
- * brings the strips back.
+ * The measured 1px 12px separator between two adjacent tabs. It is dismissed while **either of the tabs
+ * it divides is selected** — measured by moving the selection along a ten-tab strip: selecting slot 3
+ * hid separators 2 and 3, selecting slot 5 hid 4 and 5, and selecting the last hid 8 and its own
+ * trailing one. Hover does **not** dismiss it (a hovered slot kept its own separator and its
+ * neighbour's), which corrects the earlier reading of this rule.
+ */
+@Composable
+private fun TabSeparator(dimmed: Boolean) {
+    Box(
+        Modifier.width(1.dp).height(HarnessTokens.Control.TabSeparator)
+            .alpha(if (dimmed) 0f else 1f)
+            .background(HarnessTokens.Colors.ChromeRule)
+            .testTag("harness-tab-separator"),
+    )
+}
+
+/**
+ * The conversation, listed as a tab in 完整视图 — the one place the live shell turns it into one, because
+ * the panel has taken the whole main region. It is never selected (the panel's own tab carries the
+ * selection) and choosing it brings the conversation back beside the panel.
+ */
+@Composable
+private fun ConversationChip(state: HarnessTabStripState, width: Dp) {
+    val source = remember { MutableInteractionSource() }
+    val hovered by source.collectIsHoveredAsState()
+    Box(
+        Modifier.width(width).height(HarnessTokens.Control.TabChipHeight)
+            .clip(RoundedCornerShape(HarnessTokens.Control.TabChipRadius))
+            .background(if (hovered) HarnessTokens.Colors.ChromeFill else Color.Transparent)
+            .hoverable(source)
+            .clickable(role = Role.Tab) { state.unsplit() }
+            .semantics { testTag = "harness-tab-conversation" },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.matchParentSize().padding(start = 10.dp), contentAlignment = Alignment.CenterStart) {
+            HarnessText(
+                "聊天",
+                color = HarnessTokens.Colors.ChromeIcon,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * The trailing cluster, pinned to the right edge. Its two slots are the layout toggle and the tabs
+ * control, and the live shell gives each of the four states a different pair — measured:
+ *
+ * | state | 2490 | 2524 |
+ * | --- | --- | --- |
+ * | panel closed, no tabs | — | `新建标签页` (方框加号) |
+ * | panel closed, tabs open | `进入完整视图` | `显示标签页` (计数徽标) |
+ * | panel beside the conversation | `进入完整视图` | `隐藏标签页` |
+ * | panel in 完整视图 | `退出完整视图` | `进入分屏视图` |
+ *
+ * The closed state without tabs is the one the new chat page shows: a single 新建标签页, because a new tab
+ * is what opens the panel. With tabs already open the same slot only brings them back, so it says so and
+ * carries their count.
  */
 @Composable
 private fun TrailingCluster(state: HarnessTabStripState) {
+    // Off a chat page the live shell leaves none of these controls in the bar — measured, 定时任务 and
+    // 代码审查 render no `data-app-shell-workspace-layout-toggle` at all.
+    if (!state.onChatPage) return
     Row(
         Modifier.fillMaxHeight().padding(end = HarnessTokens.Spacing.Two),
         horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Control.TitlebarGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TitlebarRule(HarnessTokens.Control.TitlebarTrailingRule, "harness-tab-trailing-rule")
-        StripIconButton(
-            HarnessIconName.FullView,
-            if (state.split == null) "退出完整视图" else "进入完整视图",
-            "harness-tab-split",
-            state::toggleSplit,
-            enabled = state.tabs.size >= 2,
-            radius = HarnessTokens.Control.TabRowControlRadius,
-            // Measured: the layout control carries the 10% ink fill while one pane has the full width
-            // and drops it as soon as the panes are split, so the fill reports the layout, not the click.
-            engaged = state.split == null,
-        )
-        if (state.tabsHidden) {
-            StripIconButton(
-                HarnessIconName.Plus, "新建标签页", "harness-tab-new",
+        val split = state.layout == HarnessTabLayout.Split
+        when {
+            state.tabsHidden && state.tabs.isEmpty() -> StripIconButton(
+                HarnessIconName.PanelAdd, "新建标签页", "harness-tab-new",
                 state::addNewTab, radius = HarnessTokens.Control.TabRowControlRadius,
             )
-        } else {
-            StripIconButton(
-                HarnessIconName.SplitView, "隐藏标签页", "harness-tab-hide",
-                state::toggleTabsHidden, radius = HarnessTokens.Control.TabRowControlRadius, engaged = true,
+            state.tabsHidden -> {
+                StripIconButton(
+                    HarnessIconName.FullView, "进入完整视图", "harness-tab-split",
+                    { state.toggleTabsHidden(); if (state.layout != HarnessTabLayout.Full) state.toggleSplit() },
+                    radius = HarnessTokens.Control.TabRowControlRadius,
+                )
+                StripIconButton(
+                    HarnessIconName.SplitView, "显示标签页", "harness-tab-show",
+                    state::toggleTabsHidden,
+                    radius = HarnessTokens.Control.TabRowControlRadius,
+                    content = { TabCountBadge(state.tabs.size) },
+                )
+            }
+            else -> {
+                StripIconButton(
+                    HarnessIconName.FullView,
+                    if (split) "进入完整视图" else "退出完整视图",
+                    "harness-tab-split",
+                    state::toggleSplit,
+                    radius = HarnessTokens.Control.TabRowControlRadius,
+                    // Measured: the layout control carries the 10% ink fill while the panel has the whole
+                    // region and drops it as soon as the panes are split, so the fill reports the layout.
+                    engaged = !split,
+                )
+                StripIconButton(
+                    HarnessIconName.SplitView,
+                    if (split) "隐藏标签页" else "进入分屏视图",
+                    "harness-tab-hide",
+                    if (split) state::toggleTabsHidden else state::unsplit,
+                    radius = HarnessTokens.Control.TabRowControlRadius,
+                    engaged = split,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 显示标签页's own artwork: a rounded box with the panel's tab count in it, transcribed from the live
+ * control (a 12-unit outline on the 16-unit grid with a single digit centred in it). Not an
+ * [HarnessIconName] because it carries a number rather than a fixed path.
+ */
+@Composable
+private fun TabCountBadge(count: Int) {
+    // Read the ink in the composition: the draw lambda is not a composable scope.
+    val ink = HarnessTokens.Colors.ChromeIcon
+    Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(14.dp).drawBehind {
+                drawRoundRect(
+                    color = ink,
+                    cornerRadius = CornerRadius(size.minDimension * 0.28f),
+                    style = Stroke(width = size.minDimension * 0.115f),
+                )
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            HarnessText(
+                count.toString(),
+                color = HarnessTokens.Colors.ChromeIcon,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
             )
         }
     }
@@ -374,10 +607,14 @@ private fun TitlebarRule(height: Dp, tag: String) {
 private val LocalTabClientRegion = staticCompositionLocalOf<Modifier.(String) -> Modifier> { { this } }
 
 /**
- * One tab slot. Measured on the live tab bar: a 238x32 slot holding an inset painter — a `#FFFFFF`
+ * One tab slot. Measured on the live tab bar: a 238x32 chip holding an inset painter — a `#FFFFFF`
  * pill with a 1px `rgba(26,28,31,.08)` ring at corner 10 when the tab is selected, nothing at all
  * when it is not (an unselected tab is bare ink at 49% alpha). The close target is a 20x20 box at the
  * trailing edge, revealed by hover.
+ *
+ * [width] is the slot's own width, which the row divides between the open tabs: the live strip's chip is
+ * its slot less the 3px that slot reserves for its separator, and 238 is only the ceiling that division
+ * reaches when the tabs are few enough for it to fit.
  */
 @Composable
 private fun HarnessTabChip(
@@ -386,6 +623,7 @@ private fun HarnessTabChip(
     state: HarnessTabStripState,
     drag: HarnessTabDragState,
     onHoverChanged: (Boolean) -> Unit = {},
+    width: Dp = HarnessTokens.Control.TabChip,
 ) {
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
@@ -395,7 +633,7 @@ private fun HarnessTabChip(
     var origin by remember { mutableStateOf(Offset.Zero) }
     val shape = RoundedCornerShape(HarnessTokens.Control.TabChipRadius)
     Box(
-        Modifier.width(HarnessTokens.Control.TabChip).height(HarnessTokens.Control.TabChipHeight)
+        Modifier.width(width).height(HarnessTokens.Control.TabChipHeight)
             .onGloballyPositioned { origin = it.positionInWindow() }
             .hoverable(source)
             .clickable(role = Role.Tab) { state.select(tab.id) }
@@ -422,10 +660,14 @@ private fun HarnessTabChip(
         if (!selected && hovered) {
             Box(Modifier.matchParentSize().clip(shape).background(HarnessTokens.Colors.ChromeFill))
         }
+        // Measured: the chip's content is inset 10px at the start and 7px at the end, and holds a
+        // 16px kind icon, a 4px gap (an 8px flex gap the label pulls back 4px of), and the title.
         Row(
-            Modifier.matchParentSize().padding(start = 10.dp, end = 4.dp),
+            Modifier.matchParentSize().padding(start = 10.dp, end = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TabKindIcon(tab, selected)
+            Spacer(Modifier.width(TAB_ICON_GAP))
             HarnessText(
                 tab.title,
                 modifier = Modifier.weight(1f),
@@ -434,14 +676,49 @@ private fun HarnessTabChip(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            // Codex reveals the close target on the selected tab and on hover; it is absent at rest.
-            if (selected || hovered) {
+            // The close target is absolutely positioned over the chip's trailing edge, so it takes no
+            // room at rest — the title runs the chip's full width until hover or selection reveals it,
+            // and only then does the title give up its 20px (measured: label 51px at rest, 31px while
+            // the close is showing).
+            if (selected || hovered) Spacer(Modifier.width(HarnessTokens.Control.TabClose))
+        }
+        if (selected || hovered) {
+            Box(Modifier.matchParentSize().padding(end = 7.dp), contentAlignment = Alignment.CenterEnd) {
                 TabCloseButton(tab, state)
-            } else {
-                Spacer(Modifier.width(HarnessTokens.Control.TabClose))
             }
         }
     }
+}
+
+/** The gap between a chip's kind icon and its title: measured 4px (an 8px flex gap, label pulled back). */
+private val TAB_ICON_GAP = 4.dp
+
+/**
+ * The strip's own scroll padding, measured as the live scroller's `scroll-px-1` (`scroll-padding: 2px
+ * auto`): a selected tab is scrolled fully into view with this much air on the side it came from.
+ */
+private val TAB_SCROLL_PAD = 2.dp
+
+/**
+ * What a tab's kind icon is: measured per kind, the live strip swaps the artwork rather than drawing one
+ * glyph for every tab. 变更 is [BrowserTabIcon.Changes], 新标签页 is [BrowserTabIcon.Globe], and the
+ * terminal tabs are [BrowserTabIcon.Terminal]; a page this client draws none of those for falls back to
+ * the globe rather than to nothing, so a chip never loses its icon.
+ */
+@Composable
+private fun TabKindIcon(tab: HarnessWorkspaceTab, selected: Boolean) {
+    val icon = when (tab.page) {
+        PageId.NewTab -> BrowserTabIcon.Globe
+        is PageId.Settings -> when ((tab.page as PageId.Settings).section) {
+            SettingsSection.Git -> BrowserTabIcon.Changes
+            else -> BrowserTabIcon.Globe
+        }
+        else -> BrowserTabIcon.Globe
+    }
+    BrowserTabIconGlyph(
+        icon,
+        tint = if (selected) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
+    )
 }
 
 @Composable
@@ -465,6 +742,9 @@ private fun TabCloseButton(tab: HarnessWorkspaceTab, state: HarnessTabStripState
  * `rgba(26,28,31,.494)`, a 10% ink fill on hover or while toggled on (with the ink lifted to full
  * strength), and `opacity: .4` — never a greyed colour — when it is unavailable. The hover tip is the
  * inverted dark pill the rail already uses, dropped just under the 44px strip.
+ *
+ * [content] replaces the glyph for controls whose artwork carries data rather than a fixed path — the
+ * one that does is 显示标签页, whose box holds the panel's tab count.
  */
 @Composable
 private fun StripIconButton(
@@ -478,11 +758,12 @@ private fun StripIconButton(
     iconSize: Dp = 16.dp,
     shortcut: String? = null,
     // A toggled-on control keeps the 10% ink fill and full-strength ink without being hovered, which
-    // is how the live 退出完整视图 control renders while the split view is up.
+    // is how the live 退出完整视图 control renders while the full view is up.
     engaged: Boolean = false,
     // No measured tip exists for the tab close target, so it is left tip-free rather than given
     // wording Codex does not show.
     showTip: Boolean = true,
+    content: (@Composable () -> Unit)? = null,
 ) {
     val clientRegion = LocalTabClientRegion.current
     HarnessTooltipTrigger(
@@ -514,11 +795,15 @@ private fun StripIconButton(
                 .clientRegion(tag).semantics { testTag = tag; contentDescription = description },
             contentAlignment = Alignment.Center,
         ) {
-            HarnessIcon(
-                name,
-                tint = if (engaged) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
-                size = iconSize,
-            )
+            if (content != null) {
+                content()
+            } else {
+                HarnessIcon(
+                    name,
+                    tint = if (engaged) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
+                    size = iconSize,
+                )
+            }
         }
     }
 }

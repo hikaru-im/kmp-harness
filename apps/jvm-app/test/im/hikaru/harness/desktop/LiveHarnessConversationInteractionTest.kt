@@ -76,7 +76,8 @@ class LiveHarnessConversationInteractionTest {
             try {
                 setContent { HarnessApp(connection, modelSettingsRepository = models, themeMode = HarnessThemeMode.Light) }
                 onNodeWithTag("live-home").assertExists()
-                onNodeWithTag("live-home-host").assertTextEquals(connection.description.displayName)
+                onNodeWithTag("live-home-hero")
+                    .assertTextEquals("你想让我们在 ${connection.description.displayName} 中构建什么？")
                 onNodeWithTag("live-composer-editor").performTextReplacement("First production route message")
                 onNodeWithTag("live-composer-send").assertIsNotEnabled()
                 chooseLiveTestModel()
@@ -181,7 +182,8 @@ class LiveHarnessConversationInteractionTest {
                 runOnIdle { connection = newConnection }
                 onNodeWithTag("live-home").assertExists()
                 onNodeWithTag("live-thread").assertDoesNotExist()
-                onNodeWithTag("live-home-host").assertTextEquals(newConnection.description.displayName)
+                onNodeWithTag("live-home-hero")
+                    .assertTextEquals("你想让我们在 ${newConnection.description.displayName} 中构建什么？")
                 onNodeWithTag("live-composer-editor").assertDraft("")
                 runOnIdle { assertTrue(newApi.historyReads.isEmpty(), "New Host must not inherit the old Thread route") }
                 onNodeWithTag("recent-${id.value}").performClick()

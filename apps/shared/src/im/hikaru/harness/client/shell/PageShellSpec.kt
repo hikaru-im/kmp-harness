@@ -27,6 +27,20 @@ public enum class NavigatorKind {
 public data class PageShellSpec(
     val navigator: NavigatorKind,
     val resizable: Boolean = false,
+    /**
+     * True when the page draws its own content column, so the shell must not cap the surface it hands
+     * over at [im.hikaru.harness.ui.foundation.HarnessTokens.Control.ContentMaxWidth]. Measured on the
+     * live 新标签页 page: its toolbar spans the pane and the column below it is the page's own 768
+     * (`max-w-3xl`), wider than the 672 the thread pages share — a shell cap would clip both.
+     */
+    val ownContentColumn: Boolean = false,
+    /**
+     * True when the shell may dock this page's composer at the bottom of its surface. 新标签页 brings
+     * no composer at all, so a pane holding that tab must draw no dock: the split would otherwise
+     * leave the dock's gutter behind as an empty band under the pane. The app still decides whether a
+     * layout has a docked composer at all, so this flag only ever removes the dock.
+     */
+    val docksComposer: Boolean = true,
 ) {
     public companion object {
         /** A page that owns no left navigator and therefore renders no drawer. */
@@ -44,9 +58,9 @@ public val PageShellSpec.mountsNavigator: Boolean
     get() = navigator != NavigatorKind.None
 
 /**
- * Navigator the shell mounts for [page]. Home and Thread keep the Workspace navigator; Settings,
- * Plugins and Hosts own a dedicated navigator; the Library and Project pages and Account mount none,
- * so the Workspace project tree never leaks into those pages.
+ * Navigator the shell mounts for [page]. Home, Thread and the 新标签页 page keep the Workspace
+ * navigator; Settings, Plugins and Hosts own a dedicated navigator; the Library and Project pages and
+ * Account mount none, so the Workspace project tree never leaks into those pages.
  */
 public fun pageShellSpec(page: PageId): PageShellSpec =
     when (page) {
@@ -55,6 +69,15 @@ public fun pageShellSpec(page: PageId): PageShellSpec =
         PageId.Home,
         is PageId.Thread,
         -> PageShellSpec(NavigatorKind.Workspace, resizable = true)
+
+        // 新标签页 keeps the Workspace navigator (the live title strip draws its 隐藏侧边栏 toggle while
+        // the tab is on this page), and it brings its own 768 column — see [PageShellSpec].
+        PageId.NewTab -> PageShellSpec(
+            NavigatorKind.Workspace,
+            resizable = true,
+            ownContentColumn = true,
+            docksComposer = false,
+        )
 
         PageId.Library,
         is PageId.Projects,

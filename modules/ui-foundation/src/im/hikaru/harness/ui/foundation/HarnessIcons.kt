@@ -103,6 +103,13 @@ public enum class HarnessIconName {
      * arrowheads of a 16-unit grid, drawn as two closed subpaths.
      */
     FullView,
+    /**
+     * Rounded square with a plus inside, the live Codex 新建标签页 control — the tab strip's plus while
+     * the side panel is closed, and the strip's own trailing plus while it is open. Not [Plus]: the live
+     * glyph is the plus *inside a panel outline*, and the outline is what tells it apart from a plain
+     * 添加 at a glance.
+     */
+    PanelAdd,
     /** Three stacked, shortening bars (`filter_list`), the task-filter control's glyph. */
     Filter,
     /**
@@ -823,6 +830,52 @@ private fun DrawScope.drawHarnessIcon(
                 lineTo(8.32324f, 5.2002f)
                 cubicTo(8.03329f, 5.2002f, 7.79785f, 4.96475f, 7.79785f, 4.6748f)
                 cubicTo(7.79785f, 4.38486f, 8.03329f, 4.14941f, 8.32324f, 4.14941f)
+                close()
+            }.path,
+            color,
+        )
+        HarnessIconName.PanelAdd -> drawPath(
+            artwork16(min).apply {
+                evenOdd()
+                // The plus, spanning 4.64..11.36 of the 16-unit grid — a 6.72-unit cross, so it sits
+                // well inside the panel outline rather than touching it.
+                moveTo(8.00037f, 4.64087f)
+                cubicTo(8.29007f, 4.64107f, 8.52562f, 4.87654f, 8.52576f, 5.16626f)
+                lineTo(8.52576f, 7.47485f)
+                lineTo(10.8334f, 7.47485f)
+                cubicTo(11.1232f, 7.47503f, 11.3578f, 7.7104f, 11.3578f, 8.00024f)
+                cubicTo(11.3577f, 8.28997f, 11.1231f, 8.52546f, 10.8334f, 8.52563f)
+                lineTo(8.52576f, 8.52563f)
+                lineTo(8.52576f, 10.8333f)
+                cubicTo(8.52558f, 11.1229f, 8.29004f, 11.3575f, 8.00037f, 11.3577f)
+                cubicTo(7.71053f, 11.3577f, 7.47515f, 11.1231f, 7.47498f, 10.8333f)
+                lineTo(7.47498f, 8.52563f)
+                lineTo(5.16638f, 8.52563f)
+                cubicTo(4.87668f, 8.52544f, 4.64112f, 8.28996f, 4.64099f, 8.00024f)
+                cubicTo(4.64099f, 7.71042f, 4.8766f, 7.47505f, 5.16638f, 7.47485f)
+                lineTo(7.47498f, 7.47485f)
+                lineTo(7.47498f, 5.16626f)
+                cubicTo(7.47511f, 4.87642f, 7.7105f, 4.64087f, 8.00037f, 4.64087f)
+                close()
+                // The panel outline: a 2.51-radius rounded square spanning 1.81..14.19, 1.05 units
+                // thick, as a ring (outer contour then inner, which is what the odd-even rule needs).
+                moveTo(11.683f, 1.80786f)
+                cubicTo(13.0683f, 1.80786f, 14.1918f, 2.93134f, 14.1918f, 4.31665f)
+                lineTo(14.1918f, 11.6829f)
+                cubicTo(14.1918f, 13.0682f, 13.0683f, 14.1917f, 11.683f, 14.1917f)
+                lineTo(4.31677f, 14.1917f)
+                cubicTo(2.93146f, 14.1917f, 1.80798f, 13.0682f, 1.80798f, 11.6829f)
+                lineTo(1.80798f, 4.31665f)
+                cubicTo(1.80798f, 2.93134f, 2.93146f, 1.80786f, 4.31677f, 1.80786f)
+                close()
+                moveTo(4.31677f, 2.85864f)
+                cubicTo(3.51136f, 2.85864f, 2.85876f, 3.51124f, 2.85876f, 4.31665f)
+                lineTo(2.85876f, 11.6829f)
+                cubicTo(2.85876f, 12.4883f, 3.51136f, 13.1418f, 4.31677f, 13.1418f)
+                lineTo(11.683f, 13.1418f)
+                cubicTo(12.4884f, 13.1418f, 13.142f, 12.4883f, 13.142f, 11.6829f)
+                lineTo(13.142f, 4.31665f)
+                cubicTo(13.142f, 3.51124f, 12.4884f, 2.85864f, 11.683f, 2.85864f)
                 close()
             }.path,
             color,

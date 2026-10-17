@@ -30,8 +30,7 @@ class LiveConversationInteractionTest {
         val owner = ComposerOwner()
         var label by mutableStateOf<String?>("Test workstation")
         setContent { HarnessTheme { LiveHomeSurface(label) { owner.Content() } } }
-        onNodeWithText("What should we build?").assertExists()
-        onNodeWithTag("live-home-host").assertTextEquals("Test workstation")
+        onNodeWithTag("live-home-hero").assertTextEquals("你想让我们在 Test workstation 中构建什么？")
         onNodeWithText("开始新的会话").assertDoesNotExist()
         onNodeWithTag("live-composer-editor").performTextReplacement("Build a real app")
         onNodeWithTag("live-composer-send").assertIsEnabled().performClick()
@@ -41,7 +40,8 @@ class LiveConversationInteractionTest {
             assertEquals(ConversationAction.Creating, owner.state.action)
             label = null
         }
-        onNodeWithTag("live-home-host").assertDoesNotExist()
+        // With no Host to name, the hero falls back to the reference's shorter question.
+        onNodeWithTag("live-home-hero").assertTextEquals("我们要构建什么？")
     }
 
     @Test
