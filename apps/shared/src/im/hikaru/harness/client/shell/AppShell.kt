@@ -393,7 +393,6 @@ public fun AppShell(
                                                     HarnessTokens.Control.SettingsContentMaxWidth
                                                 else -> HarnessTokens.Control.ContentMaxWidth
                                             },
-                                        composerState = state.composer,
                                         content = content,
                                         composer = composer,
                                     )
@@ -1867,61 +1866,46 @@ private fun MainSurface(
     contentMaxWidth: Dp? = HarnessTokens.Control.ContentMaxWidth,
     /** Whether this pane's page docks a composer; a page with none drops the dock, gutter and all. */
     docksComposer: Boolean = true,
-    composerState: ComposerState,
     content: @Composable () -> Unit,
     composer: (@Composable () -> Unit)?,
 ) {
-    Column(
-        modifier = modifier.fillMaxHeight().background(HarnessTokens.Colors.Canvas),
-    ) {
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.TopCenter,
+    BoxWithConstraints(modifier.fillMaxHeight()) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            im.hikaru.harness.client.app.LocalConversationViewportHeight provides maxHeight,
         ) {
-            Box(
-                modifier =
-                    Modifier
-                        .then(
-                            if (contentMaxWidth == null) {
-                                Modifier.fillMaxSize()
-                            } else {
-                                Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().fillMaxHeight()
-                            },
-                        )
-                        .semantics { testTag = "main-content-column" },
-            ) {
-                content()
+            Column(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas)) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                    Box(
+                        Modifier.then(
+                            if (contentMaxWidth == null) Modifier.fillMaxSize()
+                            else Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().fillMaxHeight(),
+                        ).semantics { testTag = "main-content-column" },
+                    ) { content() }
+                }
+                if (docksComposer) composer?.let { ComposerDock(it) }
             }
         }
-        if (docksComposer) composer?.let { ComposerDock(composerState, it) }
     }
 }
-
 @Composable
 private fun ComposerDock(
-    state: ComposerState,
     content: @Composable () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(
-            horizontal = HarnessTokens.Control.ComposerGutter,
-            vertical = HarnessTokens.Control.ComposerGutter,
+            horizontal = HarnessTokens.Composer.DockInset,
+            vertical = HarnessTokens.Composer.DockInset,
         ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier =
                 Modifier
-                    .widthIn(max = HarnessTokens.Control.ContentMaxWidth)
+                    .widthIn(max = HarnessTokens.Composer.MaxWidth)
                     .fillMaxWidth()
                     .semantics { testTag = "composer-column" },
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-                content()
-                if (state.error != null) {
-                    HarnessText(state.error, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall)
-                }
-            }
+            content()
         }
     }
 }

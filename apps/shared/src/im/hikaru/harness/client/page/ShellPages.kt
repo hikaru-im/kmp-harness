@@ -8,10 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,70 +31,7 @@ import im.hikaru.harness.ui.foundation.HarnessRowState
 import im.hikaru.harness.ui.foundation.HarnessSection
 import im.hikaru.harness.ui.foundation.HarnessSurface
 import im.hikaru.harness.ui.foundation.HarnessText
-import im.hikaru.harness.ui.foundation.HarnessTextField
 import im.hikaru.harness.ui.foundation.HarnessTokens
-
-/** Home is the new-task entry: it starts a Thread/Task instead of acting as a connection dashboard. */
-@Composable
-public fun HomePage(
-    hostLabel: String?,
-    canOpenThread: Boolean,
-    recentTasks: List<RecentTaskItem>,
-    onOpenThread: () -> Unit,
-    onOpenRecent: (RecentTaskItem) -> Unit,
-) {
-    PageScaffold(title = "新任务", description = "在当前工作区开始一个新的 Agent 任务。") {
-        HarnessText(
-            hostLabel ?: "本地 Harness 可在无账号、无网络时使用。",
-            color = HarnessTokens.Colors.TextMuted,
-        )
-        HarnessButton(text = "开始新对话", onClick = onOpenThread, enabled = canOpenThread)
-        if (recentTasks.isNotEmpty()) {
-            HarnessText("最近任务", color = HarnessTokens.Colors.TextMuted)
-            recentTasks.take(5).forEach { task ->
-                TaskRow(title = task.title, subtitle = task.status, onClick = { onOpenRecent(task) })
-            }
-        }
-    }
-}
-
-@Composable
-public fun HomeComposer(
-    prompt: String,
-    onPromptChange: (String) -> Unit,
-    onSend: () -> Unit,
-    enabled: Boolean,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HarnessIconButton(contentDescription = "Attach file", onClick = {}, enabled = enabled) {
-            HarnessIcon(HarnessIconName.Attach)
-        }
-        TextButton(onClick = {}, enabled = enabled) { HarnessText("Agent") }
-        TextButton(onClick = {}, enabled = enabled) { HarnessText("Model") }
-        Spacer(Modifier.weight(1f))
-        HarnessText("Enter to send", color = HarnessTokens.Colors.TextMuted)
-    }
-    HarnessTextField(
-        value = prompt,
-        onValueChange = onPromptChange,
-        label = "消息",
-        singleLine = false,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End,
-    ) {
-        HarnessIconButton(contentDescription = "Send", onClick = onSend, enabled = enabled && prompt.isNotBlank()) {
-            HarnessIcon(HarnessIconName.Send)
-        }
-    }
-}
 
 @Composable
 public fun RecentTasksPage(

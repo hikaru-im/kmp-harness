@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -25,6 +26,59 @@ import kotlin.test.*
 /** Test-only state/messages/catalogs; production callbacks belong to the app owner. */
 @OptIn(ExperimentalTestApi::class)
 class LiveConversationInteractionTest {
+    @Test
+    fun welcomeGroupCentersInAvailableViewportAndShortWindowsScroll() {
+        listOf(Size(1440f, 900f), Size(420f, 800f), Size(420f, 260f)).forEach { size ->
+            runSkikoComposeUiTest(size = size) {
+                val owner = ComposerOwner()
+                setContent { HarnessTheme { LiveHomeSurface(null) { owner.Content() } } }
+                val root = onNodeWithTag("live-home").getUnclippedBoundsInRoot()
+                val group = onNodeWithTag("live-home-group").getUnclippedBoundsInRoot()
+                assertTrue(kotlin.math.abs((group.left + group.right).value - (root.left + root.right).value) < 2)
+                if (size.height >= 800f) {
+                    assertTrue(kotlin.math.abs((group.top + group.bottom).value - (root.top + root.bottom).value) < 2,
+                        "Group must center vertically: group=$group root=$root")
+                } else onNodeWithTag("live-composer-model").performScrollTo().assertIsDisplayed()
+            }
+        }
+    }
+
+    @Test
+    fun captureActualPermissionAndModelPopupInteractionsInBothThemes() {
+        listOf(HarnessThemeMode.Light, HarnessThemeMode.Dark).forEach { mode ->
+            runSkikoComposeUiTest(size = Size(420f, 800f)) {
+                val owner = ComposerOwner()
+                owner.chosen = FIRST.copy(reasoningEfforts = listOf("low", "medium", "high"))
+                owner.models = listOf(owner.chosen!!, SECOND)
+                setContent { HarnessTheme(mode) { LiveHomeSurface(null) { owner.Content() } } }
+                onNodeWithTag("live-composer-permissions").performClick()
+                onNodeWithTag("live-composer-permission-FullAccess").performClick()
+                onNodeWithTag("live-composer-permissions").performClick()
+                savePopup(onNodeWithTag("live-composer-permission-popup"), "permissions-$mode")
+                onNodeWithTag("live-composer-permission-Ask").performKeyInput { pressKey(Key.Escape) }
+                onNodeWithTag("live-composer-model").performClick()
+                onNodeWithTag("live-composer-effort-slider").performMouseInput {
+                    moveTo(centerLeft); press(); moveTo(centerRight, delayMillis = 200); release()
+                }
+                runOnIdle { assertEquals("high", owner.effort) }
+                savePopup(onNodeWithTag("live-composer-model-popup"), "reasoning-$mode")
+                onNodeWithTag("live-composer-model-select").performClick()
+                savePopup(onNodeWithTag("live-composer-model-popup"), "models-$mode")
+                onNodeWithTag(menuTag(SECOND)).performClick()
+                onNodeWithTag("live-composer-effort-slider").assertIsNotEnabled()
+            }
+        }
+    }
+
+    private fun savePopup(node: SemanticsNodeInteraction, name: String) {
+        val root = generateSequence(java.io.File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
+            .first { java.io.File(it, "project.yaml").exists() }
+        val directory = java.io.File(root, "build/composer-preview").apply { mkdirs() }
+        val image = org.jetbrains.skia.Image.makeFromBitmap(node.captureToImage().asSkiaBitmap())
+        try { java.io.File(directory, "$name.png").writeBytes(requireNotNull(image.encodeToData()).bytes) }
+        finally { image.close() }
+    }
+
     @Test
     fun homeSlotUsesSuppliedHostAndDraftAndSubmitsWithoutSelectedSession() = runComposeUiTest {
         val owner = ComposerOwner()
@@ -56,7 +110,8 @@ class LiveConversationInteractionTest {
         editor.performTextReplacement("send snapshot")
         editor.performKeyInput { keyDown(Key.Enter) }
         runOnIdle { assertEquals(listOf("send snapshot"), owner.submitted) }
-        onNodeWithTag("live-composer-send").assertIsNotEnabled()
+        onNodeWithTag("live-composer-send").assertDoesNotExist()
+        onNodeWithTag("live-composer-busy").assertExists()
         editor.performKeyInput { keyUp(Key.Enter); pressKey(Key.Enter); pressKey(Key.Enter) }
         editor.performTextReplacement("edited while creating")
         runOnIdle {
@@ -112,7 +167,7 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-error-Prompt").assertTextEquals("发送未确认。")
         onNodeWithTag("live-composer-error-Completion").assertTextEquals("运行状态不可用。")
         onNodeWithTag("live-composer-action").assertTextEquals("消息已接收，运行状态尚未确认。")
-        onNodeWithTag("live-composer-send").assertIsNotEnabled()
+        onNodeWithTag("live-composer-send").assertDoesNotExist()
         onNodeWithTag("live-composer-stop").assertIsEnabled().performClick()
         onNodeWithTag("live-composer-stop").assertIsNotEnabled()
         onNodeWithTag("live-composer-action").assertTextEquals("正在停止…")
@@ -127,42 +182,43 @@ class LiveConversationInteractionTest {
     }
 
     @Test
-    fun modelMenuDispatchesTypedIdentityAndKeepsEnterAndEscapeBehavior() = runComposeUiTest {
+    fun modelPanelSwitchesInPlaceAndReadOnlySessionsRemainInspectable() = runComposeUiTest {
         val owner = ComposerOwner()
-        owner.state = readyState("draft that must not send from menu")
+        owner.chosen = FIRST.copy(reasoningEfforts = listOf("low", "high"))
         setContent { HarnessTheme { owner.Content() } }
         onNodeWithTag("live-composer-model").performClick()
-        onNodeWithText("Second test model").performClick()
+        onNodeWithTag("live-composer-effort-slider").assertExists()
+        onNodeWithTag("live-composer-model-select").performClick()
+        onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
+        onNodeWithTag(menuTag(SECOND)).performClick()
+        onNodeWithTag("live-composer-effort-slider").assertIsNotEnabled()
         runOnIdle { assertEquals(listOf(SECOND), owner.selected); assertTrue(owner.submitted.isEmpty()) }
-        onNodeWithTag("live-composer-model").performClick()
-        onNodeWithTag(menuTag(FIRST)).performKeyInput { pressKey(Key.Escape) }
+        onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(Key.Escape) }
+        onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
+        runOnIdle { owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
+        onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
+        onNodeWithTag("live-composer-effort-slider").assertIsNotEnabled()
+        onNodeWithTag("live-composer-model-select").performClick()
         onNodeWithTag(menuTag(FIRST)).assertDoesNotExist()
-        onNodeWithTag("live-composer-model").performClick()
-        onNodeWithTag(menuTag(FIRST)).performKeyInput { pressKey(Key.Enter) }
-        onNodeWithTag(menuTag(FIRST)).assertDoesNotExist()
-        runOnIdle { assertEquals(2, owner.selected.size); assertTrue(owner.submitted.isEmpty()) }
-        runOnIdle { owner.modelReason = "远程 Host 模型列表不可用。" }
-        onNodeWithTag("live-composer-model").assertIsNotEnabled()
-        onNodeWithTag("live-composer-model-unavailable").assertTextEquals("远程 Host 模型列表不可用。")
-        runOnIdle { owner.modelReason = null; owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
-        onNodeWithTag("live-composer-model").assertIsNotEnabled()
-        runOnIdle { owner.state = owner.state.copy(selectedSessionId = null); owner.models = emptyList() }
-        onNodeWithTag("live-composer-model").assertIsNotEnabled()
-        onNodeWithTag("live-composer-model-unavailable").assertExists()
+        runOnIdle { assertEquals(listOf(SECOND), owner.selected) }
     }
 
     @Test
-    fun unsupportedControlsExplainDisabledStateAndHaveNoPretendClickAction() = runComposeUiTest {
+    fun permissionsSelectAndReflectLocallyWhileAttachmentStaysUnavailable() = runComposeUiTest {
         val owner = ComposerOwner()
         setContent { HarnessTheme { owner.Content() } }
-        listOf("live-composer-attachment", "live-composer-permissions").forEach { tag ->
-            val node = onNodeWithTag(tag).assertIsNotEnabled().fetchSemanticsNode()
-            assertFalse(node.config.contains(SemanticsActions.OnClick))
-            assertTrue(node.config[SemanticsProperties.StateDescription].isNotBlank())
-        }
-        onNodeWithTag("live-composer-unsupported").assertExists()
+        val attachment = onNodeWithTag("live-composer-attachment").assertIsNotEnabled().fetchSemanticsNode()
+        assertFalse(attachment.config.contains(SemanticsActions.OnClick))
+        onNodeWithTag("live-composer-permissions").assertIsEnabled().performClick()
+        onNodeWithTag("live-composer-permission-FullAccess").performClick()
+        onNodeWithTag("live-composer-permission-popup").assertDoesNotExist()
+        onNodeWithTag("live-composer-permissions").assertTextEquals("完全访问权限")
+        onNodeWithTag("live-composer-permissions").performClick()
+        onNodeWithTag("live-composer-permission-FullAccess").assertIsSelected()
+        onNodeWithTag("live-composer-permission-Ask").performKeyInput { pressKey(Key.Escape) }
+        onNodeWithTag("live-composer-permission-popup").assertDoesNotExist()
+        runOnIdle { assertEquals(ComposerPermission.FullAccess, owner.permission); assertTrue(owner.submitted.isEmpty()) }
     }
-
     @Test
     fun typedHistorySurvivesLoadingAndFailureAndOnlyHistoryUsesGenericRetry() = runSkikoComposeUiTest(size = Size(600f, 900f)) {
         var state by mutableStateOf(readyState().copy(selectedSessionId = SessionId("thread"),
@@ -220,12 +276,12 @@ class LiveConversationInteractionTest {
                     val rootHeight = root.bottom - root.top
                     assertTrue(editorHeight >= 40.dp && editorHeight <= 160.dp, "$width/$mode editor=$editor")
                     assertTrue(editorHeight <= rootHeight * 0.25f)
-                    listOf("live-composer", "live-composer-send", "live-composer-model", "live-composer-unsupported").forEach { tag ->
+                    listOf("live-composer", "live-composer-send", "live-composer-model").forEach { tag ->
                         val bounds = onNodeWithTag(tag).getUnclippedBoundsInRoot()
                         assertTrue(bounds.left >= root.left && bounds.right <= root.right && bounds.top >= root.top && bounds.bottom <= root.bottom,
                             "$width/$mode $tag=$bounds root=$root")
                     }
-                    onNodeWithTag(if (width < 640) "live-composer-footer-compact" else "live-composer-footer-wide").assertExists()
+                    onNodeWithTag("live-composer-footer").assertExists()
                     runOnIdle { assertEquals(100, owner.state.draft.lines().size) }
                 }
             }
@@ -262,6 +318,24 @@ class LiveConversationInteractionTest {
         assertTrue(last.left >= root.left && last.right <= root.right)
     }
 
+    @Test
+    fun welcomeAndThreadUseDifferentPromptsAndOnlyAdvertisedEffortsAreSelectable() = runComposeUiTest {
+        val owner = ComposerOwner()
+        owner.chosen = FIRST.copy(reasoningEfforts = listOf("low", "high"))
+        setContent { HarnessTheme { owner.Content() } }
+        onNodeWithText("描述你想构建的内容…").assertExists()
+        onNodeWithTag("live-composer-model").performClick()
+        onNodeWithTag("live-composer-effort-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(2f) }
+        runOnIdle { assertEquals("high", owner.effort) }
+        onNodeWithTag("live-composer-effort-slider").performKeyInput { pressKey(Key.Escape) }
+        runOnIdle { owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
+        onNodeWithText("继续提问，或补充任务细节…").assertExists()
+        onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
+        onNodeWithTag("live-composer-model-unavailable").assertDoesNotExist()
+        runOnIdle { owner.state = owner.state.copy(selectedSessionId = null); owner.chosen = FIRST }
+        onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
+    }
+
     private class ComposerOwner {
         var state by mutableStateOf(readyState())
         var models by mutableStateOf(listOf(FIRST, SECOND))
@@ -271,6 +345,8 @@ class LiveConversationInteractionTest {
         val submitted = mutableListOf<String>()
         val selected = mutableListOf<ConversationModelChoice>()
         var cancelled = 0
+        var effort by mutableStateOf<String?>(null)
+        var permission by mutableStateOf(ComposerPermission.Ask)
 
         @Composable
         fun Content() {
@@ -282,7 +358,9 @@ class LiveConversationInteractionTest {
                 } },
                 onCancel = { if (state.canCancel) { cancelled++; state = state.copy(cancelling = true) } },
                 models = models, selectedModel = chosen, onModelSelect = { selected += it; chosen = it },
-                modelUnavailableReason = modelReason, submitUnavailableReason = submitReason)
+                modelUnavailableReason = modelReason, submitUnavailableReason = submitReason,
+                selectedReasoningEffort = effort, onReasoningEffortSelect = { effort = it },
+                permission = permission, onPermissionSelect = { permission = it })
         }
     }
 

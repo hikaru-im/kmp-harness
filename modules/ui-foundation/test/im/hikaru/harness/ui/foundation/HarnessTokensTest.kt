@@ -34,7 +34,7 @@ class HarnessTokensTest {
         assertEquals(672f, HarnessTokens.Control.ContentMaxWidth.value)
         assertEquals(728f, HarnessTokens.Control.SettingsContentMaxWidth.value)
         // --composer-radius calc(spacing * 5.5) = 22px
-        assertEquals(22f, HarnessTokens.Control.ComposerRadius.value)
+        assertEquals(22f, HarnessTokens.Composer.Radius.value)
     }
 
     @Test
