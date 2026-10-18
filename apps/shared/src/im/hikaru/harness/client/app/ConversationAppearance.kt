@@ -37,6 +37,11 @@ internal object ConversationAppearance {
     /** Live popover ring: `rgba(255,255,255,.082) 0 0 0 0.5px` in dark (light mode not measured). */
     val popupRing: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.082f) else Color(0xFF1A1C1F).copy(alpha = 0.08f)
     val primary: Color @Composable get() = if (dark) Color(0xFF2C67C5) else Color(0xFF3A83F7)
+    /**
+     * Ink on the composer's filled accent controls. The measured send control keeps a white glyph on
+     * both composer blues, so it does not follow the chrome [HarnessTokens.Colors.OnAccent].
+     */
+    val onPrimary: Color @Composable get() = Color.White
     /** Live effort readout in the model popup: `text-composer-primary` rgb(58,131,247) in dark as well. */
     val effort: Color @Composable get() = Color(0xFF3A83F7)
     /** `data-maximum` repaints the effort readout with `--color-chart-purple` (dark accent #c8a4fb). */
@@ -85,7 +90,7 @@ internal fun ConversationActionButton(
     HarnessTooltip(label, hovered) {
         Box(
             modifier.size(size).background(
-                if (hovered) ConversationAppearance.ink.copy(alpha = 0.08f) else Color.Transparent,
+                if (hovered && onClick != null) ConversationAppearance.ink.copy(alpha = 0.08f) else Color.Transparent,
                 RoundedCornerShape(10.dp),
             ).hoverable(interactions).then(if (onClick == null) Modifier.semantics {
                 role = Role.Button; disabled(); contentDescription = label

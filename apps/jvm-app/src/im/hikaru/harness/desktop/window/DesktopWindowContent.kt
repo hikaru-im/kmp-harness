@@ -129,7 +129,7 @@ public fun DesktopHarnessWindow(
                         // while workspace tabs occupy a separate row below.
                         if (separateDock) {
                             Box(Modifier.align(Alignment.Start).height(HarnessTokens.Control.Titlebar)) {
-                                HarnessTheme(themeMode = themeMode, customization = customization) {
+                                HarnessTheme(themeMode = themeMode, customization = customization, drawBackground = false) {
                                     HarnessWindowNavigation(
                                         state = tabState,
                                         drag = tabDrag,
@@ -154,7 +154,7 @@ public fun DesktopHarnessWindow(
                             }.fillMaxWidth().height(HarnessTokens.Control.Titlebar)) {
                                 // The strip's own content reads the theme's typography and material scheme; the
                                 // bar *around* it cannot, since only a direct child is recognised by the window.
-                                HarnessTheme(themeMode = themeMode, customization = customization) {
+                                HarnessTheme(themeMode = themeMode, customization = customization, drawBackground = false) {
                                 HarnessTabStrip(
                                     state = tabState,
                                     drag = tabDrag,
@@ -289,19 +289,19 @@ private fun harnessTitleBarStyle(useDark: Boolean): TitleBarStyle {
     val colors = HarnessTokens.Colors
     val titleBarColors = if (useDark) {
         TitleBarColors.dark(
-            backgroundColor = colors.AppBackground,
-            inactiveBackground = colors.AppBackground,
+            backgroundColor = colors.ShellBackground,
+            inactiveBackground = colors.ShellBackground,
             contentColor = colors.Text,
             // No line under the strip: the reference draws none (agent-kmp hides it the same way).
-            borderColor = colors.AppBackground,
+            borderColor = colors.ShellBackground,
         )
     } else {
         TitleBarColors.light(
-            backgroundColor = colors.AppBackground,
-            inactiveBackground = colors.AppBackground,
+            backgroundColor = colors.ShellBackground,
+            inactiveBackground = colors.ShellBackground,
             contentColor = colors.Text,
             // No line under the strip: the reference draws none (agent-kmp hides it the same way).
-            borderColor = colors.AppBackground,
+            borderColor = colors.ShellBackground,
         )
     }
     val metrics = TitleBarMetrics.defaults(
@@ -358,7 +358,7 @@ public fun DesktopWindowContent(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .background(HarnessTokens.Colors.Canvas)
+                    .background(HarnessTokens.Colors.WorkspaceBackground)
                     .then(keyboardModifier),
         ) {
             // The window owns the title strip (Jewel's TitleBar, above this content), so the shell

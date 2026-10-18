@@ -333,9 +333,17 @@ public class ConversationController(
                 if (capability == CompletionCapability.LocalIdle) {
                     phase = ConversationErrorKind.Completion
                     prompt.awaitIdle()
+                    val failure = prompt.failure()
                     currentCoroutineContext().ensureActive()
                     if (!valid(fence) || request != sendRequest) return@start
                     mutableState.value = state.value.copy(action = ConversationAction.Idle, runState = ConversationRunState.Idle)
+                    if (failure != null) {
+                        // Only stable codes reach the UI, never raw Provider messages or request payloads.
+                        val code = failure.code.takeIf { it.matches(Regex("[A-Za-z0-9_.-]{1,96}")) } ?: "LLM_REQUEST_FAILED"
+                        val error = ConversationError(ConversationErrorKind.Completion,
+                            "模型执行失败（$code）。", ConversationRetry.History)
+                        mutableState.value = state.value.copy(errors = state.value.errors + (ConversationErrorKind.Completion to error))
+                    }
                     refreshHistory()
                 }
                 // Delivery-only deliberately does not call awaitIdle: Relay returns Unit immediately.

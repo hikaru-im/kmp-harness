@@ -82,6 +82,113 @@ import kotlin.test.assertTrue
 class OpenAiClientFixtureTest {
 
     @Test
+    fun chatReasoningToolRoundTripPreservesReasoningInTheNextRequest() = runTest {
+        val fixture = fixture(
+            flowOf(reasoningDelta("thinking"), toolDelta("call-1", "lookup", "{\"query\":\"Kotlin\"}"), finish("tool_calls"), DONE),
+            flowOf(textDelta("found"), finish("stop"), DONE),
+        )
+        try {
+            val firstOptions = textOptions(tools = listOf(lookupTool()))
+            val assembler = im.hikaru.harness.llm.BlockAssembler()
+            fixture.adapter.stream(firstOptions).collect(assembler::push)
+            assertEquals(ToolCallsFinishReason, assembler.finish)
+            val result = im.hikaru.harness.llm.createToolResultMessage(CallId("call-1"), listOf(TextBlock("result")), false)
+            val second = fixture.adapter.stream(firstOptions.copy(messages = firstOptions.messages +
+                assembler.message(firstOptions.provider, firstOptions.model) + result)).toList()
+            assertEquals(FinishChunk(StopFinishReason), second.last())
+            val body = Json.parseToJsonElement(fixture.http.requests[1].body).jsonObject
+            val assistant = body.array("messages")[1].jsonObject
+            assertEquals("thinking", assistant.string("reasoning_content"))
+            assertEquals("call-1", assistant.array("tool_calls").single().jsonObject.string("id"))
+        } finally { fixture.executor.close() }
+    }
+
+    @Test
+    fun chatReasoningFollowedByToolCallAtTheSameIndexShouldComplete() = runTest {
+        val terminal = streamChunk(choices = buildJsonArray {
+            addJsonObject {
+                put("index", 0)
+                putJsonObject("delta") { put("content", ""); put("reasoning_content", JsonNull) }
+                put("finish_reason", "tool_calls")
+            }
+        })
+        val fixture = fixture(flowOf(
+            reasoningDelta(""), reasoningDelta("thinking"),
+            toolDelta("call-1", "lookup", "{\"query\":\"Kotlin\"}"), terminal, DONE,
+        ))
+        val chunks = try {
+            fixture.adapter.stream(textOptions(tools = listOf(lookupTool()))).toList()
+        } finally { fixture.executor.close() }
+        assertEquals(FinishChunk(ToolCallsFinishReason), chunks.last(), chunks.toString())
+        assertTrue(chunks.any { it is BlockEndChunk && it.block == im.hikaru.harness.llm.ReasoningBlock("thinking") })
+        assertTrue(chunks.any { it is BlockEndChunk && it.block is ToolCallBlock })
+    }
+
+    @Test
+    fun chatTextAndParallelToolCallsHaveIndependentIndexSpaces() = runTest {
+        val fixture = fixture(flowOf(
+            textDelta("I will look that up."),
+            toolDelta("call-1", "lookup", "{\"query\":\"first\"}"),
+            streamChunk(choices = buildJsonArray {
+                addJsonObject {
+                    put("index", 0)
+                    putJsonObject("delta") {
+                        putJsonArray("tool_calls") {
+                            addJsonObject {
+                                put("index", 1); put("id", "call-2"); put("type", "function")
+                                putJsonObject("function") { put("name", "lookup"); put("arguments", "{\"query\":\"second\"}") }
+                            }
+                        }
+                    }
+                }
+            }),
+            finish("tool_calls"), DONE,
+        ))
+        val chunks = try {
+            fixture.adapter.stream(textOptions(tools = listOf(lookupTool()))).toList()
+        } finally { fixture.executor.close() }
+        assertEquals(FinishChunk(ToolCallsFinishReason), chunks.last())
+        val blocks = chunks.filterIsInstance<BlockEndChunk>().map { it.block }
+        assertEquals(listOf(TextBlock("I will look that up.")), blocks.filterIsInstance<TextBlock>())
+        assertEquals(listOf("call-1", "call-2"), blocks.filterIsInstance<ToolCallBlock>().map { it.id.value })
+    }
+
+    @Test
+    fun defaultExecSchemaShouldReachChatRequestWithoutLosingConstraints() = runTest {
+        val fixture = fixture(flowOf(textDelta("ok"), finish("stop"), DONE))
+        val exec = im.hikaru.harness.exec.jvm.ExecProcessProducer.schema
+        val spawn = im.hikaru.harness.subagent.tools.SpawnAgentToolSchema
+        val chunks = try {
+            fixture.adapter.stream(textOptions(tools = listOf(exec, spawn))).toList()
+        } finally {
+            fixture.executor.close()
+        }
+        assertEquals(FinishChunk(StopFinishReason), chunks.last())
+        val body = Json.parseToJsonElement(fixture.http.requests.single().body).jsonObject
+        val functions = body.array("tools").map { it.jsonObject.objectValue("function") }
+        assertEquals(listOf("exec", "spawn_agent"), functions.map { it.string("name") })
+        assertEquals(exec.parameters, functions[0].objectValue("parameters"))
+        assertEquals(spawn.parameters, functions[1].objectValue("parameters"))
+    }
+
+    @Test
+    fun defaultExecSchemaShouldReachResponsesRequestWithoutLosingConstraints() = runTest {
+        val fixture = responsesFixture(flowOf(
+            responsesTextDelta("ok", sequenceNumber = 0),
+            responsesCompleted(inputTokens = 1, outputTokens = 1, sequenceNumber = 1), DONE,
+        ))
+        val exec = im.hikaru.harness.exec.jvm.ExecProcessProducer.schema
+        val chunks = try {
+            fixture.adapter.stream(responsesTextOptions(tools = listOf(exec))).toList()
+        } finally {
+            fixture.executor.close()
+        }
+        assertEquals(FinishChunk(StopFinishReason), chunks.last())
+        val body = Json.parseToJsonElement(fixture.http.requests.single().body).jsonObject
+        assertEquals(exec.parameters, body.array("tools").single().jsonObject.objectValue("parameters"))
+    }
+
+    @Test
     fun factoryShouldNormalizeVersionedBaseUrlBeforeCreatingTheKoogClient() = runTest {
         val http =
             ScriptedKoogHttpClientFactory(
@@ -796,11 +903,11 @@ class OpenAiClientFixtureTest {
         assertEquals(1, fixture.http.requests.size)
     }
 
-    private suspend fun fixture(rawResponses: Flow<String>): Fixture {
+    private suspend fun fixture(rawResponses: Flow<String>, vararg followingResponses: Flow<String>): Fixture {
         val http =
             ScriptedKoogHttpClientFactory(
                 expectedApiKey = TEST_API_KEY,
-                rawResponses = ArrayDeque<Flow<String>>().apply { add(rawResponses) },
+                rawResponses = ArrayDeque<Flow<String>>().apply { add(rawResponses); addAll(followingResponses) },
             )
         var credentialResolutions = 0
         val credentials =
@@ -1055,6 +1162,8 @@ class OpenAiClientFixtureTest {
         """.trimIndent() + "\n"
 
     private fun setOwnerOnly(path: java.nio.file.Path) {
+        // Match the production credential writer on filesystems without POSIX attributes (Windows).
+        if (!Files.getFileStore(path).supportsFileAttributeView("posix")) return
         Files.setPosixFilePermissions(
             path,
             setOf(

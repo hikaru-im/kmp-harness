@@ -14,6 +14,15 @@ import kotlin.test.assertEquals
  */
 class NavigatorLayoutTest {
     @Test
+    fun everyMountedNavigatorUsesTheResizedPreference() {
+        listOf(NavigatorKind.Workspace, NavigatorKind.Settings, NavigatorKind.Plugins, NavigatorKind.Scheduled).forEach {
+            assertEquals(410.dp, pageNavigatorWidth(it, 410.dp))
+            assertEquals(410.dp, navigatorWidth(NavigatorLayout.Pushed, 1440.dp, pageNavigatorWidth(it, 410.dp)))
+        }
+        assertEquals(0.dp, pageNavigatorWidth(NavigatorKind.None, 410.dp))
+    }
+
+    @Test
     fun collapsedHidesTheNavigatorAtEveryWidth() {
         assertEquals(NavigatorLayout.Hidden, navigatorLayout(SidebarMode.Collapsed, 1440.dp))
         assertEquals(NavigatorLayout.Hidden, navigatorLayout(SidebarMode.Collapsed, 600.dp))

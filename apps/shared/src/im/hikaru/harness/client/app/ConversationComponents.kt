@@ -243,7 +243,7 @@ private fun WorkedForHeader(millis: Long, tag: String) {
     Row(Modifier.fillMaxWidth().height(21.dp).semantics { testTag = "$tag:worked-for" },
         verticalAlignment = Alignment.CenterVertically) {
         HarnessText("用时 ${workedForLabel(millis)}", color = ConversationAppearance.tertiary, maxLines = 1,
-            style = LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 21.sp))
+            style = LocalHarnessContentTextStyle.current)
     }
 }
 
@@ -263,7 +263,7 @@ private fun MessageContentView(
 ) {
     when (content) {
         is TextContent -> if (human) HarnessText(content.text, Modifier.semantics { testTag = tag },
-            color = ConversationAppearance.userInk, style = LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 22.75.sp,
+            color = ConversationAppearance.userInk, style = LocalHarnessContentTextStyle.current.copy(
                 lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
                     androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.None)),
             overflow = TextOverflow.Visible)
@@ -330,7 +330,7 @@ private fun ActivityDisclosure(label: String, icon: HarnessIconName, tag: String
             HarnessIcon(icon, tint = ConversationAppearance.muted, size = 16.dp)
             HarnessText(label, Modifier.padding(start = 6.dp), maxLines = 1,
                 color = if (hovered) ConversationAppearance.ink else ConversationAppearance.muted,
-                style = LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 21.sp))
+                style = LocalHarnessContentTextStyle.current)
             Box(Modifier.padding(start = 4.dp).rotate(angle)) {
                 ConversationIcon(ConversationGlyph.ActivityChevron, ConversationAppearance.muted.copy(alpha = chevron), size = 14.dp)
             }
@@ -352,8 +352,8 @@ internal fun ConversationErrorCard(message: String, onRetry: (() -> Unit)? = nul
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         HarnessIcon(HarnessIconName.Warning, tint = ConversationAppearance.ink, size = 18.dp)
         HarnessText(message, Modifier.weight(1f), color = ConversationAppearance.ink,
-            style = LocalHarnessContentTextStyle.current.copy(fontSize = 13.sp, lineHeight = 21.125.sp))
+            style = LocalHarnessContentTextStyle.current.copy(fontSize = HarnessTokens.Text.Label, lineHeight = HarnessTokens.Text.BodyLineHeight))
         if (onRetry != null) HarnessText("重试", Modifier.clickable(onClick = onRetry).padding(4.dp), color = ConversationAppearance.ink,
-            style = LocalHarnessContentTextStyle.current.copy(fontSize = 13.sp, lineHeight = 21.125.sp))
+            style = LocalHarnessContentTextStyle.current.copy(fontSize = HarnessTokens.Text.Label, lineHeight = HarnessTokens.Text.BodyLineHeight))
     }
 }

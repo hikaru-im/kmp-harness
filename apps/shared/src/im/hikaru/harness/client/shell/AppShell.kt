@@ -1,7 +1,6 @@
 package im.hikaru.harness.client.shell
 
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -95,7 +94,7 @@ public fun AppShell(
     onScheduledOpenRun: (im.hikaru.harness.client.scheduled.ScheduledTask, im.hikaru.harness.client.scheduled.ScheduledRun) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     themeMode: HarnessThemeMode = HarnessThemeMode.System,
-    // Writes the user's drag-resize of the Workspace Navigator back to the shell state. Null keeps
+    // Writes the user's navigator resize back to the shared layout state. Null keeps
     // the navigator fixed at its layout width and mounts no resize hit region.
     onNavigatorResize: ((Dp) -> Unit)? = null,
     onOpenProjectContext: ((String) -> Unit)? = null,
@@ -119,7 +118,7 @@ public fun AppShell(
 ) {
     HarnessTheme(themeMode = themeMode) {
         BoxWithConstraints(
-            modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.AppBackground),
+            modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.ShellBackground),
         ) {
             // Window-rect of the 探索 item, so the popup can anchor beside it.
             var exploreAnchor by remember { mutableStateOf(ExploreMenuAnchor(0, 0)) }
@@ -267,36 +266,30 @@ public fun AppShell(
                         }
                         NavigatorKind.None -> Unit
                     }
-                    // A narrow, undecorated strip on the right edge. The drag reads the latest width
+                    // Shared resize feedback at the right edge. The drag reads the latest width
                     // through rememberUpdatedState: keying the pointer session on the value it
                     // mutates would cancel the gesture on every recomposition.
                     if (handleResize && spec.resizable && latestResize != null && layout != NavigatorLayout.Hidden) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .fillMaxHeight()
-                                    .width(NavigatorResizeHandleWidth)
-                                    .pointerInput(layout, navigatorAvailableWidth) {
-                                        detectHorizontalDragGestures { change, dragAmount ->
-                                            change.consume()
-                                            latestResize?.invoke(
-                                                navigatorResizeWidth(
-                                                    currentWidth = latestDrawerWidth,
-                                                    dragDelta = dragAmount.toDp(),
-                                                    layout = layout,
-                                                    availableWidth = navigatorAvailableWidth,
-                                                ),
-                                            )
-                                        }
-                                    }
-                                    .semantics { testTag = "navigator-resize-handle" },
+                        val density = LocalDensity.current
+                        HarnessResizeHandle(
+                            onResize = { amount ->
+                                latestResize?.invoke(navigatorResizeWidth(
+                                    currentWidth = latestDrawerWidth,
+                                    dragDelta = with(density) { amount.toDp() },
+                                    layout = layout,
+                                    availableWidth = navigatorAvailableWidth,
+                                ))
+                            },
+                            modifier = Modifier.align(Alignment.CenterEnd)
+                                .semantics { testTag = "navigator-resize-handle" },
+                            description = "调整导航区宽度",
+                            lineAlignment = Alignment.CenterEnd,
                         )
                     }
-                    // The navigator/main-surface boundary. The 2026-10-06 captures show a 1px line at
-                    // the navigator right edge on every page that owns one, so it is drawn last and only
-                    // for the pushed column (a floating drawer is separated by its shadow).
-                    if (layout == NavigatorLayout.Pushed) {
+
+                    // A non-resizable pushed navigator still needs a static boundary. The resize
+                    // component owns the line whenever it is mounted, avoiding a double border.
+                    if (layout == NavigatorLayout.Pushed && !(handleResize && spec.resizable && latestResize != null)) {
                         Box(
                             modifier =
                                 Modifier
@@ -366,7 +359,7 @@ public fun AppShell(
                         ) {
                             Row(modifier = Modifier.fillMaxSize()) {
                                 if (layout == NavigatorLayout.Pushed) {
-                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigatorSurface)) {
+                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigationBackground)) {
                                         navigatorContent(spec.navigator, drawerWidth, true)
                                     }
                                 }
@@ -456,7 +449,7 @@ public fun AppShell(
                                             .shadow(8.dp)
                                             .semantics { testTag = "navigator-overlay" },
                                 ) {
-                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigatorSurface)) {
+                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigationBackground)) {
                                         navigatorContent(spec.navigator, drawerWidth, true)
                                     }
                                 }
@@ -618,7 +611,7 @@ public fun AppRail(
                 // The rail is the window background, not a distinct surface: the reference measures the
                 // same 246 as the app background. It draws no end edge, only a soft ~13px fade towards
                 // the page surface card (the card's 4% ring spread leftwards, 246 -> 236).
-                .background(HarnessTokens.Colors.AppBackground)
+                .background(HarnessTokens.Colors.ShellBackground)
                 // 8dp inset leaves the 36dp item box and puts the icon centre on the rail centre.
                 .padding(
                     start = HarnessTokens.Spacing.Two,
@@ -1900,7 +1893,7 @@ private fun MainSurface(
                 }
                 return@CompositionLocalProvider
             }
-            Column(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas)) {
+            Column(Modifier.fillMaxSize().background(HarnessTokens.Colors.WorkspaceBackground)) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                     Box(
                         Modifier.then(

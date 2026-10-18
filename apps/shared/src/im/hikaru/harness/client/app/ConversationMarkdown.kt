@@ -187,7 +187,7 @@ private fun ConversationMarkdownBlocks(
 
 @Composable
 private fun conversationMarkdownBodyStyle(): TextStyle =
-    LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 22.75.sp,
+    LocalHarnessContentTextStyle.current.copy(
         lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
             androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.None))
 

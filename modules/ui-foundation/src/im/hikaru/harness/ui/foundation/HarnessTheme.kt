@@ -13,6 +13,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.TextStyle
@@ -118,14 +119,14 @@ private fun HarnessColors.toColorScheme(dark: Boolean) =
 /** Type scale aligned to Codex light: 12 / 14 / 16 / 18 with 1.4 line height and the UI font. */
 private val HarnessTypography =
     Typography(
-        bodyLarge = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 14.sp, lineHeight = 20.sp),
+        bodyLarge = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = HarnessTokens.Text.Sm, lineHeight = HarnessTokens.Text.BodyLineHeight),
         bodyMedium = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 13.sp, lineHeight = 18.sp),
         bodySmall = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 12.sp, lineHeight = 16.sp),
         labelLarge = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium),
         labelMedium = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium),
         titleMedium = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
         titleLarge = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
-        headlineSmall = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+        headlineSmall = TextStyle(fontFamily = HarnessTokens.Fonts.Ui, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
     )
 
 private val HarnessShapes =
@@ -139,11 +140,13 @@ private val HarnessShapes =
 /**
  * Shared theme. The default [HarnessThemeMode.System] follows the host appearance so light and dark
  * are both first-class; callers can pin [HarnessThemeMode.Light] or [HarnessThemeMode.Dark].
+ * Set [drawBackground] to false when the parent, such as a native title bar, owns the surface.
  */
 @Composable
 public fun HarnessTheme(
     themeMode: HarnessThemeMode = HarnessThemeMode.System,
     customization: HarnessThemeCustomization = LocalHarnessThemeCustomization.current,
+    drawBackground: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val darkTheme = themeMode.effectiveDarkTheme()
@@ -179,7 +182,7 @@ public fun HarnessTheme(
             shapes = HarnessShapes,
         ) {
             Surface(
-                color = colors.Canvas,
+                color = if (drawBackground) colors.Canvas else Color.Transparent,
                 contentColor = colors.Text,
                 content = content,
             )

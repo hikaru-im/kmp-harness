@@ -4,9 +4,17 @@ import { mergeRouteModules, traverseTreeValues } from '@vben/utils';
 
 import { coreRoutes, fallbackNotFoundRoute } from './core';
 
-const dynamicRouteFiles = import.meta.glob('./modules/**/*.ts', {
-  eager: true,
-});
+// Only load modules whose pages are included in this backend distribution.
+const dynamicRouteFiles = import.meta.glob(
+  [
+    './modules/dashboard.ts',
+    './modules/infra.ts',
+    './modules/member.ts',
+    './modules/pay.ts',
+    './modules/system.ts',
+  ],
+  { eager: true },
+);
 
 // 有需要可以自行打开注释，并创建文件夹
 // const externalRouteFiles = import.meta.glob('./external/**/*.ts', { eager: true });

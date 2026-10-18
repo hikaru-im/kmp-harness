@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
@@ -59,10 +61,6 @@ public data class HarnessColors(
     val Success: Color,
     val Warning: Color,
     val OnAccent: Color,
-    /**
-     * Inverse (tooltip) surface: the Codex tooltip is a solid pill that inverts the theme — dark on
-     * light, light on dark (`--color-background-primary-solid` + `--color-text-primary-solid`).
-     */
     /**
      * Navigator surface. The reference renders the embedded navigator as 65% white over the page
      * surface card (measured 252 over the 246 background), so it is a translucent fill rather than
@@ -134,7 +132,15 @@ public data class HarnessColors(
     val DiffRemoved: Color,
     val DiffAddedBackground: Color,
     val DiffRemovedBackground: Color,
-)
+) {
+    public val ShellBackground: Color get() = AppBackground
+    public val NavigationBackground: Color get() = NavigatorSurface
+    public val WorkspaceBackground: Color get() = Canvas
+    public val OverlayBackground: Color get() = SurfaceElevated
+    public val HoverBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.06f else 0.04f)
+    public val PressedBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.10f else 0.08f)
+    public val UserMessageBackground: Color get() = lerp(Canvas, Accent, if (Canvas.luminance() < 0.5f) 0.20f else 0.10f)
+}
 
 /**
  * Codex light palette. Sourced from app-shared CSS:
@@ -386,7 +392,10 @@ public object HarnessTokens {
     /** Type scale measured from app-shared CSS (text-xs/sm/md/lg, heading-xs/sm). */
     public object Text {
         public val Xs: TextUnit = 12.sp
+        public val Label: TextUnit = 13.sp
         public val Sm: TextUnit = 14.sp
+        public val BodyLineHeight: TextUnit = 22.sp
+        public val LabelLineHeight: TextUnit = 18.sp
         public val Md: TextUnit = 16.sp
         public val Lg: TextUnit = 18.sp
         public val HeadingSm: TextUnit = 18.sp

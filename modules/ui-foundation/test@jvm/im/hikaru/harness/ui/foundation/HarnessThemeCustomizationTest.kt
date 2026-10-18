@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.unit.Density
@@ -12,13 +13,35 @@ import kotlin.test.*
 @OptIn(ExperimentalTestApi::class)
 class HarnessThemeCustomizationTest {
     @Test
-    fun anAccentEditPreservesTheMeasuredNeutralPalette() {
+    fun anAccentEditUpdatesSelectionAndPreservesNeutralLayers() {
         listOf(HarnessLightColors, HarnessDarkColors).forEach { base ->
             val actual = HarnessThemeVariant(accent = Color(0xff123456)).colors(base)
             assertEquals(Color(0xff123456), actual.Accent)
             assertEquals(base.copy(Accent = actual.Accent, AccentStrong = actual.AccentStrong,
-                BorderFocused = actual.BorderFocused, OnAccent = actual.OnAccent), actual)
+                BorderFocused = actual.BorderFocused, OnAccent = actual.OnAccent, SurfaceSelected = actual.SurfaceSelected), actual)
             assertEquals(base, HarnessThemeVariant().colors(base))
+        }
+    }
+
+    @Test
+    fun customBackgroundsKeepOpaqueOrderedLayersAndReadableText() {
+        listOf(
+            HarnessLightColors to Color(0xFFF8F5EF),
+            HarnessDarkColors to Color(0xFF171C25),
+        ).forEach { (base, background) ->
+            val actual = HarnessThemeVariant(background = background).colors(base)
+            assertEquals(background, actual.WorkspaceBackground)
+            assertEquals(background, actual.SurfaceCanvas)
+            assertEquals(1f, actual.NavigationBackground.alpha)
+            assertEquals(1f, actual.ShellBackground.alpha)
+            val shell = actual.ShellBackground.luminance()
+            val navigation = actual.NavigationBackground.luminance()
+            val workspace = background.luminance()
+            if (workspace < 0.5f) assertTrue(shell > navigation && navigation > workspace)
+            else assertTrue(shell < navigation && navigation < workspace)
+            val text = actual.Text.luminance()
+            assertTrue((maxOf(text, workspace) + 0.05f) / (minOf(text, workspace) + 0.05f) >= 4.5f)
+            assertNotEquals(base.OverlayBackground, actual.OverlayBackground)
         }
     }
 

@@ -39,6 +39,12 @@ Enum / List / Object / AnyOf
 Harness route 可以由 semantics registry 精确分派。`KoogToolRequestIntegrationContractTest` 已证明默认
 `KoogRequestMapper` 真正把 descriptor 传给 executor 路径；不要重新加入占位错误或 `@Ignore`。
 
+OpenAI 协议族使用独立的 `OpenAiToolMapper`，通过携带原始 JSON Schema 的 descriptor 和 SDK 的
+`OpenAICompatibleToolDescriptorSchemaGenerator` 扩展点生成参数。Chat Completions 与 Responses 均
+保留完整 Schema，包括数组、嵌套对象、`additionalProperties`、`minimum` 和 `default`；不经过通用
+primitive mapper。客户端 factory 必须同时安装对应 generator。真实 Koog HTTP fixture 使用默认
+`exec` 和 `spawn_agent` 工具验证最终请求，避免只测试简单的查询工具。
+
 ## 二、工具消息
 
 Koog `MessagePart.Tool.Result` 需要：
@@ -127,6 +133,13 @@ input-json delta 才发送 arguments。因此 identity-only frame 只保存身�
 
 第一阶段不要“修复”模型产生的畸形 JSON；Harness 约定保存模型原始 arguments 字符串，工具执行层自行决定
 是否拒绝。
+
+Chat Completions 的 choice/text index 与 tool-call index 属于不同命名空间；两者都可以合法为 `0`。
+该协议显式安装 `DefaultKoogToolStreamMapper(independentIndices = true)`，在当前 collection 的
+`KoogStreamState` 内分别维护索引。reasoning 后转入工具调用时先关闭 reasoning，文本与工具可以共存，
+并行工具仍各自校验身份。空文本 delta 不创建内容块；通用 mapper 保留原有严格索引语义。
+Chat history mapper 同时显式启用纯文本 `ReasoningBlock` 到 `MessagePart.Reasoning` 的映射，使
+reasoning + tool call 能在下一次请求中保留 `reasoning_content`，而不是在工具返回后失败。
 
 ## Finish reason
 
