@@ -76,6 +76,12 @@ public enum class HarnessIconName {
      * (`CGPT_Icon_NewChatPencil`, `sidebar-new-chat-icon`).
      */
     NewChat,
+    /**
+     * The speech bubble the live strip gives its 聊天 tab in 完整视图 — Codex's `chat-bubble-light-16`
+     * (`M13.4746 8.00037…`, viewBox `0 0 16 16`, one filled path, ink 1.475..14.525). The pinned
+     * conversation tab carries it in place of a tab-kind icon, before the 聊天 label.
+     */
+    ChatBubble,
     /** Sign-out glyph for the profile-dropdown log-out item (bracket plus an arrow leaving it). */
     SignOut,
     /** Arrow leaving its box at the top right; the Settings capture's external-link row marker. */
@@ -750,6 +756,38 @@ private fun DrawScope.drawHarnessIcon(
         HarnessIconName.ArrowRight ->
             // Codex ships one return-arrow path and mirrors the transform for 前进.
             scale(scaleX = -1f, scaleY = 1f, pivot = Offset(center, center)) { drawPath(returnArrow(min), color) }
+        // The 聊天 tab's speech bubble. One filled path on the 16-unit grid holding two contours —
+        // the bubble with its tail, then the ring that outlines it — and the live `<svg>` sets no
+        // `fill-rule`, so the pair is left on the default non-zero rule the SVG uses.
+        HarnessIconName.ChatBubble -> drawPath(
+            artwork16(min).apply {
+                moveTo(13.4746f, 8.00037f)
+                cubicTo(13.4746f, 5.18857f, 11.0524f, 2.85876f, 8f, 2.85876f)
+                cubicTo(4.94756f, 2.85876f, 2.52539f, 5.18857f, 2.52539f, 8.00037f)
+                cubicTo(2.52548f, 9.13377f, 2.98018f, 9.8833f, 3.55176f, 11.015f)
+                cubicTo(3.62017f, 11.1505f, 3.63938f, 11.306f, 3.60645f, 11.4545f)
+                lineTo(3.34277f, 12.641f)
+                lineTo(4.62598f, 12.309f)
+                lineTo(4.74023f, 12.2894f)
+                cubicTo(4.81669f, 12.2835f, 4.89333f, 12.2915f, 4.9668f, 12.3119f)
+                lineTo(5.0752f, 12.3519f)
+                lineTo(5.44238f, 12.5219f)
+                cubicTo(6.29248f, 12.8996f, 7.09158f, 13.142f, 8f, 13.142f)
+                cubicTo(11.0523f, 13.142f, 13.4744f, 10.812f, 13.4746f, 8.00037f)
+                close()
+                moveTo(14.5254f, 8.00037f)
+                cubicTo(14.5252f, 11.4476f, 11.5749f, 14.1918f, 8f, 14.1918f)
+                cubicTo(6.78477f, 14.1918f, 5.75932f, 13.8293f, 4.75488f, 13.3597f)
+                lineTo(2.9873f, 13.8187f)
+                cubicTo(2.5113f, 13.942f, 2.07317f, 13.5185f, 2.17969f, 13.0385f)
+                lineTo(2.5498f, 11.3636f)
+                cubicTo(2.03641f, 10.3601f, 1.4747f, 9.38207f, 1.47461f, 8.00037f)
+                cubicTo(1.47461f, 4.55293f, 4.42502f, 1.80798f, 8f, 1.80798f)
+                cubicTo(11.575f, 1.80798f, 14.5254f, 4.55293f, 14.5254f, 8.00037f)
+                close()
+            }.path,
+            color,
+        )
         HarnessIconName.SidebarToggle -> drawPath(
             artwork16(min).apply {
                 evenOdd()

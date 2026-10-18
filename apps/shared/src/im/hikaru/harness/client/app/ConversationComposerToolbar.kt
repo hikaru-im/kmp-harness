@@ -1,14 +1,18 @@
 package im.hikaru.harness.client.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
@@ -22,6 +26,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
@@ -41,22 +46,23 @@ internal fun ConversationComposerToolbar(
     onModelSelect: (ConversationModelChoice) -> Unit, modelReason: String?,
     canSend: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit,
     selectedEffort: String?, onEffortSelect: ((String?) -> Unit)?, effortKnown: Boolean,
-    hostDefault: Boolean, permission: ComposerPermission, onPermissionSelect: (ComposerPermission) -> Unit,
-    onConfigureModels: (() -> Unit)?, draftEmpty: Boolean,
+    permission: ComposerPermission, onPermissionSelect: (ComposerPermission) -> Unit,
+    draftEmpty: Boolean,
 ) {
     var popup by remember(state.host, state.selectedSessionId) { mutableStateOf(ComposerPopup.Closed) }
     val choices = models.distinctBy { it.providerId to it.modelId }
     val idle = state.action == ConversationAction.Idle && !state.cancelling
-    val readOnlyReason = modelReason ?: if (state.selectedSessionId != null) "此会话沿用创建时的模型和推理强度。" else null
-    val canChoose = readOnlyReason == null && choices.isNotEmpty() && idle
+    val canChoose = modelReason == null && choices.isNotEmpty() && idle
+    // Live work picker: `disabled = disabled || isLoading || models == null`. A catalogue that is
+    // still loading (or whose provider failed) makes the trigger inert; a loaded-but-empty catalogue
+    // still opens the panel, which then draws its `选择模型` heading over zero rows.
+    val triggerEnabled = modelReason == null && idle
     val efforts = selectedModel?.reasoningEfforts.orEmpty().filter(String::isNotBlank).distinct()
     val canAdjust = canChoose && efforts.isNotEmpty() && onEffortSelect != null
-    val modelLabel = selectedModel?.label ?: when {
-        state.selectedSessionId != null -> "会话模型未知"
-        hostDefault -> "Host 默认模型"
-        else -> "选择模型"
-    }
-    val strength = if (effortKnown) effortLabel(selectedEffort) else "强度未知"
+    // The live trigger carries the selected model's own name and falls back to its `默认` entry, which
+    // is the picker's own label for "let Codex decide" — never a status sentence of our own.
+    val modelLabel = selectedModel?.label ?: "默认"
+    val strength = effortLabel(selectedEffort)
     val close = { popup = ComposerPopup.Closed }
     val focus = LocalFocusManager.current
     val first = remember { FocusRequester() }
@@ -136,83 +142,94 @@ internal fun ConversationComposerToolbar(
             onExpandedChange = { open ->
                 popup = when {
                     !open -> ComposerPopup.Closed
-                    // Live opens straight on the model list when the current model offers fewer
-                    // than two reasoning options: the effort view is filtered out entirely
-                    // (`powerSelections.length >= 2`), with no explanatory placeholder. This is a
+                    // Nothing to show a strength for: the live picker opens its model list. It opens
+                    // straight on that list, too, when the current model offers fewer than two
+                    // reasoning options (`powerSelections.length >= 2` filters the slider out) — a
                     // property of the model, so read-only threads land on the same view.
-                    selectedModel != null && efforts.size < 2 -> ComposerPopup.Models
+                    selectedModel == null || efforts.size < 2 -> ComposerPopup.Models
                     else -> ComposerPopup.Reasoning
                 }
             },
-            // Live menu left edge (870.17) equals the chip left edge; the 254px menu grows leftward.
-            side = HarnessPopoverSide.Top, align = HarnessPopoverAlign.Start,
+            // Live Radix popper: `data-side="top"`, `data-align="end"` against the trigger, but the
+            // rendered menu is centred on it — trigger 141.7 wide, menu 254 wide, centres 1.1 apart.
+            // Both views keep their bottom edge 9px above the trigger; the list grows upward.
+            side = HarnessPopoverSide.Top, align = HarnessPopoverAlign.Center,
+            sideOffset = HarnessTokens.Composer.ModelPopupOffset,
             popupWidth = HarnessTokens.Composer.ModelPopupWidth, popupMaxHeight = HarnessTokens.Composer.PopupMaxHeight,
+            popupScrollable = false, constrainToAnchorSpace = true,
             popupShape = HarnessTokens.Composer.PopupRadius,
             popupColor = ConversationAppearance.popup,
             popupBorder = ConversationAppearance.popupRing,
             popupBorderWidth = 0.5.dp,
             popupShadow = HarnessTokens.Composer.PopupShadow,
-            popupModifier = panelKeys.padding(HarnessTokens.Composer.PopupContainerInset)
-                .semantics { testTag = "live-composer-model-popup" },
+            popupModifier = panelKeys.padding(
+                start = if (popup == ComposerPopup.Models) 0.dp else HarnessTokens.Composer.PopupContainerInset,
+                top = HarnessTokens.Composer.PopupContainerInset,
+                end = if (popup == ComposerPopup.Models) 0.dp else HarnessTokens.Composer.PopupContainerInset,
+                bottom = if (popup == ComposerPopup.Models) 0.dp else HarnessTokens.Composer.PopupContainerInset,
+            ).semantics { testTag = "live-composer-model-popup" },
             anchor = { toggle -> ModelTriggerChip(modelLabel, strength, selectedModel != null && effortKnown && efforts.isNotEmpty(),
-                tint = ConversationAppearance.tertiary, open = popup == ComposerPopup.Reasoning,
-                onClick = toggle, testTag = "live-composer-model") }) {
+                tint = ConversationAppearance.tertiary,
+                openLabel = when (popup) {
+                    ComposerPopup.Models -> "选择模型"
+                    ComposerPopup.Reasoning -> "选择强度"
+                    else -> null
+                },
+                enabled = triggerEnabled, onClick = toggle, testTag = "live-composer-model") }) {
             if (popup == ComposerPopup.Models) {
-                // Live list: a 26px `选择模型` section label over 235×28.6 radio rows inset 4 from the
-                // menu edge (8 inside the row), with a 17px trailing check. The live menu reserves an
-                // 11px scrollbar gutter, so rows stop 15px short of the menu's right edge.
-                Column(Modifier.fillMaxWidth().padding(end = 11.dp)) {
-                    HarnessText("选择模型",
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
-                        color = ConversationAppearance.tertiary,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp))
-                    choices.forEach { choice ->
-                        HarnessComposerChoice(choice.label, selected = choice.providerId == selectedModel?.providerId && choice.modelId == selectedModel?.modelId,
-                            onClick = {
-                                if (canChoose) {
-                                    onModelSelect(choice)
-                                    // Codex closes the picker after choosing a model whose effort
-                                    // list is shorter than the slider needs; nothing replaces it.
-                                    popup = if (choice.reasoningEfforts.filter(String::isNotBlank)
-                                            .distinct().size >= 2) ComposerPopup.Reasoning else ComposerPopup.Closed
-                                }
-                            },
-                            modifier = Modifier.height(HarnessTokens.Composer.ModelItemHeight),
-                            selectedArtwork = { ConversationIcon(ConversationGlyph.Check, ConversationAppearance.ink, 17.dp) },
-                            testTag = "menu:${choice.menuKey()}")
+                // Live list: a 26.6px `选择模型` section label (`4px 8px`, 13 / 18.57) over 235×28.6
+                // radio rows inset 4 from the menu edge (8 inside the row), with a 17px trailing
+                // check. The whole list scrolls inside the menu — the heading goes with it — and the
+                // live menu reserves an 11px scrollbar gutter, so rows stop 15px short of its edge.
+                //
+                // The live list renders its `选择模型` heading unconditionally and simply draws no rows
+                // when the catalogue is empty; it has no in-menu error line or retry action. (The
+                // `composer.modelPicker.modelsUnavailable` / `retryModels` strings exist in the bundle's
+                // locales but no code in this build references them.)
+                val modelScroll = rememberScrollState()
+                Box(Modifier.fillMaxWidth().heightIn(max = HarnessTokens.Composer.ModelListMaxHeight)) {
+                    Column(Modifier.fillMaxWidth()
+                        .verticalScroll(modelScroll)
+                        .padding(start = 4.dp, end = 15.dp, bottom = HarnessTokens.Composer.PopupContainerInset)) {
+                        HarnessText("选择模型",
+                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                            color = ConversationAppearance.tertiary,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.5.sp))
+                        choices.forEach { choice ->
+                            HarnessComposerChoice(choice.label, selected = choice.providerId == selectedModel?.providerId && choice.modelId == selectedModel?.modelId,
+                                onClick = {
+                                    if (canChoose) {
+                                        onModelSelect(choice)
+                                        // Models without enough effort options close the picker.
+                                        popup = if (choice.reasoningEfforts.filter(String::isNotBlank)
+                                                .distinct().size >= 2) ComposerPopup.Reasoning else ComposerPopup.Closed
+                                    }
+                                },
+                                modifier = Modifier.height(HarnessTokens.Composer.ModelItemHeight),
+                                selectedArtwork = { ConversationIcon(ConversationGlyph.Check, ConversationAppearance.ink, 17.dp) },
+                                testTag = "menu:${choice.menuKey()}")
+                        }
                     }
+                    ModelListScrollbar(modelScroll, Modifier.matchParentSize())
                 }
             } else {
-                // Live simple view: a 48px header — a 32px slot at each edge and a content-sized
-                // chip centred between them — over a 40px slider row. The left slot holds Codex's
-                // fast-mode toggle; harness has no service tiers, so the slot stays empty.
-                Row(Modifier.fillMaxWidth().height(HarnessTokens.Composer.ModelChipHeight),
-                    verticalAlignment = Alignment.Top) {
+                // Explicit model selections stack effort over model. The controls row grows with
+                // that content; 36px is only its minimum. Reserve the reference's 32px edge slots.
+                Row(Modifier.fillMaxWidth().heightIn(min = HarnessTokens.Composer.ModelChipRowHeight),
+                    verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.width(HarnessTokens.Composer.ModelChipInset))
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.TopCenter) {
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         ModelChip(modelLabel, strength, showStrength = selectedModel != null && effortKnown && efforts.isNotEmpty(),
-                            maximum = selectedEffort == "max",
+                            maximum = selectedEffort == "max" || selectedEffort == "ultra",
                             enabled = canChoose, onClick = { popup = ComposerPopup.Models },
                             testTag = "live-composer-model-select")
                     }
-                    val canReset = canAdjust && selectedEffort != null
-                    HarnessTooltipTrigger("重置为默认") { tip ->
-                        Box(tip.size(HarnessTokens.Composer.ModelResetSize)
-                            .clickable(enabled = canReset) { onEffortSelect?.invoke(null) }
-                            .semantics {
-                                testTag = "live-composer-effort-reset"; role = Role.Button
-                                contentDescription = "重置为默认"
-                                if (!canReset) disabled()
-                            }, contentAlignment = Alignment.Center) {
-                            ConversationIcon(ConversationGlyph.Reset,
-                                if (canReset) ConversationAppearance.tertiary else ConversationAppearance.tertiary.copy(alpha = 0.4f),
-                                16.dp)
-                        }
-                    }
+                    // Codex's reset restores its recommended model selection. Harness has no
+                    // equivalent default option, so there is no reset action in this slot.
+                    Spacer(Modifier.width(HarnessTokens.Composer.ModelResetSize))
                 }
-                // The live slider has exactly one stop per effort; harness has no model default
-                // effort, so an unset effort parks the knob at the first stop (the reset icon
-                // clears it again) instead of adding a `默认` pseudo-stop the reference lacks.
+                // The live slider has one stop per effort, without an extra default stop.
+                // Until an effort is selected, Harness parks the knob at the first stop.
                 val values = efforts
                 val selectedIndex = values.indexOf(selectedEffort)
                 Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(HarnessTokens.Composer.EffortRowHeight)) {
@@ -221,20 +238,7 @@ internal fun ConversationComposerToolbar(
                         enabled = canAdjust,
                         onSelect = { if (canAdjust) onEffortSelect?.invoke(values[it]) })
                 }
-                val reason = when {
-                    !idle -> "任务执行期间不能调整模型配置。"
-                    readOnlyReason != null -> readOnlyReason
-                    selectedModel == null -> "请先选择模型。"
-                    else -> null
-                }
-                if (reason != null) HarnessText(reason, Modifier.padding(horizontal = HarnessTokens.Composer.PopupItemInsetX),
-                    style = MaterialTheme.typography.bodySmall, color = ConversationAppearance.tertiary)
-                if (selectedModel == null && choices.isEmpty() && onConfigureModels != null)
-                    Box(Modifier.padding(horizontal = HarnessTokens.Composer.PopupContainerInset,
-                        vertical = HarnessTokens.Composer.PopupContainerInset)) {
-                        HarnessButton("配置模型", { close(); onConfigureModels() }, variant = HarnessButtonVariant.Ghost,
-                            testTag = "live-composer-popup-configure-models")
-                    }
+                // The live picker has no explanatory line under the slider.
             }
         }
         // Live dictation slot: 28px, white 16px microphone over a transparent disc, flush to the chip.
@@ -276,21 +280,55 @@ internal fun ConversationComposerToolbar(
     }
 }
 
+@Composable
+private fun ModelListScrollbar(scroll: ScrollState, modifier: Modifier = Modifier) {
+    val thumbColor = ConversationAppearance.scrollbar
+    Box(modifier) {
+        if (scroll.maxValue > 0 && scroll.viewportSize > 0) {
+            Canvas(Modifier.align(Alignment.CenterEnd).width(11.dp).fillMaxHeight().padding(vertical = 4.dp)
+                .semantics { testTag = "live-composer-model-scrollbar" }
+                .pointerInput(scroll) {
+                    detectTapGestures { position ->
+                        val thumb = (size.height.toFloat() * scroll.viewportSize /
+                            (scroll.viewportSize + scroll.maxValue)).coerceAtLeast(24.dp.toPx()).coerceAtMost(size.height.toFloat())
+                        val travel = size.height - thumb
+                        if (travel > 0f) scroll.dispatchRawDelta(
+                            ((position.y - thumb / 2) / travel).coerceIn(0f, 1f) * scroll.maxValue - scroll.value)
+                    }
+                }
+                .pointerInput(scroll) {
+                    detectVerticalDragGestures { change, delta ->
+                        val thumb = (size.height.toFloat() * scroll.viewportSize /
+                            (scroll.viewportSize + scroll.maxValue)).coerceAtLeast(24.dp.toPx()).coerceAtMost(size.height.toFloat())
+                        val travel = size.height - thumb
+                        if (travel > 0f) scroll.dispatchRawDelta(delta / travel * scroll.maxValue)
+                        change.consume()
+                    }
+                }) {
+                val thumb = (size.height * scroll.viewportSize / (scroll.viewportSize + scroll.maxValue))
+                    .coerceAtLeast(24.dp.toPx()).coerceAtMost(size.height)
+                val top = (size.height - thumb) * scroll.value / scroll.maxValue
+                val width = 6.dp.toPx()
+                drawRoundRect(thumbColor, Offset((size.width - width) / 2, top), Size(width, thumb), CornerRadius(width / 2))
+            }
+        }
+    }
+}
+
 /** Footer trigger: model name in ink, strength in tertiary, then the 16px disclosure chevron. */
 @Composable
 private fun ModelTriggerChip(
     modelLabel: String, strength: String, showStrength: Boolean,
-    tint: Color, open: Boolean, onClick: () -> Unit, testTag: String,
+    tint: Color, openLabel: String?, enabled: Boolean, onClick: () -> Unit, testTag: String,
 ) {
-    HarnessComposerButton(modelLabel, onClick, tint = tint, testTag = testTag, active = open,
+    HarnessComposerButton(modelLabel, onClick, enabled = enabled, tint = tint, testTag = testTag, active = openLabel != null,
         contentPaddingX = 8.dp,
         labelContent = {
             val contentModifier = Modifier.weight(1f, fill = false)
-            // Live `composer.modelPicker.selectEffort.label`: an open strength panel replaces the
-            // model + strength text with a centred `选择强度` while keeping the trigger's width.
-            if (open) Box(contentModifier) {
+            // Keep the trigger width while its text follows the active model/effort view.
+            if (openLabel != null) Box(contentModifier) {
                 Box(Modifier.alpha(0f)) { ModelTriggerLabel(modelLabel, strength, showStrength, tint) }
-                HarnessText("选择强度", Modifier.align(Alignment.Center), maxLines = 1, color = tint,
+                HarnessText(openLabel, Modifier.align(Alignment.Center), maxLines = 1, color = tint,
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = HarnessTokens.Composer.LabelSize,
                         lineHeight = HarnessTokens.Composer.LabelLineHeight))
             } else ModelTriggerLabel(modelLabel, strength, showStrength, tint, contentModifier)
@@ -315,11 +353,7 @@ private fun ModelTriggerLabel(
     }
 }
 
-/**
- * Popup header chip: strength (14/20 primary) centred over the truncated 12/16 model name and a
- * 12px chevron. Live `_ViewToggle`: content-sized (110×40 inside a 4px inset), radius 8, and the
- * surface only appears on hover — the row centres the chip between its 32px edge slots.
- */
+/** Explicit model chip: 20px effort over a 16px model row, with 4px outer and 2px inner vertical insets. */
 @Composable
 private fun ModelChip(
     modelLabel: String, strength: String, showStrength: Boolean, maximum: Boolean,
@@ -327,23 +361,28 @@ private fun ModelChip(
 ) {
     val interactions = remember { MutableInteractionSource() }
     val hovered by interactions.collectIsHoveredAsState()
-    Column(Modifier.height(HarnessTokens.Composer.ModelChipHeight)
-        .background(if (hovered && enabled) ConversationAppearance.ink.copy(alpha = 0.08f) else Color.Transparent,
-            RoundedCornerShape(HarnessTokens.Composer.ModelChipRadius))
+    Column(Modifier.heightIn(min = HarnessTokens.Composer.ModelChipHeight)
         .clickable(interactionSource = interactions, indication = null, enabled = enabled, onClick = onClick)
         .semantics { this.testTag = testTag; role = Role.Button; if (!enabled) disabled() }
-        .padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
-        if (showStrength) HarnessText(strength,
-            color = if (maximum) ConversationAppearance.effortMaximum else ConversationAppearance.effort,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp))
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Composer.ControlGap)) {
-            HarnessText(modelLabel, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = ConversationAppearance.popupModel,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp))
-            ConversationIcon(ConversationGlyph.ChevronRightSmall, ConversationAppearance.tertiary, 12.dp)
+        .padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.background(
+            if (hovered && enabled) ConversationAppearance.ink.copy(alpha = 0.08f) else Color.Transparent,
+            RoundedCornerShape(6.dp),
+        ).padding(horizontal = 4.dp, vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (showStrength) HarnessText(strength, Modifier.height(20.dp), maxLines = 1,
+                color = if (maximum) ConversationAppearance.effortMaximum else ConversationAppearance.effort,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium))
+            Row(Modifier.height(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.width(16.dp))
+                HarnessText(modelLabel, Modifier.weight(1f, fill = false), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, color = ConversationAppearance.popupModel,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
+                Box(Modifier.width(16.dp), contentAlignment = Alignment.CenterStart) {
+                    ConversationIcon(ConversationGlyph.ChevronRightSmall, ConversationAppearance.tertiary, 12.dp)
+                }
+            }
         }
     }
 }
@@ -361,9 +400,11 @@ private fun ComposerEffortSlider(labels: List<String>, index: Int, enabled: Bool
     val active = if (enabled) ConversationAppearance.effort else ConversationAppearance.effort.copy(alpha = 0.4f)
     val trackColor = if (enabled) ConversationAppearance.sliderTrack else ConversationAppearance.sliderTrack.copy(alpha = 0.5f)
     val knob = if (enabled) Color.White else Color.White.copy(alpha = 0.5f)
-    // Live ticks: 30% white for the stops already reached, 25% white for the rest.
+    // Reached stops sit on the blue fill; upcoming stops follow the theme's foreground.
     val reachedTick = Color.White.copy(alpha = if (enabled) 0.3f else 0.15f)
-    val upcomingTick = Color.White.copy(alpha = if (enabled) 0.25f else 0.13f)
+    val upcomingTick = if (enabled) ConversationAppearance.sliderTick else ConversationAppearance.sliderTick.copy(alpha = 0.13f)
+    val thumbBorder = ConversationAppearance.ringStrong
+    val trackBorder = ConversationAppearance.popupRing
     Canvas(Modifier.fillMaxWidth().height(HarnessTokens.Composer.EffortRowHeight)
         .pointerInput(enabled, count) {
             if (!enabled || count < 2) return@pointerInput
@@ -410,7 +451,18 @@ private fun ComposerEffortSlider(labels: List<String>, index: Int, enabled: Bool
             val tx = if (count > 1) stopLeft + (stopRight - stopLeft) * i / (count - 1) else (stopLeft + stopRight) / 2
             drawCircle(if (i <= index) reachedTick else upcomingTick, tickRadius, Offset(tx, size.height / 2))
         }
-        drawCircle(knob, knobRadius, Offset(x, size.height / 2))
+        val borderWidth = 0.5.dp.toPx()
+        drawRoundRect(trackBorder, Offset(trackLeft + borderWidth / 2, top + borderWidth / 2),
+            Size((trackWidth - borderWidth).coerceAtLeast(0f), trackHeight - borderWidth),
+            CornerRadius((trackHeight - borderWidth) / 2), style = Stroke(borderWidth))
+        val centre = Offset(x, size.height / 2)
+        // Approximate the reference's 0 0 2px black shadow with a soft outer ring.
+        for (spread in 4 downTo 1) {
+            drawCircle(Color.Black.copy(alpha = if (enabled) 0.02f else 0.01f),
+                knobRadius + spread * 0.5.dp.toPx(), centre)
+        }
+        drawCircle(knob, knobRadius, centre)
+        drawCircle(thumbBorder, knobRadius - borderWidth / 2, centre, style = Stroke(borderWidth))
     }
 }
 

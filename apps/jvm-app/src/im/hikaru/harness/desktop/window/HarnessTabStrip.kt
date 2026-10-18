@@ -415,16 +415,39 @@ private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, inset
     BoxWithConstraints(
         Modifier.fillMaxSize().padding(start = insetStart, end = HarnessTokens.Control.TabStripInsetEnd),
     ) {
-        val count = state.tabs.size + if (fullView) 1 else 0
+        val count = state.tabs.size
         // Measured: the row is `[strip][6px][28px plus]`, so the strip divides what is left for it.
         val stripMax = (maxWidth - HarnessTokens.Control.TabStripControl - HarnessTokens.Control.TabStripPlusGap)
             .coerceAtLeast(0.dp)
-        // Measured `clamp(share, 90px, 240px)`; the floor is what makes the strip scroll rather than
-        // dividing its tabs down to slivers.
-        val slot = if (count == 0) 0.dp else (stripMax / count).coerceIn(TabSlotMin, TabSlotMax)
-        // Measured: a slot's chip is the slot less the 2px its own wrapper reserves (`pe-0.5`).
+        // Measured `clamp(share, 90px, 240px)` over the **whole** row: [TabRow]'s live source divides
+        // `availableTabWidth` by `tabs.length + (sharesTabWidth && !insideScroller ? 1 : 0)`, so the
+        // leading 聊天 tab is one of the slots being divided even though it is drawn outside the
+        // scroller. Below the floor nothing divides further — the scroller overflows in both layouts
+        // (measured 90 in 分屏 at 1090 *and* 1580, and in 完整视图 at 1090 once past 11 slots).
+        val slotCount = count + if (fullView) 1 else 0
+        val slot = if (slotCount == 0) 0.dp else (stripMax / slotCount).coerceIn(TabSlotMin, TabSlotMax)
+        // Measured: a slot's chip is the slot less the 2px its own wrapper reserves (`pe-0.5`). The
+        // 完整视图 聊天 chip is the leading tab and gives back more — 231 of a 240 slot — because the
+        // leading wrapper carries its own trailing margin on top of that reserve.
         val chipWidth = (slot - HarnessTokens.Control.TabChipGap).coerceAtLeast(0.dp)
+        val leadingChipWidth = (slot - HarnessTokens.Control.LeadingTabChipGap).coerceAtLeast(0.dp)
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            if (count > 0 || fullView) {
+                // Measured: the 聊天 chip is the strip's `leadingTab` — a `flex: 0 0 auto` sibling
+                // **before** the scroller, not its first slot. Pulling the live `scrollLeft` from 0 to
+                // 500 left the chip at x=349 while the tabs travelled from 590 to 190, so it must not
+                // live inside the scroll container here either.
+                if (fullView) {
+                    key("conversation") {
+                        // Measured: the chip is a selectable tab beside the panel's own, not a way out
+                        // of 完整视图 — with it selected the layout controls still read 退出完整视图 /
+                        // 进入分屏视图, and the panel's tab drops to unselected.
+                        TabSlot(slot, separatorDimmed = state.fullViewShowsChat) {
+                            ConversationChip(state, leadingChipWidth, selected = state.fullViewShowsChat)
+                        }
+                    }
+                }
+            }
             if (count > 0) {
                 // The strip's *box* is capped by what the row has left (the live `flex: 0 1 auto` box,
                 // measured 259px) while its *track* is the slots' full width (measured 900px) and
@@ -432,7 +455,10 @@ private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, inset
                 // track's width it would push the plus off the end, which is exactly what went wrong
                 // before — the plus is only ever displaced by the strip being wider than its share.
                 val scroll = rememberScrollState()
-                val trackWidth = minOf(slot * count, stripMax)
+                // The leading chip takes its slot out of the row before the scroller starts, so the box
+                // is what the row has left *after* that slot.
+                val scrollerMax = (stripMax - if (fullView) slot else 0.dp).coerceAtLeast(0.dp)
+                val trackWidth = minOf(slot * count, scrollerMax)
                 // Measured: the live scroller keeps the **selected** tab in view. Its class carries
                 // `scroll-px-1` (computed `scroll-padding: 2px auto`), and with the last tab selected it
                 // sits at `scrollLeft: 641`, its own maximum (a 900px track in a 259px box). Without
@@ -442,10 +468,7 @@ private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, inset
                 val slotPx = with(density) { slot.toPx() }
                 val viewportPx = with(density) { trackWidth.toPx() }
                 val padPx = with(density) { TAB_SCROLL_PAD.toPx() }
-                // The 完整视图 conversation chip leads the track but is never selected, so the tabs'
-                // own indices carry a one-slot offset there.
                 val activeIndex = state.tabs.indexOfFirst { it.id == state.activeId }
-                    .let { if (it < 0) -1 else it + if (fullView) 1 else 0 }
                 LaunchedEffect(activeIndex, slotPx, viewportPx) {
                     if (activeIndex < 0 || viewportPx <= 0f || slotPx <= 0f) return@LaunchedEffect
                     val start = activeIndex * slotPx
@@ -467,16 +490,6 @@ private fun TabRow(state: HarnessTabStripState, drag: HarnessTabDragState, inset
                         Modifier.width(slot * count).height(HarnessTokens.Control.TabChipHeight),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (fullView) {
-                            key("conversation") {
-                                // Measured: the chip is a selectable tab beside the panel's own, not a way
-                                // out of 完整视图 — with it selected the layout controls still read
-                                // 退出完整视图 / 进入分屏视图, and the panel's tab drops to unselected.
-                                TabSlot(slot, separatorDimmed = state.fullViewShowsChat) {
-                                    ConversationChip(state, chipWidth, selected = state.fullViewShowsChat)
-                                }
-                            }
-                        }
                         state.tabs.forEachIndexed { index, tab ->
                             key(tab.id) {
                                 // The panel's tabs drop their selection while the full view is showing the
@@ -557,6 +570,9 @@ private fun ConversationChip(state: HarnessTabStripState, width: Dp, selected: B
     val shape = RoundedCornerShape(HarnessTokens.Control.TabChipRadius)
     Box(
         Modifier.width(width).height(HarnessTokens.Control.TabChipHeight)
+            // Same as a panel tab's chip: the clip wraps the clickable so the press indication stops on
+            // the pill's rounded edge instead of the chip's square box.
+            .clip(shape)
             .hoverable(source)
             // Measured on the live chip: clicking it hands the region to the conversation and leaves the
             // layout where it is, so the two trailing controls keep saying 退出完整视图 / 进入分屏视图.
@@ -575,13 +591,29 @@ private fun ConversationChip(state: HarnessTabStripState, width: Dp, selected: B
         if (!selected && hovered) {
             Box(Modifier.matchParentSize().clip(shape).background(HarnessTokens.Colors.ChromeFill))
         }
-        Box(Modifier.matchParentSize().padding(start = 10.dp), contentAlignment = Alignment.CenterStart) {
+        // Measured on the live chip's content row: `ps-2.5` (10px) at the start, a 16px icon, then the
+        // label — which starts 20px after the icon's own start (icon 16 + the row's 8px gap, pulled
+        // back 4px by the label), the same icon/gap pair a panel tab's chip uses.
+        Row(
+            Modifier.matchParentSize().padding(start = 10.dp, end = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HarnessIcon(
+                HarnessIconName.ChatBubble,
+                tint = if (selected) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
+                size = 16.dp,
+            )
+            Spacer(Modifier.width(TAB_ICON_GAP))
             HarnessText(
                 "聊天",
+                // `overflow: clip` in the live rule is the clip half of the fade; the mask is the other.
+                modifier = Modifier.weight(1f).clipToBounds().harnessFadeTruncate(),
                 color = if (selected) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                // The live title is `overflow: clip` under a mask, so it never draws an ellipsis — the
+                // fade above is what truncates it.
+                overflow = TextOverflow.Clip,
             )
         }
     }
@@ -725,6 +757,11 @@ private fun HarnessTabChip(
     Box(
         Modifier.width(width).height(HarnessTokens.Control.TabChipHeight)
             .onGloballyPositioned { origin = it.positionInWindow() }
+            // The clip has to sit **outside** the clickable: the press indication is drawn by the
+            // clickable's own node, so without a clip wrapping it the ripple crests over the chip's
+            // square 32dp box while the pill under it is rounded. Measured on the live chip, the press
+            // ink stops at the same rounded edge as the hover fill.
+            .clip(shape)
             .hoverable(source)
             .clickable(role = Role.Tab) { state.select(tab.id) }
             .pointerInput(tab.id, state, drag) {
@@ -760,11 +797,14 @@ private fun HarnessTabChip(
             Spacer(Modifier.width(TAB_ICON_GAP))
             HarnessText(
                 tab.title,
-                modifier = Modifier.weight(1f),
+                // Measured: the live title is `overflow: clip` under `text-fade-truncate`'s mask, so a
+                // title that does not fit fades out over its last 16px rather than ending in "…" —
+                // which is nearly every title once the slots sit on their 90px floor.
+                modifier = Modifier.weight(1f).clipToBounds().harnessFadeTruncate(),
                 color = if (selected) HarnessTokens.Colors.Text else HarnessTokens.Colors.ChromeIcon,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.Clip,
             )
             // The close target is absolutely positioned over the chip's trailing edge, so it takes no
             // room at rest — the title runs the chip's full width until hover or selection reveals it,

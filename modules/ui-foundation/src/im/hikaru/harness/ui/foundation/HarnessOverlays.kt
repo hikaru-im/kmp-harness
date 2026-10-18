@@ -39,6 +39,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.semantics
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import kotlin.math.roundToInt
 
 public enum class HarnessPopoverSide { Top, Bottom, Start, End }
 public enum class HarnessPopoverAlign { Start, Center, End }
@@ -103,6 +106,8 @@ public fun harnessPopoverPosition(
 /**
  * [anchor] owns the trigger and receives a toggle callback. Keep this composable mounted when
  * closed; only popup content is mounted conditionally. Escape/outside clicks request owner dismissal.
+ * Set [popupScrollable] to false when content owns its scroll area. [constrainToAnchorSpace] limits
+ * a vertical popup to the larger free area above/below its trigger, preserving its gap on small windows.
  */
 @Composable
 public fun HarnessPopover(
@@ -123,6 +128,8 @@ public fun HarnessPopover(
     popupBorder: Color = HarnessTokens.Colors.BorderSubtle,
     popupBorderWidth: Dp = 1.dp,
     popupShadow: Dp = HarnessTokens.Spacing.Two,
+    popupScrollable: Boolean = true,
+    constrainToAnchorSpace: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     require(sideOffset >= 0.dp) { "Popover sideOffset must be non-negative" }
@@ -134,14 +141,28 @@ public fun HarnessPopover(
     val windowHeight = with(density) { (window.height - margin * 2).coerceAtLeast(0).toDp() }
     require(popupWidth == null || popupWidth >= 0.dp) { "Popover width must be non-negative" }
     require(popupMaxHeight == Dp.Unspecified || popupMaxHeight >= 0.dp) { "Popover height must be non-negative" }
-    val maxHeight = if (popupMaxHeight == Dp.Unspecified) windowHeight else popupMaxHeight.coerceAtMost(windowHeight)
+    var anchorBounds by remember { mutableStateOf<IntRect?>(null) }
+    val anchorHeight = anchorBounds?.takeIf {
+        constrainToAnchorSpace && (side == HarnessPopoverSide.Top || side == HarnessPopoverSide.Bottom)
+    }?.let {
+        // Keep the trigger gap when neither side can hold the full menu. The position provider
+        // still prefers the requested side and flips only when the opposite side fits.
+        val above = (it.top - offset - margin).coerceAtLeast(0)
+        val below = (window.height - it.bottom - offset - margin).coerceAtLeast(0)
+        with(density) { maxOf(above, below).toDp() }
+    } ?: windowHeight
+    val availableHeight = windowHeight.coerceAtMost(anchorHeight)
+    val maxHeight = if (popupMaxHeight == Dp.Unspecified) availableHeight else popupMaxHeight.coerceAtMost(availableHeight)
     val provider = remember(side, align, offset, margin) {
         object : PopupPositionProvider {
             override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset =
                 harnessPopoverPosition(anchorBounds, windowSize, popupContentSize, side, align, offset, margin, layoutDirection)
         }
     }
-    Box(modifier) {
+    Box(modifier.then(if (constrainToAnchorSpace) Modifier.onGloballyPositioned { coordinates ->
+        val bounds = coordinates.boundsInWindow()
+        anchorBounds = IntRect(bounds.left.roundToInt(), bounds.top.roundToInt(), bounds.right.roundToInt(), bounds.bottom.roundToInt())
+    } else Modifier)) {
         anchor { onExpandedChange(!expanded) }
         if (expanded) {
             Popup(
@@ -158,8 +179,9 @@ public fun HarnessPopover(
                     shadowElevation = popupShadow,
                 ) {
                     val width = if (popupWidth == null) Modifier else Modifier.width(popupWidth.coerceAtMost(maxWidth))
+                    val scroll = if (popupScrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier
                     Column(Modifier.then(width).then(popupModifier).widthIn(max = maxWidth)
-                        .heightIn(max = maxHeight).verticalScroll(rememberScrollState()), content = content)
+                        .heightIn(max = maxHeight).then(scroll), content = content)
                 }
             }
         }

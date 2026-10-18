@@ -44,8 +44,10 @@ internal object ConversationAppearance {
     val codeBackground: Color @Composable get() = if (dark) Color(0xFF2B2B2B) else Color(0xFFF9F9F9)
     /** Menu surface measured at rgb(43,43,43) over the page (the live layer is a 90% tint plus blur). */
     val popup: Color @Composable get() = if (dark) Color(0xFF2B2B2B) else Color.White
-    /** Effort track: live `color(srgb 1 1 1 / 0.1)` under a rgb(58,130,247) fill and a 28px knob. */
-    val sliderTrack: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.1f) else Color(0xFFE4E4E4)
+    /** Effort track and unselected ticks follow foreground alpha in both themes. */
+    val sliderTrack: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.1f) else Color(0xFF1A1C1F).copy(alpha = 0.1f)
+    val sliderTick: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.25f) else Color(0xFF1A1C1F).copy(alpha = 0.25f)
+    val scrollbar: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.3f) else Color(0xFF1A1C1F).copy(alpha = 0.3f)
     /** Popup model name: `color(srgb 1 1 1 / 0.65)`. */
     val popupModel: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.65f) else Color(0xFF0D0D0D).copy(alpha = 0.65f)
     /**

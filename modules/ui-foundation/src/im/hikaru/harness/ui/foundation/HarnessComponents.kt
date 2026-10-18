@@ -34,12 +34,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.contentDescription
@@ -132,6 +137,47 @@ public fun HarnessText(
         overflow = overflow,
     )
 }
+
+/**
+ * Codex's `text-fade-truncate`: a single clipped line whose overflow **fades out** over the last
+ * [fade] instead of ending in an ellipsis.
+ *
+ * Measured on the live tab strip, a tab title carries `white-space: nowrap; overflow: clip;
+ * -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1rem), transparent)` — the mask is
+ * what truncates, so a title too long for its slot simply runs out of ink. The class is on the title
+ * at rest *and* while the tab is hovered or focused
+ * (`group-hover/tab:text-fade-truncate`), so the fade is the only truncation the strip ever shows.
+ *
+ * The mask is applied to the content layer with [BlendMode.DstIn], which is what a CSS `mask-image`
+ * does: the content keeps its own alpha and loses it where the gradient does. The layer has to be
+ * composited offscreen for the blend to see what the text drew, hence the explicit
+ * [CompositingStrategy.Offscreen].
+ *
+ * **The caller has to clip.** A CSS mask clips to the element's own box; Compose draws outside the
+ * bounds happily, so without the clip a too-long title would paint past its slot and the fade would
+ * fall over the wrong ink. A [Text] laid out with `TextOverflow.Clip` in a fixed width clips itself,
+ * which is the caller's half of this contract.
+ */
+public fun Modifier.harnessFadeTruncate(
+    fade: Dp = HarnessTokens.Control.TextFadeTruncate,
+    fadeColor: Color = Color.Black,
+): Modifier = this
+    // The layer goes first so the content and the mask below are drawn into the same offscreen
+    // surface: `DstIn` can only take alpha away from pixels it shares a layer with.
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        drawRect(
+            // The gradient spans the content's own trailing edge and `fade` inwards, so the band is
+            // always the last `fade` of whatever width the title was given.
+            brush = Brush.horizontalGradient(
+                colors = listOf(fadeColor, Color.Transparent),
+                startX = size.width - fade.toPx(),
+                endX = size.width,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
 
 /** Compact icon button without Material's 48dp minimum touch target, so shell geometry stays exact. */
 @Composable

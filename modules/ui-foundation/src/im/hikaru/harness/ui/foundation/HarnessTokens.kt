@@ -277,10 +277,16 @@ public object HarnessTokens {
         public val LabelSize: TextUnit = 13.sp
         public val LabelLineHeight: TextUnit = 18.sp
         public val PopupWidth: Dp = 280.dp
-        /** Live model picker: 254 wide (menu measured 254×96). */
+        /** Live model picker: 254 wide, radius 20, 4 inset, opening 9px above the trigger. */
         public val ModelPopupWidth: Dp = 254.dp
         public val PermissionPopupWidth: Dp = 320.dp
-        public val PopupMaxHeight: Dp = 360.dp
+        /**
+         * Live model menu ceiling. `_ModelList` caps its scroll area at
+         * `min(316px, content-available-height - 4px)` and the panel adds its 4px top inset, so the
+         * menu never grows past 320; the explicit-model simple view is 96 high.
+         */
+        public val PopupMaxHeight: Dp = 320.dp
+        public val ModelListMaxHeight: Dp = 316.dp
         /** Live permission popup: 320 wide, radius 20, 4 inset; rows are 312×42.6 at radius 15. */
         public val PopupRadius: Dp = 20.dp
         public val PopupContainerInset: Dp = 4.dp
@@ -297,8 +303,12 @@ public object HarnessTokens {
         public val PopupInset: Dp = 12.dp
         /** Live permission header: 26 high, `5px 8px`, 13/16 description ink. */
         public val PopupHeaderHeight: Dp = 26.dp
-        /** Model picker header: 48 chip row, 32 inset, 182 chip, 32 reset slot. */
-        public val ModelChipHeight: Dp = 48.dp
+        /** Live `_ViewToggle`: a 32 chip (`min-height:32px`, `4px` inset) inside the picker. */
+        public val ModelChipHeight: Dp = 32.dp
+        /** Live `_ViewControls` row: `min-height:36px`, centring the 32 chip between its edge slots. */
+        public val ModelChipRowHeight: Dp = 36.dp
+        /** Distance between the model menu's bottom edge and the trigger's top edge. */
+        public val ModelPopupOffset: Dp = 9.dp
         public val ModelChipRadius: Dp = 8.dp
         public val ModelChipInset: Dp = 32.dp
         public val ModelResetSize: Dp = 32.dp
@@ -477,8 +487,22 @@ public object HarnessTokens {
         public val TabChipHeight: Dp = 32.dp
         /** The width a slot reserves at its trailing edge for the 1px separator and the chip's own gap. */
         public val TabChipGap: Dp = 2.dp
+        /**
+         * The extra width a **leading** slot gives back to its chip. Measured in 完整视图, the pinned
+         * 聊天 tab's wrapper is `ps-0 pe-0.5` (`-ms-1 pe-0.5`) — but the chip inside it is `231` of a
+         * `240` slot, i.e. `slot - 9`, while the panel's own tabs read `238` of `240`. The 7px is the
+         * leading tab's own `me-0.75` plus the button's `pe-2`/`pe-1.75` step, so the 聊天 chip never
+         * reaches the separator its slot reserves; a panel tab does.
+         */
+        public val LeadingTabChipGap: Dp = 9.dp
         /** The gap the hidden trailing separator leaves before the plus (measured 6px). */
         public val TabStripPlusGap: Dp = 6.dp
+        /**
+         * How much of a tab title fades out when it does not fit. Measured from the live strip's
+         * `text-fade-truncate` mask, `linear-gradient(to right, #000 calc(100% - 1rem), transparent)`:
+         * the last `1rem` — 16px — of the title's box loses its ink linearly to nothing.
+         */
+        public val TextFadeTruncate: Dp = 16.dp
         /** Tab chip corner (10px) and its 1px 8% ink ring. */
         public val TabChipRadius: Dp = 10.dp
         /**

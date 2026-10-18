@@ -735,7 +735,8 @@ public fun HarnessApp(
         transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
         modelSettings.loading -> "正在读取本机模型目录。"
         modelChoices.isEmpty() && modelSettings.snapshot.providers.any { it.applicationError != null } -> "Provider 配置未生效，请到设置中修复。"
-        modelChoices.isEmpty() -> "请先在设置中配置本机模型与 Provider。"
+        // Nothing configured is the ordinary first-run state, not a fault: the reference composer
+        // keeps the slot silent for it (the model chip is the affordance), so it gets no notice.
         else -> null
     }
     val composerBindingReady = conversationState.host == conversationHost &&
@@ -841,7 +842,6 @@ public fun HarnessApp(
             submitUnavailableReason = submitReason, submitBlocked = submitBlockedWithoutHint,
             selectedReasoningEffort = effectiveNewEffort,
             onReasoningEffortSelect = { selectedNewEffort = it },
-            onConfigureModels = if (transport == ConnectionTransport.Local) ({ navigation = navigation.navigate(PageId.Settings(SettingsSection.Models)) }) else null,
             useHostDefaultModel = transport == ConnectionTransport.Relay,
             permission = homePreferences.permission,
             onPermissionSelect = { if (homeComposerIsCurrent()) composerPreferences[null] = homePreferences.copy(permission = it) },

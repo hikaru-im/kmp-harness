@@ -36,7 +36,6 @@ public fun LiveConversationComposer(
     submitBlocked: Boolean = false,
     selectedReasoningEffort: String? = null,
     onReasoningEffortSelect: ((String?) -> Unit)? = null,
-    onConfigureModels: (() -> Unit)? = null,
     useHostDefaultModel: Boolean = false,
     permission: ComposerPermission,
     onPermissionSelect: (ComposerPermission) -> Unit,
@@ -131,18 +130,11 @@ public fun LiveConversationComposer(
                     },
                 )
                 ConversationComposerToolbar(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
-                    selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown, useHostDefaultModel,
-                    permission, onPermissionSelect, onConfigureModels, draftEmpty = editor.text.isBlank())
+                    selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown,
+                    permission, onPermissionSelect, draftEmpty = editor.text.isBlank())
                 val notices = Modifier.padding(horizontal = HarnessTokens.Composer.PaddingX)
-                composerFeedback(state, modelUnavailableReason, submitUnavailableReason, models.isEmpty(), useHostDefaultModel)?.let { feedback ->
-                    if (feedback.configureModels && onConfigureModels != null) {
-                        Row(notices.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            HarnessText(feedback.text, Modifier.weight(1f).semantics { testTag = feedback.tag },
-                                color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-                            HarnessButton("配置模型", onConfigureModels, variant = HarnessButtonVariant.Ghost,
-                                size = HarnessControlSize.Compact, testTag = "live-composer-configure-models")
-                        }
-                    } else ConversationNotice(feedback.text, feedback.tag, modifier = notices)
+                composerFeedback(state, submitUnavailableReason)?.let { feedback ->
+                    ConversationNotice(feedback.text, feedback.tag, modifier = notices)
                 }
                 // Home has no timeline slot: preserve create/prompt/cancel errors beside its draft.
                 state.errors.values.filter { it.kind in listOf(ConversationErrorKind.Create, ConversationErrorKind.Association, ConversationErrorKind.Prompt,
