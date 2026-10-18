@@ -1,7 +1,6 @@
 package im.hikaru.harness.client.shell
 
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -95,7 +94,7 @@ public fun AppShell(
     onScheduledOpenRun: (im.hikaru.harness.client.scheduled.ScheduledTask, im.hikaru.harness.client.scheduled.ScheduledRun) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     themeMode: HarnessThemeMode = HarnessThemeMode.System,
-    // Writes the user's drag-resize of the Workspace Navigator back to the shell state. Null keeps
+    // Writes the user's navigator resize back to the shared layout state. Null keeps
     // the navigator fixed at its layout width and mounts no resize hit region.
     onNavigatorResize: ((Dp) -> Unit)? = null,
     onOpenProjectContext: ((String) -> Unit)? = null,
@@ -267,36 +266,30 @@ public fun AppShell(
                         }
                         NavigatorKind.None -> Unit
                     }
-                    // A narrow, undecorated strip on the right edge. The drag reads the latest width
+                    // Shared resize feedback at the right edge. The drag reads the latest width
                     // through rememberUpdatedState: keying the pointer session on the value it
                     // mutates would cancel the gesture on every recomposition.
                     if (handleResize && spec.resizable && latestResize != null && layout != NavigatorLayout.Hidden) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .fillMaxHeight()
-                                    .width(NavigatorResizeHandleWidth)
-                                    .pointerInput(layout, navigatorAvailableWidth) {
-                                        detectHorizontalDragGestures { change, dragAmount ->
-                                            change.consume()
-                                            latestResize?.invoke(
-                                                navigatorResizeWidth(
-                                                    currentWidth = latestDrawerWidth,
-                                                    dragDelta = dragAmount.toDp(),
-                                                    layout = layout,
-                                                    availableWidth = navigatorAvailableWidth,
-                                                ),
-                                            )
-                                        }
-                                    }
-                                    .semantics { testTag = "navigator-resize-handle" },
+                        val density = LocalDensity.current
+                        HarnessResizeHandle(
+                            onResize = { amount ->
+                                latestResize?.invoke(navigatorResizeWidth(
+                                    currentWidth = latestDrawerWidth,
+                                    dragDelta = with(density) { amount.toDp() },
+                                    layout = layout,
+                                    availableWidth = navigatorAvailableWidth,
+                                ))
+                            },
+                            modifier = Modifier.align(Alignment.CenterEnd)
+                                .semantics { testTag = "navigator-resize-handle" },
+                            description = "调整导航区宽度",
+                            lineAlignment = Alignment.CenterEnd,
                         )
                     }
-                    // The navigator/main-surface boundary. The 2026-10-06 captures show a 1px line at
-                    // the navigator right edge on every page that owns one, so it is drawn last and only
-                    // for the pushed column (a floating drawer is separated by its shadow).
-                    if (layout == NavigatorLayout.Pushed) {
+
+                    // A non-resizable pushed navigator still needs a static boundary. The resize
+                    // component owns the line whenever it is mounted, avoiding a double border.
+                    if (layout == NavigatorLayout.Pushed && !(handleResize && spec.resizable && latestResize != null)) {
                         Box(
                             modifier =
                                 Modifier

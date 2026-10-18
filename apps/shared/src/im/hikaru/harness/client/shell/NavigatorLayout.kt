@@ -41,25 +41,12 @@ public val NavigatorMaxWidth: Dp = 520.dp
  */
 public val NavigatorPreferredWidth: Dp = HarnessTokens.Control.SidebarExpanded
 
-/**
- * Preferred navigator width for [kind]. Only the Workspace navigator is user-resizable, so it keeps
- * the stored [workspacePreferredWidth] preference; a page-owned navigator has a fixed width from its
- * own measurement ([HarnessTokens.Control.PageNavigatorWidth], 289px in the 2026-10-06 Codex captures).
- */
+/** All mounted navigators share the user-selected width, independent of page content. */
 public fun pageNavigatorWidth(
     kind: NavigatorKind,
     workspacePreferredWidth: Dp = NavigatorPreferredWidth,
 ): Dp =
-    when (kind) {
-        // All navigators share one width in the reference (288); the workspace one is still
-        // user-resizable, so its stored preference only matters once the user drags the edge.
-        NavigatorKind.Workspace -> HarnessTokens.Control.PageNavigatorWidth
-        NavigatorKind.Settings -> HarnessTokens.Control.PageNavigatorWidth
-        NavigatorKind.Plugins,
-        NavigatorKind.Scheduled,
-        -> HarnessTokens.Control.PageNavigatorWidth
-        NavigatorKind.None -> workspacePreferredWidth
-    }
+    if (kind == NavigatorKind.None) 0.dp else workspacePreferredWidth
 
 /** Codex keeps `calc(100vw - 320px)` for the window; the main surface never goes below this. */
 public val MainSurfaceMinWidth: Dp = 320.dp
@@ -112,12 +99,6 @@ public fun navigatorWidth(
         NavigatorLayout.Floating -> minOf(wanted, maxOf(room, NavigatorMinWidth))
     }
 }
-
-/**
- * Width of the navigator's resize edge. It is a hit region only: the shell paints nothing there, so
- * the value is the pointer target's thickness, not a visible rule.
- */
-public val NavigatorResizeHandleWidth: Dp = 6.dp
 
 /**
  * Width after the user drags the navigator's right edge by [dragDelta]. [currentWidth] must be the

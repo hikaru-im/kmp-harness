@@ -21,12 +21,11 @@ public enum class NavigatorKind {
 }
 
 /**
- * Page-level shell ownership for the left navigator. [resizable] stays false for every navigator
- * except the Workspace one, which keeps the user drag-resize edge.
+ * Page-level shell ownership for the left navigator. [resizable] enables a shared resize boundary for every mounted navigator.
  */
 public data class PageShellSpec(
     val navigator: NavigatorKind,
-    val resizable: Boolean = false,
+    val resizable: Boolean = navigator != NavigatorKind.None,
     /**
      * True when the page draws its own content column, so the shell must not cap the surface it hands
      * over at [im.hikaru.harness.ui.foundation.HarnessTokens.Control.ContentMaxWidth]. Measured on the
