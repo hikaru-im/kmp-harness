@@ -207,6 +207,7 @@ public fun AppShell(
             // a preference-based start would leave a dead zone before the edge moved.
             val latestDrawerWidth by rememberUpdatedState(drawerWidth)
             val latestResize by rememberUpdatedState(onNavigatorResize)
+            val latestToggleSidebar by rememberUpdatedState(onToggleSidebar)
             // One navigator body, shared by the pushed column, the floating drawer and the hover
             // preview. `kind` selects which page's navigator to draw, so the preview can render the
             // hovered destination's navigator without navigating to it.
@@ -271,14 +272,17 @@ public fun AppShell(
                     // mutates would cancel the gesture on every recomposition.
                     if (handleResize && spec.resizable && latestResize != null && layout != NavigatorLayout.Hidden) {
                         val density = LocalDensity.current
+                        val resizeDrag = remember(layout, navigatorAvailableWidth) { NavigatorResizeDragState() }
                         HarnessResizeHandle(
+                            onResizeStart = { resizeDrag.start(latestDrawerWidth) },
                             onResize = { amount ->
-                                latestResize?.invoke(navigatorResizeWidth(
-                                    currentWidth = latestDrawerWidth,
-                                    dragDelta = with(density) { amount.toDp() },
+                                val result = resizeDrag.drag(
+                                    delta = with(density) { amount.toDp() },
                                     layout = layout,
                                     availableWidth = navigatorAvailableWidth,
-                                ))
+                                )
+                                latestResize?.invoke(result.width)
+                                if (result.collapse) latestToggleSidebar()
                             },
                             modifier = Modifier.align(Alignment.CenterEnd)
                                 .semantics { testTag = "navigator-resize-handle" },
