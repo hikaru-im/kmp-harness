@@ -134,6 +134,13 @@ public fun AppShell(
             LaunchedEffect(explorePopover.isOpen) {
                 if (explorePopover.isOpen) onOpenExploreMenu() else onDismissExploreMenu()
             }
+            // The 探索 menu also closes from outside the hover pair (choosing a destination). Its
+            // content then leaves the composition without a pointer-leave, which would strand
+            // `contentHovered` and keep the rail trigger painted as open; clear the hover state
+            // whenever the menu is no longer open.
+            LaunchedEffect(state.exploreMenu.isOpen) {
+                if (!state.exploreMenu.isOpen) explorePopover.close()
+            }
             // The page owns the navigator: only the kind named by the current page mounts, and a page
             // with NavigatorKind.None has no drawer at all, so it can never show the Workspace tree.
             val spec = pageShellSpec(state.navigation.currentPage)
@@ -332,7 +339,10 @@ public fun AppShell(
                             // A preview replaces this item's tip: while the current page shows no
                             // navigator column, a hovered destination that has one floats it instead.
                             popoverActiveForItem = { item ->
-                                previewPopover.activeKey == item.id || (item.id == "explore" && explorePopover.isOpen)
+                                // 探索 paints as open for as long as its menu is up, whether the menu
+                                // came from the hover state or a click.
+                                previewPopover.activeKey == item.id ||
+                                    (item.id == "explore" && (explorePopover.isOpen || state.exploreMenu.isOpen))
                             },
                             tipSuppressedForItem = { item ->
                                 !navigatorOnScreen &&
@@ -569,6 +579,7 @@ public fun AppShell(
             if (state.exploreMenu.isOpen) {
                 ExploreMenuOverlay(
                     anchor = exploreAnchor,
+                    selected = state.navigation.currentPage,
                     pinned = state.pinnedRailDestinations,
                     onDismiss = onDismissExploreMenu,
                     onOpenDestination = onOpenExploreDestination,
@@ -867,6 +878,7 @@ public data class ExploreMenuAnchor(val left: Int, val top: Int)
 private fun ExploreMenuOverlay(
     anchor: ExploreMenuAnchor,
     pinned: Set<RailDestination>,
+    selected: PageId,
     onDismiss: () -> Unit,
     onOpenDestination: (PageId) -> Unit,
     onTogglePin: (RailDestination) -> Unit,
@@ -890,6 +902,7 @@ private fun ExploreMenuOverlay(
     ) {
         ExploreMenu(
             pinned = pinned,
+            selected = selected,
             onOpenDestination = onOpenDestination,
             onTogglePin = onTogglePin,
             onHoverChanged = onHoverChanged,
@@ -905,6 +918,7 @@ private fun ExploreMenuOverlay(
 @Composable
 private fun ExploreMenu(
     pinned: Set<RailDestination>,
+    selected: PageId,
     onOpenDestination: (PageId) -> Unit,
     onTogglePin: (RailDestination) -> Unit,
     onHoverChanged: (Boolean) -> Unit,
@@ -938,6 +952,9 @@ private fun ExploreMenu(
         explorePinMenuItems(pinned).forEach { entry ->
             ExploreMenuRow(
                 entry = entry,
+                // Codex marks the row of the page that is open with `aria-current="page"` and a
+                // half-strength ghost wash, so the menu shows where the user already is.
+                current = entry.option.selects(selected),
                 onOpenDestination = { onOpenDestination(entry.option.page) },
                 onTogglePin = { onTogglePin(entry.option.destination) },
             )
@@ -952,6 +969,8 @@ private fun ExploreMenu(
 @Composable
 private fun ExploreMenuRow(
     entry: PinMenuItem,
+    /** The destination of this row is the page currently open. */
+    current: Boolean = false,
     onOpenDestination: () -> Unit,
     onTogglePin: () -> Unit,
 ) {
@@ -967,7 +986,13 @@ private fun ExploreMenuRow(
                 .fillMaxWidth()
                 .height(HarnessTokens.Control.MenuItemHeight)
                 .clip(shape)
-                .background(if (hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                .background(
+                    when {
+                        hovered -> HarnessTokens.Colors.SurfaceSelected
+                        current -> HarnessTokens.Colors.CurrentRowBackground
+                        else -> Color.Transparent
+                    },
+                )
                 .then(if (hovered) Modifier.border(1.dp, HarnessTokens.Colors.Border, shape) else Modifier)
                 .clickable(
                     interactionSource = source,
@@ -976,6 +1001,7 @@ private fun ExploreMenuRow(
                 )
                 .semantics {
                     role = Role.Button
+                    selected = current
                     testTag = "explore-destination-${entry.option.id}"
                 },
         verticalAlignment = Alignment.CenterVertically,
@@ -1014,7 +1040,9 @@ private fun ExploreMenuRow(
         ) {
             HarnessIcon(
                 name = if (entry.pinned) HarnessIconName.PushpinFilled else HarnessIconName.Pushpin,
-                tint = if (entry.pinned) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextMuted,
+                // Codex draws the pinned (filled) glyph in the tertiary grey and the unpinned
+                // (outline) glyph in the stronger secondary grey.
+                tint = if (entry.pinned) HarnessTokens.Colors.TextDisabled else HarnessTokens.Colors.TextSecondary,
                 size = HarnessTokens.Control.NavigatorIcon,
             )
         }
@@ -1076,8 +1104,10 @@ private fun RailNavItem(
                 name = if (selected) item.icon.filledVariant() else item.icon,
                 tint =
                     when {
-                        selected -> HarnessTokens.Colors.Text
-                        // Codex draws every unselected rail glyph in the disabled-weight grey.
+                        // Codex promotes the glyph to full ink while the item is selected, hovered,
+                        // or keeping its own popover open (the 探索 menu, a navigator preview).
+                        selected || hovered || popoverActive -> HarnessTokens.Colors.Text
+                        // At rest every unselected rail glyph keeps the disabled-weight grey.
                         else -> HarnessTokens.Colors.TextDisabled
                     },
                 glyphScale = HarnessTokens.Control.RailIconScale,

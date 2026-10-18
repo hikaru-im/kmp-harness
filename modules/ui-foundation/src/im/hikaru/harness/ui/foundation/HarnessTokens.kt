@@ -139,6 +139,12 @@ public data class HarnessColors(
     public val OverlayBackground: Color get() = SurfaceElevated
     public val HoverBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.06f else 0.04f)
     public val PressedBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.10f else 0.08f)
+
+    /**
+     * The menu row for the page that is already open. Codex paints it with
+     * `bg-background-primary-ghost-hover/50`: half of the 5.5% ghost-hover wash, i.e. ~2.75% ink.
+     */
+    public val CurrentRowBackground: Color get() = Text.copy(alpha = 0.0275f)
     public val UserMessageBackground: Color get() = lerp(Canvas, Accent, if (Canvas.luminance() < 0.5f) 0.20f else 0.10f)
 }
 

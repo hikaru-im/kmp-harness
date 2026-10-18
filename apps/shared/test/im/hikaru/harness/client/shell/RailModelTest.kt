@@ -98,7 +98,7 @@ class RailModelTest {
         )
         assertEquals(listOf("主页", "定时任务", "资料库", "插件", "探索", "账号"), items.map { it.label })
         assertTrue(items.none { it.section == RailSection.Secondary })
-        // 探索 opens the pin menu, so it never draws the selected highlight.
+        // On 主页 none of the 探索 destinations is open, so 探索 stays at rest.
         assertTrue(items.none { it.id == "explore" && it.selected })
         assertEquals(listOf("home"), items.filter { it.selected }.map { it.id })
         assertEquals("KH", items.last().initials)
@@ -142,11 +142,12 @@ class RailModelTest {
         cases.forEach { (slot, page) ->
             assertEquals(slot, harnessRailItems(page).single { it.selected }.id, "selected slot for " + page)
         }
-        // 项目 is a pinned slot, so Projects only selects once the user pinned it from 探索.
+        // 项目 lives in the 探索 menu until it is pinned: unpinned, 探索 carries the selection;
+        // pinned, the 项目 slot selects instead.
         val pinned = setOf(RailDestination.Projects)
         listOf(PageId.Projects(), PageId.Project("kmp-harness")).forEach { page ->
             assertEquals("pinned-projects", harnessRailItems(page, pinned = pinned).single { it.selected }.id)
-            assertTrue(harnessRailItems(page).none { it.selected }, "unpinned Projects has no selected slot: " + page)
+            assertEquals("explore", harnessRailItems(page).single { it.selected }.id, "unpinned Projects selects 探索: " + page)
         }
         assertTrue(harnessRailItems(PageId.Account).none { it.selected })
     }
@@ -159,7 +160,12 @@ class RailModelTest {
     @Test
     fun exploreMenuIsIndependentFromTheAccountMenuAndSelectsNoPage() {
         assertEquals(null, railItemPage("explore"))
-        assertTrue(harnessRailItems(PageId.Projects()).none { it.id == "explore" && it.selected })
+        // 探索 has no page of its own, but it holds the selection of its unpinned destinations.
+        assertEquals("explore", harnessRailItems(PageId.Projects()).single { it.selected }.id)
+        assertEquals(
+            "pinned-projects",
+            harnessRailItems(PageId.Projects(), pinned = setOf(RailDestination.Projects)).single { it.selected }.id,
+        )
 
         // The pin menu owns its own state, separate from the account dropdown state.
         val account = AccountMenuState()
