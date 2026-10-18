@@ -64,6 +64,13 @@ private const val LIVE_CANCELLATION_TIMEOUT_MILLIS = 15_000L
 private const val LIVE_CLOSE_TIMEOUT_MILLIS = 30_000L
 private const val ENABLED_ENV_PATTERN = "(?i:true|1|yes)"
 
+/** Reasoning-enabled compatible providers need room for reasoning before a tool call or final text. */
+private fun liveToolTokenBudget(default: Long): Long =
+    System.getenv("HARNESS_OPENAI_LIVE_TOOL_MAX_TOKENS")?.let {
+        requireNotNull(it.toLongOrNull()) { "Live tool token budget must be an integer" }
+            .also { budget -> require(budget in 1..4096) { "Live tool token budget must be between 1 and 4096" } }
+    } ?: default
+
 /** Opt-in external-network acceptance through the production file-backed Desktop bundle. */
 @EnabledIfEnvironmentVariable(named = LIVE_API_KEY_ENV, matches = ".+")
 class OpenAiLiveAcceptanceTest {
@@ -106,7 +113,7 @@ class OpenAiLiveAcceptanceTest {
                                     "then wait for its result.",
                             tools = listOf(tool),
                             temperature = 0.0,
-                            maxTokens = 128,
+                            maxTokens = liveToolTokenBudget(128),
                         )
                     ).toList()
                 }
@@ -144,7 +151,7 @@ class OpenAiLiveAcceptanceTest {
                                     "Reply with exactly: TOOL_OK",
                             tools = listOf(tool),
                             temperature = 0.0,
-                            maxTokens = 32,
+                            maxTokens = liveToolTokenBudget(32),
                         )
                     ).toList()
                 }

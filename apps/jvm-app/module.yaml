@@ -53,6 +53,7 @@ test-dependencies:
   - androidx.sqlite:sqlite-bundled-jvm:2.6.2
   - ../../modules/agent-loop
   - ../../modules/exec-jvm
+  - ../../modules/subagent-tools
   - ../../modules/tools
   - ../../modules/credentials
   - ../../modules/credentials-local

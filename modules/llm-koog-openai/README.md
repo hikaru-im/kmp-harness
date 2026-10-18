@@ -4,6 +4,14 @@
 默认模型目录、settings defaults、Koog client factory、请求/流/failure 语义和 Responses replay codec。
 该模块只向装配层导出 `OpenAiKoogPluginDefinition`；Host 不得再次注册 OpenAI model 或 mapper。
 
+工具参数通过 Provider 自有的 `OpenAiToolMapper` 与 SDK Schema generator 扩展点原样传递 JSON
+Schema。Chat Completions 和 Responses 都保留数组、嵌套对象和参数约束，不受通用 Koog primitive
+mapper 子集限制。默认 `exec`/`spawn_agent` 工具由离线真实 Koog HTTP fixture 验证。
+
+Chat 流的 choice/text 与 tool-call 索引分别管理，支持兼容端点的 reasoning → tool-call 和空文本
+结束帧。助手 reasoning 历史保留为 `reasoning_content`，工具结果可继续进入下一轮请求。外部工具
+验收可通过 `HARNESS_OPENAI_LIVE_TOOL_MAX_TOKENS`（1–4096）为推理模型增加测试输出预算，默认值不变。
+
 模型目录来自 `resources/model-catalog/openai.json`。它是从固定 models.dev revision 生成并随模块离线打包的快照，应用启动不会访问 models.dev。维护者显式运行 `tools/update-model-catalog.py` 更新；同一 revision 的输出按模型 id 排序且字节稳定。
 
 一个 provider profile 只使用一个 `api`。需要同时使用 Chat Completions 和 Responses 时，声明两个 provider profile，并分别设置 `api: openai-chat-completions` 与 `api: openai-responses`。模型条目不接受 `api`，`models` 非空时完整替换 bundled catalog，`modelOverrides` 只修改 bundled catalog 中的已知模型。

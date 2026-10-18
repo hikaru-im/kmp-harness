@@ -18,8 +18,10 @@ fun interface KoogToolStreamMapper {
     ): List<StreamChunk>
 }
 
-/** provider-neutral tool-call 流映射；身份状态完全归属于当前 collection 的 block state。 */
-internal class DefaultKoogToolStreamMapper : KoogToolStreamMapper {
+/** Tool-call mapping; protocols with separate text/choice and tool index spaces opt in explicitly. */
+class DefaultKoogToolStreamMapper(
+    private val independentIndices: Boolean = false,
+) : KoogToolStreamMapper {
     override fun map(
         frame: StreamFrame,
         state: KoogStreamState,
@@ -40,16 +42,13 @@ internal class DefaultKoogToolStreamMapper : KoogToolStreamMapper {
         frame: StreamFrame.ToolCallDelta,
         state: KoogStreamState,
     ): List<StreamChunk> {
-        val block =
-            state.open(
-                providerIndex = frame.index,
-                type = KoogStreamBlockType.TOOL_CALL,
-            )
+        val (completedReasoning, block) = open(state, frame.index)
         block.observeToolCallIdentity(frame.id, frame.name)
         val content = frame.content
         val id = content?.let { CallId(block.requireToolCallId()) }
         val name = content?.let { block.takeToolCallNameForDelta() }
         return buildList {
+            addAll(completedReasoning)
             if (block.startIfNeeded()) {
                 add(
                     BlockStartChunk(
@@ -76,11 +75,7 @@ internal class DefaultKoogToolStreamMapper : KoogToolStreamMapper {
         frame: StreamFrame.ToolCallComplete,
         state: KoogStreamState,
     ): List<StreamChunk> {
-        val block =
-            state.open(
-                providerIndex = frame.index,
-                type = KoogStreamBlockType.TOOL_CALL,
-            )
+        val (completedReasoning, block) = open(state, frame.index)
         block.observeToolCallIdentity(frame.id, frame.name)
         val wasStarted = block.started
         if (!wasStarted) {
@@ -90,6 +85,7 @@ internal class DefaultKoogToolStreamMapper : KoogToolStreamMapper {
         val name = block.requireToolCallName()
         block.complete(finalText = frame.content)
         return buildList {
+            addAll(completedReasoning)
             if (!wasStarted) {
                 add(
                     BlockStartChunk(
@@ -111,4 +107,8 @@ internal class DefaultKoogToolStreamMapper : KoogToolStreamMapper {
             )
         }
     }
+
+    private fun open(state: KoogStreamState, index: Int?): Pair<List<StreamChunk>, KoogStreamBlockState> =
+        if (independentIndices) state.openIndependentToolCall(index)
+        else emptyList<StreamChunk>() to state.open(index, KoogStreamBlockType.TOOL_CALL)
 }

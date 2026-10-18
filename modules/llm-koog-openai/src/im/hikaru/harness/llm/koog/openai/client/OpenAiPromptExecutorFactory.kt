@@ -15,6 +15,7 @@ import im.hikaru.harness.llm.koog.KoogProviderSettings
 import im.hikaru.harness.llm.koog.resolveRequired
 import im.hikaru.harness.llm.koog.openai.chat.OpenAiChatOptionMapper
 import im.hikaru.harness.llm.koog.openai.responses.OpenAiResponsesOptionMapper
+import im.hikaru.harness.llm.koog.openai.semantics.OpenAiToolDescriptorSchemaGenerator
 import java.net.URI
 
 /** JVM/Desktop 的 OpenAI executor factory for Chat Completions and Responses routes. */
@@ -130,6 +131,7 @@ public class OpenAiPromptExecutorFactory(
                         ),
                 ),
                 httpClientFactory = httpClientFactory ?: HttpClientFactoryResolver.resolve(),
+                toolsConverter = OpenAiToolDescriptorSchemaGenerator(),
             )
 
         return try {

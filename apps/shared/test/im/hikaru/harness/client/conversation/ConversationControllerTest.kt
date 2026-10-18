@@ -16,6 +16,28 @@ import kotlin.test.*
 @OptIn(ExperimentalCoroutinesApi::class)
 class ConversationControllerTest {
     @Test
+    fun recordedModelFailureIsShownAfterLocalIdleWithoutResending() = runTest {
+        val operations = FakeOperations().apply {
+            promptResult = { id, _ -> object : SessionPrompt {
+                override val receipt = SessionPromptReceipt(id, "failed-prompt")
+                override suspend fun awaitIdle() = Unit
+                override suspend fun failure() = SessionPromptFailure("KOOG_UNSUPPORTED_TOOL_SCHEMA", 400)
+            } }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST, CompletionCapability.LocalIdle)
+        controller.updateDraft("hello")
+        assertNotNull(controller.submit()).join()
+        runCurrent()
+        assertEquals("模型执行失败（KOOG_UNSUPPORTED_TOOL_SCHEMA）。",
+            controller.state.value.errors[ConversationErrorKind.Completion]?.message)
+        assertEquals(ConversationAction.Idle, controller.state.value.action)
+        assertEquals(1, operations.promptIds.size)
+        assertNotNull(controller.state.value.lastAcceptedReceipt)
+        controller.close()
+    }
+
+    @Test
     fun rejectedPreparationNeverCreatesOrPromptsAndRetainsDraft() = runTest {
         val operations = FakeOperations()
         val controller = ConversationController(backgroundScope, operations)
