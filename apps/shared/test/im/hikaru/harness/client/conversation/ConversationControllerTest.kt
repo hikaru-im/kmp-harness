@@ -16,6 +16,165 @@ import kotlin.test.*
 @OptIn(ExperimentalCoroutinesApi::class)
 class ConversationControllerTest {
     @Test
+    fun switchingConversationKeepsCommittedReadRevisionForTheNextManagementCommand() = runTest {
+        var stored = SUMMARY.copy(lastEventSeq = 8, unread = true, managementAvailable = true)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var updates = 0
+        val operations = FakeOperations().apply {
+            listResult = { listOf(stored, SUMMARY.copy(id = OTHER)) }
+            updateResult = { update ->
+                if (++updates == 1) withContext(NonCancellable) { entered.complete(Unit); release.await() }
+                check(stored.revision == update.expectedRevision) { "Stale metadata revision" }
+                stored.copy(lastReadSeq = update.lastReadSeq, pinned = update.pinned,
+                    revision = stored.revision + 1).also { stored = it }
+            }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST); runCurrent()
+        controller.select(SESSION); runCurrent()
+        controller.markRead(SESSION, 8); runCurrent(); entered.await()
+        controller.select(OTHER)
+        release.complete(Unit); runCurrent()
+        assertEquals(OTHER, controller.state.value.selectedSessionId)
+        assertTrue(assertNotNull(controller.manage(SESSION, ConversationCommand.TogglePin)).await())
+        assertEquals(2, stored.revision)
+        assertTrue(stored.pinned)
+        controller.close()
+    }
+
+    @Test
+    fun catalogAdvancingDuringHistoryReadRequiresAFreshReadBeforeAcknowledging() = runTest {
+        val firstEntered = CompletableDeferred<Unit>()
+        val firstRelease = CompletableDeferred<Unit>()
+        val secondEntered = CompletableDeferred<Unit>()
+        val secondRelease = CompletableDeferred<Unit>()
+        var reads = 0
+        val operations = FakeOperations().apply {
+            listResult = { listOf(SUMMARY.copy(lastEventSeq = 4, managementAvailable = true)) }
+            historyResult = { _, _ ->
+                if (++reads == 1) { firstEntered.complete(Unit); firstRelease.await() }
+                else { secondEntered.complete(Unit); secondRelease.await() }
+                listOf(message("visible-$reads"))
+            }
+            updateResult = { SUMMARY.copy(lastEventSeq = 9, revision = 1, managementAvailable = true) }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST); runCurrent()
+        controller.select(SESSION); runCurrent(); firstEntered.await()
+        assertTrue(assertNotNull(controller.manage(SESSION, ConversationCommand.TogglePin)).await())
+        firstRelease.complete(Unit); runCurrent(); secondEntered.await()
+        assertEquals(4, controller.state.value.historyReadSeq)
+        assertEquals(ConversationDataPhase.Loading, controller.state.value.historyPhase)
+        secondRelease.complete(Unit); runCurrent()
+        assertEquals(9, controller.state.value.historyReadSeq)
+        assertEquals(ConversationDataPhase.Ready, controller.state.value.historyPhase)
+        assertEquals(2, reads)
+        controller.close()
+    }
+
+    @Test
+    fun explicitUnreadFollowsInFlightReadWithoutBusyStateOrRevisionConflict() = runTest {
+        var stored = SUMMARY.copy(lastEventSeq = 8, unread = true, managementAvailable = true)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val requests = mutableListOf<ConversationUpdate>()
+        var lists = 0
+        val operations = FakeOperations().apply {
+            listResult = { lists++; listOf(stored) }
+            updateResult = { update ->
+                requests += update
+                if (requests.size == 1) { entered.complete(Unit); release.await() }
+                assertEquals(stored.revision, update.expectedRevision)
+                stored.copy(lastReadSeq = update.lastReadSeq, unread = update.lastReadSeq < stored.lastEventSeq,
+                    revision = stored.revision + 1).also { stored = it }
+            }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        runCurrent(); controller.select(SESSION); runCurrent()
+        controller.markRead(SESSION, 8)
+        runCurrent(); entered.await()
+        assertNull(controller.state.value.managingSessionId)
+        val unread = assertNotNull(controller.manage(SESSION, ConversationCommand.MarkUnread))
+        release.complete(Unit)
+        assertTrue(unread.await())
+        assertEquals(listOf(8L, -1L), requests.map { it.lastReadSeq })
+        assertTrue(controller.state.value.sessions.single().unread)
+        assertEquals(1, lists, "Metadata commands must update the returned row without reloading the catalog")
+        controller.close()
+    }
+
+    @Test
+    fun archiveUpdatesTheSelectedRowAndRenameReportsFailureToItsEditor() = runTest {
+        val operations = FakeOperations()
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        runCurrent(); controller.select(SESSION); runCurrent()
+        assertTrue(assertNotNull(controller.manage(SESSION, ConversationCommand.ToggleArchive)).await())
+        assertTrue(controller.state.value.sessions.single().archived)
+        assertEquals(SESSION, controller.state.value.selectedSessionId)
+        operations.updateResult = { error("Rejected") }
+        assertFalse(assertNotNull(controller.manage(SESSION, ConversationCommand.Rename("keep draft"))).await())
+        assertNull(controller.state.value.managementError, "The rename editor owns its error feedback")
+        controller.close()
+    }
+
+    @Test
+    fun deleteClearsSelectedConversationAndItsDraftAfterAcknowledgement() = runTest {
+        var deleted = false
+        val operations = FakeOperations().apply {
+            listResult = { if (deleted) emptyList() else listOf(SUMMARY) }
+            deleteResult = { _, _ -> deleted = true }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        runCurrent()
+        controller.select(SESSION)
+        controller.updateDraft("old draft")
+        runCurrent()
+        assertTrue(assertNotNull(controller.manage(SESSION, ConversationCommand.Delete)).await())
+        runCurrent()
+        assertNull(controller.state.value.selectedSessionId)
+        assertTrue(controller.state.value.sessions.isEmpty())
+        controller.select(SESSION)
+        assertEquals("", controller.state.value.draft)
+        controller.close()
+    }
+
+    @Test
+    fun managementKeepsCustomTitleAndReadPositionAndFencesHostChanges() = runTest {
+        val captured = CompletableDeferred<ConversationUpdate>()
+        val release = CompletableDeferred<Unit>()
+        val operations = FakeOperations().apply {
+            listResult = { listOf(SUMMARY.copy(title = "automatic", customTitle = null,
+                lastReadSeq = 3, lastEventSeq = 8, unread = true, revision = 2, managementAvailable = true)) }
+            updateResult = { update -> captured.complete(update); release.await(); SUMMARY }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        runCurrent()
+        val command = assertNotNull(controller.manage(SESSION, ConversationCommand.TogglePin))
+        runCurrent()
+        assertEquals(ConversationUpdate(SESSION, 2, null, true, 3), captured.await())
+        assertNull(controller.manage(SESSION, ConversationCommand.Rename("other")), "Only one management command can be in flight")
+        controller.bind(null, null)
+        release.complete(Unit)
+        command.join()
+        assertEquals(ConversationState(), controller.state.value)
+        controller.close()
+    }
+
+    @Test
+    fun durableHistoryAllowsSendButDoesNotOfferStopAndArchiveBlocksSend() {
+        val state = ConversationState(host = HOST, connected = true, selectedSessionId = SESSION,
+            draft = "continue", sessions = listOf(SUMMARY.copy(live = false)))
+        assertTrue(state.canSubmit)
+        assertFalse(state.canCancel)
+        assertFalse(state.copy(sessions = listOf(SUMMARY.copy(archived = true))).canSubmit)
+    }
+
+    @Test
     fun recordedModelFailureIsShownAfterLocalIdleWithoutResending() = runTest {
         val operations = FakeOperations().apply {
             promptResult = { id, _ -> object : SessionPrompt {
@@ -1033,6 +1192,11 @@ private class FakeConnection : Connection {
 }
 
 private class FakeOperations : ConversationOperations {
+    override suspend fun archive(connection: Connection, id: SessionId, archived: Boolean) = Unit
+    var deleteResult: suspend (SessionId, Long) -> Unit = { _, _ -> }
+    override suspend fun delete(connection: Connection, id: SessionId, revision: Long) = deleteResult(id, revision)
+    var updateResult: suspend (ConversationUpdate) -> SessionSummary = { SUMMARY }
+    override suspend fun update(connection: Connection, update: ConversationUpdate): SessionSummary = updateResult(update)
     val connection: Connection = FakeConnection()
     var createCalls = 0
     var awaitIdleCalls = 0

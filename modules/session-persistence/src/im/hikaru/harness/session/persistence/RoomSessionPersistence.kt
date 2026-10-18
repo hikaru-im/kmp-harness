@@ -11,7 +11,6 @@ import androidx.room3.PrimaryKey
 import androidx.room3.Query
 import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
-import androidx.room3.migration.Migration
 import androidx.room3.withWriteTransaction
 import im.hikaru.harness.agent.AgentId
 import im.hikaru.harness.agent.AgentSessionEventNames
@@ -69,6 +68,26 @@ import kotlinx.serialization.json.longOrNull
 
 private const val DATABASE_VERSION = 1
 
+/** Presentation metadata is independent of the immutable session identity and event log. */
+@Entity(tableName = "harness_conversation_metadata")
+data class ConversationMetadata(
+    @PrimaryKey @ColumnInfo(name = "session_id") val sessionId: String,
+    val title: String? = null,
+    val pinned: Boolean = false,
+    @ColumnInfo(name = "last_read_seq") val lastReadSeq: Long = -1,
+    val revision: Long = 0,
+    @ColumnInfo(defaultValue = "0") val deleted: Boolean = false,
+)
+
+data class ConversationActivityRow(
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "first_user_data") val firstUserData: String?,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "last_seq") val lastSeq: Long,
+)
+data class ConversationActivity(val title: String?, val updatedAt: Long, val lastSeq: Long)
+data class ConversationCatalogEntry(val header: SessionHeader, val metadata: ConversationMetadata?, val activity: ConversationActivity)
+
 /** Header row for a durable Harness Session. */
 @Entity(tableName = "harness_sessions")
 data class SessionRow(
@@ -111,6 +130,22 @@ data class SessionEventRow(
 
 @Dao
 interface SessionPersistenceDao {
+    @Query("""SELECT s.session_id,
+        (SELECT e.data FROM harness_session_events e WHERE e.session_id = s.session_id AND e.type = 'user/message' AND json_extract(e.data, '$.message.source.type') = 'user' ORDER BY e.seq LIMIT 1) AS first_user_data,
+        COALESCE((SELECT e.time FROM harness_session_events e WHERE e.session_id = s.session_id ORDER BY e.seq DESC LIMIT 1), s.created_at) AS updated_at,
+        COALESCE((SELECT e.seq FROM harness_session_events e WHERE e.session_id = s.session_id ORDER BY e.seq DESC LIMIT 1), -1) AS last_seq
+        FROM harness_sessions s WHERE (:id IS NULL OR s.session_id = :id)""")
+    suspend fun conversationActivity(id: String?): List<ConversationActivityRow>
+    @Query("SELECT * FROM harness_conversation_metadata WHERE (:id IS NULL OR session_id = :id)")
+    suspend fun catalogMetadata(id: String?): List<ConversationMetadata>
+    @Query("SELECT * FROM harness_sessions WHERE (:id IS NULL OR session_id = :id)")
+    suspend fun catalogSessions(id: String?): List<SessionRow>
+    @Query("SELECT * FROM harness_conversation_metadata WHERE session_id = :id")
+    suspend fun metadata(id: String): ConversationMetadata?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putMetadata(row: ConversationMetadata)
+
     @Query("SELECT * FROM harness_sessions ORDER BY created_at ASC, session_id ASC")
     suspend fun listSessions(): List<SessionRow>
 
@@ -135,7 +170,7 @@ interface SessionPersistenceDao {
 }
 
 @Database(
-    entities = [SessionRow::class, SessionEventRow::class],
+    entities = [SessionRow::class, SessionEventRow::class, ConversationMetadata::class],
     version = DATABASE_VERSION,
     exportSchema = false,
 )
@@ -158,11 +193,6 @@ interface SessionDatabaseAccess : Disposable {
 /** Platform code owns the Room builder, SQLite driver, path and dispatcher. */
 fun interface SessionPersistenceDatabaseFactory {
     fun create(): SessionDatabaseAccess
-}
-
-/** Explicit migration seam; future schema changes must be appended here. */
-object SessionPersistenceMigrations {
-    val all: Array<Migration> = emptyArray()
 }
 
 /** Why a durable chat cannot be restored as a quiescent, read-only live Session. */
@@ -195,6 +225,13 @@ sealed interface SessionQuiescentLoad {
 }
 
 interface SessionPersistence : Disposable {
+    /** Durable tombstone keeps old project/worktree references from resurrecting a deleted chat. */
+    suspend fun deleteConversation(id: SessionId, expectedRevision: Long): Unit = error("Conversation deletion is unavailable")
+    suspend fun conversationCatalog(id: SessionId? = null): List<ConversationCatalogEntry>? = null
+    val supportsConversationMetadata: Boolean get() = false
+    suspend fun metadata(id: SessionId): ConversationMetadata? = null
+    suspend fun updateMetadata(id: SessionId, expectedRevision: Long, title: String?, pinned: Boolean, lastReadSeq: Long): ConversationMetadata =
+        error("Conversation metadata is unsupported")
     /** Durable headers only; null means this implementation has no catalog capability. */
     suspend fun listHeaders(): List<SessionHeader>? = null
 
@@ -227,6 +264,7 @@ val Context.persistence: SessionPersistence
 /** Installs the Room-backed persistence service supplied by a platform factory. */
 class SessionPersistencePlugin(
     private val databaseFactory: SessionPersistenceDatabaseFactory,
+    private val autoSave: Boolean = false,
 ) : SimplePlugin {
     override val inject = setOf(
         im.hikaru.harness.runtime.plugin.InjectSpec.required(im.hikaru.harness.session.SessionKey)
@@ -239,16 +277,23 @@ class SessionPersistencePlugin(
         scope.add(provider)
         scope.add(context.provide(SessionPersistenceKey, provider))
         scope.add(context.on(im.hikaru.harness.session.SessionEvents.Flush) { notice -> provider.flush(notice.session) })
+        if (autoSave) {
+            scope.add(context.provide(im.hikaru.harness.session.SessionDurabilityKey,
+                object : im.hikaru.harness.session.SessionDurability {
+                    override suspend fun append(header: SessionHeader, event: SessionEventEnvelope) = provider.append(header, event)
+                    override suspend fun checkpoint(session: Session) = provider.checkpoint(session)
+                }))
+        }
     }
 }
 
 const val SESSION_PERSISTENCE_PLUGIN_NAME: String = "session-persistence"
 
 /** Creates the profile-loadable definition while keeping the platform factory outside config. */
-fun sessionPersistencePluginDefinition(factory: SessionPersistenceDatabaseFactory): PluginDefinition =
+fun sessionPersistencePluginDefinition(factory: SessionPersistenceDatabaseFactory, autoSave: Boolean = false): PluginDefinition =
     pluginDefinition(
         name = SESSION_PERSISTENCE_PLUGIN_NAME,
-        plugin = SessionPersistencePlugin(factory),
+        plugin = SessionPersistencePlugin(factory, autoSave),
         config = jsonObjectConfig(allowMissing = true) { value ->
             require(value.isEmpty()) { "session-persistence config does not accept platform fields" }
             Unit
@@ -259,6 +304,7 @@ private class RoomSessionPersistence(
     private val database: SessionDatabaseAccess,
     private val store: SessionStore,
 ) : SessionPersistence {
+    override val supportsConversationMetadata: Boolean = true
     private val mutex = Mutex()
     private val json = Json {
         encodeDefaults = false
@@ -267,6 +313,68 @@ private class RoomSessionPersistence(
         classDiscriminator = "type"
     }
     private var disposed = false
+
+    override suspend fun deleteConversation(id: SessionId, expectedRevision: Long) = mutex.withLock {
+        check(!disposed)
+        database.transaction {
+            check(database.dao.findSession(id.value) != null) { "Session is not durable" }
+            val old = database.dao.metadata(id.value) ?: ConversationMetadata(id.value)
+            if (!old.deleted) {
+                check(old.revision == expectedRevision && old.revision < Long.MAX_VALUE) { "Conversation changed; refresh before deleting" }
+                database.dao.putMetadata(old.copy(deleted = true, revision = old.revision + 1))
+            }
+        }
+    }
+
+    override suspend fun conversationCatalog(id: SessionId?): List<ConversationCatalogEntry> = mutex.withLock {
+        check(!disposed)
+        database.transaction {
+            val metadata = database.dao.catalogMetadata(id?.value).associateBy { it.sessionId }
+            val activity = database.dao.conversationActivity(id?.value).associateBy { it.sessionId }
+            database.dao.catalogSessions(id?.value).mapNotNull { row ->
+                val preferences = metadata[row.sessionId]
+                if (preferences?.deleted == true) return@mapNotNull null
+                val latest = activity.getValue(row.sessionId)
+                val message = latest.firstUserData?.let { json.decodeFromString(UserMessageEvent.serializer(), it).message }
+                ConversationCatalogEntry(row.toHeader(), preferences, ConversationActivity(
+                    im.hikaru.harness.session.defaultConversationTitle(listOfNotNull(message)), latest.updatedAt, latest.lastSeq))
+            }
+        }
+    }
+
+    override suspend fun metadata(id: SessionId): ConversationMetadata? = mutex.withLock {
+        check(!disposed)
+        database.dao.metadata(id.value)
+    }
+
+    override suspend fun updateMetadata(id: SessionId, expectedRevision: Long, title: String?, pinned: Boolean, lastReadSeq: Long): ConversationMetadata = mutex.withLock {
+        check(!disposed)
+        require(title == null || title.isNotBlank() && title.length <= 200)
+        require(lastReadSeq >= -1)
+        database.transaction {
+            check(database.dao.findSession(id.value) != null) { "Session is not durable" }
+            require(lastReadSeq < database.dao.countEvents(id.value) || lastReadSeq == -1L) { "Read position exceeds durable history" }
+            val old = database.dao.metadata(id.value) ?: ConversationMetadata(id.value)
+            check(!old.deleted) { "Conversation was deleted" }
+            check(old.revision == expectedRevision) { "Conversation changed; refresh before retrying" }
+            check(old.revision < Long.MAX_VALUE) { "Conversation revision is exhausted" }
+            old.copy(title = title, pinned = pinned, lastReadSeq = lastReadSeq, revision = old.revision + 1)
+                .also { database.dao.putMetadata(it) }
+        }
+    }
+
+    suspend fun append(header: SessionHeader, event: SessionEventEnvelope) = mutex.withLock {
+        check(!disposed)
+        database.transaction {
+            check(database.dao.metadata(header.id.value)?.deleted != true) { "Conversation was deleted" }
+            val count = database.dao.countEvents(header.id.value)
+            check(count >= event.seq) { "Durable session has an event gap" }
+            if (count == event.seq) {
+                database.dao.upsertSession(header.toRow())
+                database.dao.upsertEvents(listOf(event.toRow(header.id, json)))
+            }
+        }
+    }
 
     override suspend fun listHeaders(): List<SessionHeader> = mutex.withLock {
         val coroutineContext = currentCoroutineContext()
@@ -303,21 +411,38 @@ private class RoomSessionPersistence(
     }
 
     override suspend fun flush(session: Session) {
+        // Snapshot before taking the provider lock: append observers acquire it under the log lock.
+        val header = session.header
+        val events = session.events()
         mutex.withLock {
             check(!disposed) { "Session persistence is disposed" }
-            // Capture the event log while holding the provider lock. This
-            // prevents an older concurrent flush from publishing a stale
-            // header after a newer append has already been observed.
-            val header = session.header
-            val events = session.events()
+            // Never overwrite a newer snapshot that committed while this one waited.
             val sessionRow = header.toRow()
             val eventRows = events.map { it.toRow(session.id, json) }
             database.transaction {
+                // A newer append may have committed while this snapshot waited for the provider lock.
+                check(database.dao.metadata(session.id.value)?.deleted != true) { "Conversation was deleted" }
+                if (database.dao.countEvents(session.id.value) > eventRows.size) return@transaction
                 database.dao.upsertSession(sessionRow)
                 database.dao.deleteEventsFrom(session.id.value, eventRows.size.toLong())
                 database.dao.upsertEvents(eventRows)
             }
         }
+    }
+
+    /** Loading a durable snapshot also announces it; that announcement must not rewrite history. */
+    suspend fun checkpoint(session: Session) {
+        val size = session.events().size.toLong()
+        val saved = mutex.withLock {
+            check(!disposed)
+            check(database.dao.metadata(session.id.value)?.deleted != true) { "Conversation was deleted" }
+            val row = database.dao.findSession(session.id.value)
+            if (row == null) false else {
+                check(row.toHeader() == session.header) { "Durable session identity conflicts with live session" }
+                database.dao.countEvents(session.id.value) >= size
+            }
+        }
+        if (!saved) flush(session)
     }
 
     override suspend fun load(id: SessionId): Session {
@@ -390,6 +515,7 @@ private class RoomSessionPersistence(
     }
 
     private suspend fun readSnapshot(id: SessionId): Snapshot {
+        check(database.dao.metadata(id.value)?.deleted != true) { "Conversation was deleted" }
         val row = database.dao.findSession(id.value)
             ?: throw SessionException("Persisted Session '${id.value}' was not found", SessionErrorCode.NOT_LIVE)
         return try {

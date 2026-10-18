@@ -124,6 +124,10 @@ import im.hikaru.harness.client.connection.RemoteConnectionStatus
 import im.hikaru.harness.client.connection.RemoteDiscoveryState
 import im.hikaru.harness.client.page.SettingsConnectionsPage
 import im.hikaru.harness.client.shell.AppShell
+import im.hikaru.harness.client.shell.ConversationNavigationActions
+import im.hikaru.harness.client.shell.LocalConversationNavigationActions
+import im.hikaru.harness.client.conversation.ConversationCommand
+import kotlinx.coroutines.async
 import im.hikaru.harness.client.shell.AppShellState
 import im.hikaru.harness.client.shell.AccountMenuAction
 import im.hikaru.harness.client.shell.AccountMenuDestination
@@ -618,9 +622,22 @@ public fun HarnessApp(
     val latestVerifiedConversationConnection by rememberUpdatedState(verifiedConversationConnection)
     val currentConversationSessions = if (verifiedConversationConnection != null && conversationHost != null &&
         conversationState.host == conversationHost && conversationState.connected) conversationState.sessions else emptyList()
-    val recentTasks = currentConversationSessions.sortedWith(
-        compareByDescending<im.hikaru.harness.client.connection.SessionSummary> { it.createdAt }.thenBy { it.id.value },
-    ).map { summary -> RecentTaskItem(id = summary.id.value, title = summary.id.value) }
+    val sessionsById = currentConversationSessions.associateBy { it.id }
+    val visibleConversationSessions = currentConversationSessions.filter { !it.archived }.sortedWith(
+        compareByDescending<im.hikaru.harness.client.connection.SessionSummary> { it.pinned }
+            .thenByDescending { it.updatedAt }.thenBy { it.id.value },
+    )
+    val recentTasks = visibleConversationSessions.map { summary -> RecentTaskItem(id = summary.id.value, title = summary.title ?: summary.id.value,
+        unread = summary.unread, pinned = summary.pinned) }
+    val selectedSummary = conversationState.selectedSessionId?.let { sessionsById[it] }
+    LaunchedEffect(conversationHost, page, conversationState.historyPhase, conversationState.history.lastOrNull()?.id, conversationState.historyReadSeq) {
+        if (page is PageId.Thread && selectedSummary?.managementAvailable == true && selectedSummary.unread &&
+            page.threadId == selectedSummary.id.value && conversation.state.value.host == conversationHost &&
+            conversation.state.value.selectedSessionId == selectedSummary.id &&
+            conversationState.historyPhase == im.hikaru.harness.client.conversation.ConversationDataPhase.Ready) {
+            conversation.markRead(selectedSummary.id, conversationState.historyReadSeq)
+        }
+    }
     val modelChoices = if (transport == ConnectionTransport.Local && modelSettings.snapshot.available &&
         modelSettings.loadError == null && !modelSettings.loading) {
         modelSettings.snapshot.providers.filter { it.active }.flatMap { provider ->
@@ -874,15 +891,13 @@ public fun HarnessApp(
             // at all — the titlebar control and ⌘B flipped a mode the shell never read.
             mode = navigatorMode,
         )
-    val threadSurfaceState = threadSurface(page, recentTasks)
-    val liveProjectSessions = currentConversationSessions
+    val threadSurfaceState = threadSurface(page, (page as? PageId.Thread)?.threadId?.let { sessionsById[SessionId(it)]?.title })
     val projectNodes = localProjectsState.projects.map { project ->
         val ids = localProjectsState.snapshot?.memberships.orEmpty().filter { it.projectId == project.id }.map { it.session.id }.toSet()
-        WorkspaceProjectNode(project.id.value, project.name, children = liveProjectSessions.filter { it.id in ids }.map { summary ->
-            WorkspaceItemNode(summary.id.value, summary.cwd?.substringAfterLast('/')?.takeIf(String::isNotBlank) ?: summary.id.value)
+        WorkspaceProjectNode(project.id.value, project.name, children = visibleConversationSessions.filter { it.id in ids }.map { summary ->
+            WorkspaceItemNode(summary.id.value, summary.title ?: summary.id.value)
         })
     }
-    val visibleRecentTasks = recentTasks
     val accountMenuState =
         accountMenu.copy(
             identityLabel =
@@ -1041,6 +1056,7 @@ public fun HarnessApp(
             submitUnavailableReason = when {
                 !bound -> "正在切换会话…"
                 !paneState.connected -> "请连接可用的 Host 后发送消息。"
+                selectedSummary?.archived == true -> "此会话已归档，取消归档后可继续发送。"
                 else -> null
             },
             selectedReasoningEffort = preferences.effort,
@@ -1177,7 +1193,7 @@ public fun HarnessApp(
             },
             navigator = navigator,
             projectNodes = projectNodes,
-            recentTasks = visibleRecentTasks,
+            recentTasks = recentTasks,
             onToggleSidebar = toggleSidebar,
             onNavigatorResize = { navigatorWidth = it },
             onNewTask = { selectPage(PageId.Home) },
@@ -1320,7 +1336,7 @@ public fun HarnessApp(
                         onRefresh = { localProjects.refresh() },
                         onOpen = { selectPage(PageId.Project(it.value)) })
 
-                    is PageId.Project -> LocalProjectDetailPage(localProjectsState, LocalProjectId(current.projectId), liveProjectSessions,
+                    is PageId.Project -> LocalProjectDetailPage(localProjectsState, LocalProjectId(current.projectId), visibleConversationSessions,
                         onBindDirectory = { editingProject = it; projectEditorOpen = true },
                         onStart = { localProjects.select(it); selectPage(PageId.Home) },
                         onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
@@ -1431,10 +1447,28 @@ public fun HarnessApp(
         }
         .onPreviewKeyEvent { shortcuts.input.preview(it.toShortcutInput()) }
         .onKeyEvent { shortcuts.input.dispatch(it.toShortcutInput()) }.focusable() else Modifier.fillMaxSize()
-    CompositionLocalProvider(LocalShortcutsRepository provides shortcuts, LocalShortcutsEventRoot provides shortcuts.input) {
+    CompositionLocalProvider(LocalShortcutsRepository provides shortcuts, LocalShortcutsEventRoot provides shortcuts.input,
+        LocalConversationNavigationActions provides ConversationNavigationActions(
+            sessionsById.mapKeys { it.key.value }, conversationState.managingSessionId != null,
+            { id, command ->
+                if (conversation.state.value.host != conversationHost) null else {
+                    conversation.manage(SessionId(id), command)?.let { pending -> conversationScope.async {
+                        val applied = pending.await()
+                        if (applied && command == ConversationCommand.Delete && conversation.state.value.host == conversationHost &&
+                            (navigation.currentPage as? PageId.Thread)?.threadId == id) selectPage(PageId.Home)
+                        applied
+                    } }
+                }
+            },
+            owner = conversationHost)) {
         Box(shortcutModifier) {
             HarnessTheme(appearanceState.settings.mode.themeMode(), appearanceState.settings.themeCustomization()) {
                 UiSnapshotProvider(uiSnapshot) {
+                    conversationState.managementError?.let { message ->
+                        androidx.compose.material3.AlertDialog(onDismissRequest = conversation::dismissManagementError,
+                            title = { Text("会话操作未完成") }, text = { Text(message) },
+                            confirmButton = { Button(onClick = conversation::dismissManagementError) { Text("关闭") } })
+                    }
                     SlotOutlet(
                         key = ClientUiSlots.Root,
                         props = RootProps(render = defaultRoot),
@@ -1564,14 +1598,12 @@ private fun pageTitle(page: PageId): String =
 
 private fun threadSurface(
     page: PageId,
-    recentTasks: List<RecentTaskItem>,
+    title: String?,
 ): ThreadSurfaceState? =
     if (page is PageId.Thread) {
         ThreadSurfaceState(
             threadId = page.threadId,
-            title =
-                recentTasks.firstOrNull { it.id == page.threadId }?.title
-                    ?: pageTitle(page),
+            title = title ?: pageTitle(page),
         )
     } else {
         null

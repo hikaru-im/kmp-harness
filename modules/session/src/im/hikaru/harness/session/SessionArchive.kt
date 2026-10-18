@@ -11,6 +11,9 @@ import im.hikaru.harness.runtime.service.ServiceKey
  * does not by itself delete anything.
  */
 public interface SessionArchiveGate {
+    public val supportsManagement: Boolean get() = false
+    /** A non-null result means committed with uncertain crash durability. */
+    public suspend fun setArchived(header: SessionHeader, archived: Boolean): String? = error("Archive management is unavailable")
     /** true when this exact complete-header identity is currently archived. */
     public suspend fun isArchived(header: SessionHeader): Boolean
 }

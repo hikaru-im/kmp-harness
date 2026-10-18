@@ -29,6 +29,11 @@ public enum class HarnessIconName {
     ChevronLeft,
     ChevronRight,
     ChevronDown,
+    Rename,
+    Eye,
+    Branch,
+    Trash,
+    Section,
     Plus,
     Search,
     Settings,
@@ -315,9 +320,43 @@ private fun DrawScope.drawHarnessIcon(
             drawLine(color, Offset(min * 0.32f, min * 0.5f), Offset(min * 0.68f, min * 0.5f), stroke.width, StrokeCap.Round)
             drawLine(color, Offset(min * 0.44f, min * 0.67f), Offset(min * 0.56f, min * 0.67f), stroke.width, StrokeCap.Round)
         }
-        HarnessIconName.ChevronLeft -> drawPath(pathOf(min, 0.60f, 0.27f, 0.40f, 0.50f, 0.50f, 0.60f, 0.73f), color, style = stroke)
-        HarnessIconName.ChevronRight -> drawPath(pathOf(min, 0.40f, 0.27f, 0.60f, 0.50f, 0.50f, 0.40f, 0.73f), color, style = stroke)
+        HarnessIconName.ChevronLeft -> drawPath(pathOf(min, 0.60f, 0.27f, 0.40f, 0.50f, 0.60f, 0.73f), color, style = stroke)
+        HarnessIconName.ChevronRight -> drawPath(pathOf(min, 0.40f, 0.27f, 0.60f, 0.50f, 0.40f, 0.73f), color, style = stroke)
         HarnessIconName.ChevronDown -> drawPath(pathOf(min, 0.27f, 0.40f, 0.50f, 0.60f, 0.73f, 0.40f), color, style = stroke)
+        HarnessIconName.Rename -> {
+            drawPath(pathOf(min, .20f, .79f, .25f, .57f, .66f, .16f, .83f, .33f, .42f, .74f, .20f, .79f), color, style = stroke)
+            drawPath(pathOf(min, .58f, .24f, .75f, .41f), color, style = stroke)
+        }
+        HarnessIconName.Eye -> {
+            drawPath(Path().apply {
+                moveTo(min * .08f, min * .5f)
+                cubicTo(min * .30f, min * .12f, min * .70f, min * .12f, min * .92f, min * .5f)
+                cubicTo(min * .70f, min * .88f, min * .30f, min * .88f, min * .08f, min * .5f)
+                close()
+            }, color, style = stroke)
+            drawCircle(color, min * .13f, Offset(center, center), style = stroke)
+        }
+        HarnessIconName.Branch -> {
+            listOf(Offset(min * .28f, min * .19f), Offset(min * .28f, min * .81f), Offset(min * .76f, min * .19f)).forEach {
+                drawCircle(color, min * .10f, it, style = stroke)
+            }
+            drawLine(color, Offset(min * .28f, min * .29f), Offset(min * .28f, min * .71f), stroke.width)
+            drawPath(Path().apply {
+                moveTo(min * .28f, min * .60f)
+                cubicTo(min * .28f, min * .40f, min * .76f, min * .60f, min * .76f, min * .29f)
+            }, color, style = stroke)
+        }
+        HarnessIconName.Trash -> {
+            drawPath(pathOf(min, .17f, .28f, .83f, .28f), color, style = stroke)
+            drawPath(pathOf(min, .38f, .26f, .38f, .13f, .62f, .13f, .62f, .26f), color, style = stroke)
+            drawPath(pathOf(min, .25f, .29f, .30f, .86f, .70f, .86f, .75f, .29f), color, style = stroke)
+            drawPath(pathOf(min, .42f, .41f, .44f, .73f), color, style = stroke)
+            drawPath(pathOf(min, .58f, .41f, .56f, .73f), color, style = stroke)
+        }
+        HarnessIconName.Section -> listOf(.25f, .50f, .75f).forEach { y ->
+            drawCircle(color, min * .045f, Offset(min * .18f, min * y))
+            drawLine(color, Offset(min * .36f, min * y), Offset(min * .84f, min * y), stroke.width, StrokeCap.Round)
+        }
         HarnessIconName.Plus -> {
             // Codex's own plus: a filled outline of four 1.05-unit arms with round joins, spanning
             // 2.14..13.86 of the 16-unit grid. A fill, not two strokes, so the measured arm width

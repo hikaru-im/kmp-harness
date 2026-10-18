@@ -98,7 +98,6 @@ public fun AppShell(
     // the navigator fixed at its layout width and mounts no resize hit region.
     onNavigatorResize: ((Dp) -> Unit)? = null,
     onOpenProjectContext: ((String) -> Unit)? = null,
-    sidebarFooter: @Composable ColumnScope.() -> Unit = {},
     content: @Composable () -> Unit,
     composer: (@Composable () -> Unit)? = null,
     contextPanel: (@Composable () -> Unit)? = null,
@@ -234,7 +233,6 @@ public fun AppShell(
                                 onSelectNode = onSelectNode,
                                 onSelectRecent = onSelectRecent,
                                 onOpenProjectContext = onOpenProjectContext,
-                                sidebarFooter = sidebarFooter,
                             )
 
                         NavigatorKind.Settings ->
@@ -1182,7 +1180,6 @@ private fun WorkspaceNavigator(
     onSelectNode: (WorkspaceItemNode) -> Unit,
     onSelectRecent: (RecentTaskItem) -> Unit,
     onOpenProjectContext: ((String) -> Unit)?,
-    sidebarFooter: @Composable ColumnScope.() -> Unit,
 ) {
     val query = navigator.searchQuery.trim()
     // Codex structure: a workspace-selector header with notification/search actions, a New Chat row,
@@ -1253,10 +1250,6 @@ private fun WorkspaceNavigator(
                         )
                     }
                 }
-                if (projects.isEmpty() && visibleRecentTasks.isEmpty()) {
-                    SidebarHint(if (query.isEmpty()) "暂无项目或最近任务" else "没有匹配的项目或任务")
-                }
-                sidebarFooter()
             }
         }
     }
@@ -1746,30 +1739,33 @@ private fun RecentTaskRow(
     onClick: () -> Unit,
 ) {
     // Codex renders the 最近 rows as plain titles: no leading clock, primary text, selected fill.
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(HarnessTokens.Control.NavRow)
-                .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
-                .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
-                .clickable(onClick = onClick)
-                .semantics {
-                    role = Role.Tab
-                    testTag = "recent-" + task.id
-                }
-                .padding(start = HarnessTokens.Control.NavigatorPaddingX, end = HarnessTokens.Control.NavigatorPaddingX),
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HarnessText(
-            task.title,
-            modifier = Modifier.weight(1f),
-            color = HarnessTokens.Colors.Text,
-            maxLines = 1,
-        )
-        if (task.unread) {
-            Box(modifier = Modifier.size(6.dp).background(HarnessTokens.Colors.Accent, CircleShape))
+    ConversationContextMenu(task.id) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(HarnessTokens.Control.NavRow)
+                    .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
+                    .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .clickable(onClick = onClick)
+                    .semantics {
+                        role = Role.Tab
+                        testTag = "recent-" + task.id
+                    }
+                    .padding(start = HarnessTokens.Control.NavigatorPaddingX, end = HarnessTokens.Control.NavigatorPaddingX),
+            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (task.pinned) HarnessIcon(HarnessIconName.Pushpin, tint = HarnessTokens.Colors.TextMuted, size = 14.dp)
+            HarnessText(
+                task.title,
+                modifier = Modifier.weight(1f),
+                color = HarnessTokens.Colors.Text,
+                maxLines = 1,
+            )
+            if (task.unread) {
+                Box(modifier = Modifier.size(6.dp).background(HarnessTokens.Colors.Accent, CircleShape))
+            }
         }
     }
 }
@@ -1832,30 +1828,32 @@ private fun ProjectChildRow(
     onClick: () -> Unit,
 ) {
     // Children align under the project name (no leading glyph), the Codex tree indent.
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(HarnessTokens.Control.NavRow)
-                .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
-                .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
-                .clickable(onClick = onClick)
-                .semantics {
-                    role = Role.Tab
-                    testTag = "node-" + child.id
-                }
-                .padding(start = NavigatorTextIndent, end = HarnessTokens.Control.NavigatorPaddingX),
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HarnessText(
-            child.title,
-            modifier = Modifier.weight(1f),
-            color = HarnessTokens.Colors.Text,
-            maxLines = 1,
-        )
-        child.status?.let {
-            HarnessText(it, color = HarnessTokens.Colors.TextDisabled, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+    ConversationContextMenu(child.id) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(HarnessTokens.Control.NavRow)
+                    .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
+                    .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .clickable(onClick = onClick)
+                    .semantics {
+                        role = Role.Tab
+                        testTag = "node-" + child.id
+                    }
+                    .padding(start = NavigatorTextIndent, end = HarnessTokens.Control.NavigatorPaddingX),
+            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HarnessText(
+                child.title,
+                modifier = Modifier.weight(1f),
+                color = HarnessTokens.Colors.Text,
+                maxLines = 1,
+            )
+            child.status?.let {
+                HarnessText(it, color = HarnessTokens.Colors.TextDisabled, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            }
         }
     }
 }

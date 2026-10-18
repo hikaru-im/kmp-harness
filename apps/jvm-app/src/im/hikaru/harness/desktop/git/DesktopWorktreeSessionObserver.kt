@@ -7,6 +7,7 @@ import im.hikaru.harness.client.git.*
 import im.hikaru.harness.profile.file.ProfiledHarnessHost
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.session.SessionHeader
+import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.SESSION_FORMAT_VERSION
 import im.hikaru.harness.session.SessionKey
 import im.hikaru.harness.session.SessionArchiveAcquire
@@ -81,6 +82,11 @@ public class DesktopWorktreeSessionObserver private constructor(
                 )
             } else persisted.forEach { header ->
                 headers.getOrPut(header.id.value) { mutableListOf() }.add(header to ManagedSessionSource.Durable)
+            }
+            // Raw headers retain deleted identities to prevent reuse; they are not visible chats.
+            // Apply the same tombstone to live entries whose cleanup may not have completed.
+            for (id in headers.keys.toList()) {
+                if (durable?.metadata(SessionId(id))?.deleted == true) headers.remove(id)
             }
             currentCoroutineContext().ensureActive()
             val resolved = withContext(Dispatchers.IO) {

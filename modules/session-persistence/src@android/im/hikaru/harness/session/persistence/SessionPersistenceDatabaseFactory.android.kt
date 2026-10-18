@@ -23,7 +23,6 @@ fun androidSessionPersistenceDatabaseFactory(
                     key = key,
                     database =
                         Room.databaseBuilder<SessionPersistenceDatabase>(applicationContext, databaseName)
-                            .addMigrations(*SessionPersistenceMigrations.all)
                             .setDriver(BundledSQLiteDriver())
                             .setQueryCoroutineContext(Dispatchers.IO)
                             .build(),

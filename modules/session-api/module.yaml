@@ -10,6 +10,7 @@ dependencies:
   - ../loader
   - ../runtime
   - ../session
+  - ../session-persistence
 
 test-dependencies:
   - ../agent-loop

@@ -143,7 +143,23 @@ public data class SessionSummary(
     val createdAt: Long,
     val cwd: String? = null,
     val agentPreset: String? = null,
+    val title: String? = null,
+    val updatedAt: Long = createdAt,
+    val pinned: Boolean = false,
+    val unread: Boolean = false,
+    val archived: Boolean = false,
+    val revision: Long = 0,
+    val lastEventSeq: Long = -1,
+    val managementAvailable: Boolean = false,
+    val archiveAvailable: Boolean = false,
+    val live: Boolean = true,
+    val customTitle: String? = null,
+    val lastReadSeq: Long = -1,
 )
+
+@Serializable
+public data class ConversationUpdate(val id: SessionId, val expectedRevision: Long, val title: String?,
+    val pinned: Boolean, val lastReadSeq: Long)
 
 @Serializable
 public data class SessionPromptReceipt(
@@ -160,6 +176,9 @@ public interface SessionPrompt {
 public data class SessionPromptFailure(val code: String, val status: Int? = null)
 
 public interface SessionApi {
+    public suspend fun deleteConversation(id: SessionId, expectedRevision: Long): Unit = error("Conversation deletion is unavailable")
+    public suspend fun updateConversation(update: ConversationUpdate): SessionSummary = error("Conversation management is unavailable")
+    public suspend fun archiveConversation(id: SessionId, archived: Boolean): Unit = error("Archive management is unavailable")
     public suspend fun terminalCapability(session: SessionId): TerminalDiscoveryResult =
         TerminalDiscoveryResult.Unavailable(session, "Terminal Host service is not exposed by this connection")
 

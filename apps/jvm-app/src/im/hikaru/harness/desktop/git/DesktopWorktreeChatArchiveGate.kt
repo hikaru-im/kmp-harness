@@ -16,9 +16,21 @@ public class DesktopWorktreeChatArchiveGate(
     private val store: DesktopWorktreeChatArchiveStore,
     private val owner: ManagedWorktreeOwner,
 ) : SessionArchiveGate {
-    override suspend fun isArchived(header: SessionHeader): Boolean {
+    override val supportsManagement: Boolean = true
+    override suspend fun setArchived(header: SessionHeader, archived: Boolean): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val identity = DesktopWorktreeSessionObserver.pinKey(header)
+        val key = im.hikaru.harness.client.git.ChatArchiveKey(identity.id, identity.headerFingerprint)
+        val old = store.read(owner)
+        val keys = old.snapshot.archived
+        if ((key in keys) != archived) {
+            store.compareAndSet(old, old.snapshot.copy(revision = old.snapshot.revision + 1,
+                archived = if (archived) keys + key else keys - key))
+                .durabilityWarning
+        } else null
+    }
+    override suspend fun isArchived(header: SessionHeader): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val fingerprint = DesktopWorktreeSessionObserver.pinKey(header).headerFingerprint
-        return store.read(owner).snapshot.archived.any {
+        store.read(owner).snapshot.archived.any {
             it.id == header.id.value && it.headerFingerprint == fingerprint
         }
     }

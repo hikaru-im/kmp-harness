@@ -21,7 +21,6 @@ fun jvmSessionPersistenceDatabaseFactory(databaseFile: File): SessionPersistence
                     key = key,
                     database =
                         Room.databaseBuilder<SessionPersistenceDatabase>(key)
-                            .addMigrations(*SessionPersistenceMigrations.all)
                             .setDriver(BundledSQLiteDriver())
                             .setQueryCoroutineContext(Dispatchers.IO)
                             .build(),

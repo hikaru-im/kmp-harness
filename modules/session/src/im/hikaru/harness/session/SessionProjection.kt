@@ -2,6 +2,12 @@ package im.hikaru.harness.session
 
 import im.hikaru.harness.llm.Message
 
+/** One display-title rule shared by live and durable conversation catalogs. */
+fun defaultConversationTitle(messages: List<Message>): String? = messages
+    .firstOrNull { it.source == im.hikaru.harness.llm.UserMessageSource }?.content
+    ?.filterIsInstance<im.hikaru.harness.llm.TextBlock>()?.joinToString(" ") { it.text }
+    ?.replace(Regex("\\s+"), " ")?.trim()?.take(80)?.takeIf { it.isNotEmpty() }
+
 fun deriveMessages(events: List<SessionEventEnvelope>): List<Message> =
     events.mapNotNull { event ->
         if (event.surfaceOp != SessionSurfaceOperation.APPEND) {

@@ -87,6 +87,7 @@ class SessionStore internal constructor(
                 requireLive(session)
                 session.beginAnnounce(permit)
                 try {
+                    context.get(SessionDurabilityKey)?.checkpoint(session)
                     context.emit(
                         SessionEvents.Created,
                         SessionNotice(session),

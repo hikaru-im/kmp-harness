@@ -18,7 +18,6 @@ fun iosSessionPersistenceDatabaseFactory(databasePath: String): SessionPersisten
                     key = key,
                     database =
                         Room.databaseBuilder<SessionPersistenceDatabase>(databasePath)
-                            .addMigrations(*SessionPersistenceMigrations.all)
                             .setDriver(BundledSQLiteDriver())
                             .setQueryCoroutineContext(Dispatchers.IO)
                             .build(),
