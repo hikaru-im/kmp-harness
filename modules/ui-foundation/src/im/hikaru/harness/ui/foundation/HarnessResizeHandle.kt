@@ -24,11 +24,13 @@ public fun HarnessResizeHandle(
     modifier: Modifier = Modifier,
     description: String = "调整区域宽度",
     lineAlignment: Alignment = Alignment.Center,
+    onResizeStart: () -> Unit = {},
 ) {
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
     var dragging by remember { mutableStateOf(false) }
     val latestResize by rememberUpdatedState(onResize)
+    val latestStart by rememberUpdatedState(onResizeStart)
     val edge = HarnessTokens.Colors.ChromeSeamEdge
     val ink = HarnessTokens.Colors.ChromeSeam
     Box(
@@ -38,7 +40,7 @@ public fun HarnessResizeHandle(
             .pointerInput(Unit) {
                 try {
                     detectHorizontalDragGestures(
-                        onDragStart = { dragging = true },
+                        onDragStart = { dragging = true; latestStart() },
                         onDragEnd = { dragging = false },
                         onDragCancel = { dragging = false },
                     ) { change, amount ->
