@@ -22,48 +22,31 @@ import androidx.compose.ui.unit.dp
 import im.hikaru.harness.ui.foundation.HarnessTokens
 import im.hikaru.harness.ui.foundation.HarnessTooltip
 
-/** Live Codex conversation measurements, 2026-10-17; isolated from the window chrome palette. */
+/** Conversation roles adapt the shared palette so appearance edits reach every work surface. */
 internal object ConversationAppearance {
     val dark: Boolean @Composable get() = HarnessTokens.Colors.Canvas.luminance() < 0.5f
-    val canvas: Color @Composable get() = if (dark) Color(0xFF181818) else Color.White
-    val ink: Color @Composable get() = if (dark) Color.White else Color(0xFF0D0D0D)
-    val muted: Color @Composable get() = ink.copy(alpha = 0.6f)
-    val tertiary: Color @Composable get() = ink.copy(alpha = 0.498f)
-    val userBackground: Color @Composable get() = if (dark) Color(0xFF173E76) else Color(0xFFE8F3FE)
-    val userInk: Color @Composable get() = if (dark) Color(0xFFF6FAFE) else Color(0xFF0C274A)
-    val composer: Color @Composable get() = if (dark) Color(0xFF363636) else Color.White
-    /** Live composer root carries `rgba(255,255,255,.2) 0 0 1px 0 inset`, approximated as a hairline ring. */
-    val composerGlow: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.2f) else Color(0xFF1A1C1F).copy(alpha = 0.08f)
-    /** Live popover ring: `rgba(255,255,255,.082) 0 0 0 0.5px` in dark (light mode not measured). */
-    val popupRing: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.082f) else Color(0xFF1A1C1F).copy(alpha = 0.08f)
-    val primary: Color @Composable get() = if (dark) Color(0xFF2C67C5) else Color(0xFF3A83F7)
-    /** Live effort readout in the model popup: `text-composer-primary` rgb(58,131,247) in dark as well. */
-    val effort: Color @Composable get() = Color(0xFF3A83F7)
-    /** `data-maximum` repaints the effort readout with `--color-chart-purple` (dark accent #c8a4fb). */
+    val canvas: Color @Composable get() = HarnessTokens.Colors.WorkspaceBackground
+    val ink: Color @Composable get() = HarnessTokens.Colors.Text
+    val muted: Color @Composable get() = HarnessTokens.Colors.TextMuted
+    val tertiary: Color @Composable get() = HarnessTokens.Colors.TextSecondary
+    val userBackground: Color @Composable get() = HarnessTokens.Colors.UserMessageBackground
+    val userInk: Color @Composable get() = ink
+    val composer: Color @Composable get() = canvas
+    val composerGlow: Color @Composable get() = HarnessTokens.Colors.BorderSubtle
+    val popupRing: Color @Composable get() = HarnessTokens.Colors.SurfaceRingStrong
+    val primary: Color @Composable get() = HarnessTokens.Colors.Accent
+    val onPrimary: Color @Composable get() = HarnessTokens.Colors.OnAccent
+    val effort: Color @Composable get() = primary
     val effortMaximum: Color @Composable get() = if (dark) Color(0xFFC8A4FB) else Color(0xFF7E14D0)
-    val codeBackground: Color @Composable get() = if (dark) Color(0xFF2B2B2B) else Color(0xFFF9F9F9)
-    /** Menu surface measured at rgb(43,43,43) over the page (the live layer is a 90% tint plus blur). */
-    val popup: Color @Composable get() = if (dark) Color(0xFF2B2B2B) else Color.White
-    /** Effort track: live `color(srgb 1 1 1 / 0.1)` under a rgb(58,130,247) fill and a 28px knob. */
-    val sliderTrack: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.1f) else Color(0xFFE4E4E4)
-    /** Popup model name: `color(srgb 1 1 1 / 0.65)`. */
-    val popupModel: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.65f) else Color(0xFF0D0D0D).copy(alpha = 0.65f)
-    /**
-     * Composer rail strip above the home editor: measured rgb(40,40,40) in dark. Light mode was not
-     * measured (the live app only runs dark here); #F4F4F4 is the neutral step above the white card.
-     */
-    val railSurface: Color @Composable get() = if (dark) Color(0xFF282828) else Color(0xFFF4F4F4)
-    /** Rail chip hover and selected menu row: `color(srgb 1 1 1 / 0.08)` in dark, 8% ink in light. */
-    val railHover: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.08f) else Color(0xFF1A1C1F).copy(alpha = 0.08f)
-    /** Menu divider inside the project popup: 1px `color(srgb 1 1 1 / 0.082)`. */
+    val codeBackground: Color @Composable get() = HarnessTokens.Colors.CodeBackground
+    val popup: Color @Composable get() = HarnessTokens.Colors.OverlayBackground
+    val sliderTrack: Color @Composable get() = HarnessTokens.Colors.PressedBackground
+    val popupModel: Color @Composable get() = HarnessTokens.Colors.TextSecondary
+    val railSurface: Color @Composable get() = HarnessTokens.Colors.SurfaceSecondary
+    val railHover: Color @Composable get() = HarnessTokens.Colors.HoverBackground
     val railDivider: Color @Composable get() = popupRing
 
-    /**
-     * Live Codex `--color-border-strong` = `--app-color-border-heavy`: dark is
-     * `color-mix(in oklab, #fff 16%, transparent)`, measured in the running app as `rgba(255,255,255,0.156)`;
-     * light is declared as `color-mix(in oklab, #1a1c1f 12%, transparent)` (stylesheet value, not pixel-measured).
-     */
-    val ringStrong: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.157f) else Color(0xFF1A1C1F).copy(alpha = 0.12f)
+    val ringStrong: Color @Composable get() = HarnessTokens.Colors.BorderStrong
 }
 
 internal enum class ConversationGlyph { Plus, Permissions, Microphone, Voice, Copy, Speaker, Feedback, Branch, Down, Up, Stop, Chevron, ActivityChevron, Code, Expand, Hand, ShieldCheck, ShieldAlert, SendArrow, ModelChevron, ChevronRightSmall, Check, Reset, Folder, Monitor, Search, Gear, PlusLarge, CrossLarge, CheckSmall, CircleX }
@@ -83,7 +66,7 @@ internal fun ConversationActionButton(
     HarnessTooltip(label, hovered) {
         Box(
             modifier.size(size).background(
-                if (hovered) ConversationAppearance.ink.copy(alpha = 0.08f) else Color.Transparent,
+                if (hovered && onClick != null) HarnessTokens.Colors.HoverBackground else Color.Transparent,
                 RoundedCornerShape(10.dp),
             ).hoverable(interactions).then(if (onClick == null) Modifier.semantics {
                 role = Role.Button; disabled(); contentDescription = label

@@ -187,7 +187,7 @@ private fun ConversationMarkdownBlocks(
 
 @Composable
 private fun conversationMarkdownBodyStyle(): TextStyle =
-    LocalHarnessContentTextStyle.current.copy(fontSize = 14.sp, lineHeight = 22.75.sp,
+    LocalHarnessContentTextStyle.current.copy(
         lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
             androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.None))
 
@@ -199,7 +199,7 @@ private fun ConversationMarkdownText(
     val uriHandler = LocalUriHandler.current
     val code = LocalHarnessCodeTextStyle.current
     val codeBackground = ConversationAppearance.codeBackground
-    val linkColor = if (ConversationAppearance.dark) Color(0xFF8AB4F8) else Color(0xFF145BC7)
+    val linkColor = ConversationAppearance.primary
     val annotated = remember(nodes, document, code, codeBackground, linkColor, uriHandler) {
         val rendering = ConversationInlineRendering(
             SpanStyle(
@@ -222,11 +222,9 @@ private fun ConversationMarkdownText(
 private fun ConversationMarkdownCode(node: ASTNode, document: ConversationMarkdownDocument) {
     val clipboard = LocalClipboardManager.current
     val (language, code) = remember(node, document) { conversationCodeContent(node, document) }
-    val dark = ConversationAppearance.dark
     val shape = RoundedCornerShape(20.dp)
-    // #181818 with a white 8% overlay rounds to #2b2b2b.
-    val background = if (dark) Color(0xFF2B2B2B) else ConversationAppearance.codeBackground
-    val border = if (dark) Color.White.copy(alpha = 0.043f) else Color.Black.copy(alpha = 0.07f)
+    val background = ConversationAppearance.codeBackground
+    val border = ConversationAppearance.popupRing
     Column(Modifier.fillMaxWidth().padding(vertical = 17.5.dp).clip(shape).background(background).border(1.dp, border, shape)) {
         DisableSelection {
             Row(

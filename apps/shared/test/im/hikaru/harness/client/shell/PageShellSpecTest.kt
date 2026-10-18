@@ -44,11 +44,11 @@ class PageShellSpecTest {
     }
 
     @Test
-    fun onlyTheWorkspaceNavigatorIsResizable() {
+    fun everyMountedNavigatorIsResizable() {
         assertTrue(pageShellSpec(PageId.Thread("thread-1")).resizable)
-        assertFalse(pageShellSpec(PageId.Settings()).resizable)
-        assertFalse(pageShellSpec(PageId.Plugins).resizable)
-        assertFalse(pageShellSpec(PageId.ScheduledTasks()).resizable)
+        assertTrue(pageShellSpec(PageId.Settings()).resizable)
+        assertTrue(pageShellSpec(PageId.Plugins).resizable)
+        assertTrue(pageShellSpec(PageId.ScheduledTasks()).resizable)
         assertFalse(pageShellSpec(PageId.Account).resizable)
     }
 

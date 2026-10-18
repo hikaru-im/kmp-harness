@@ -31,6 +31,30 @@ import kotlin.test.*
  */
 @OptIn(ExperimentalTestApi::class)
 class HarnessTabsInteractionTest {
+    @Test fun sharedResizeFeedbackFollowsThemeAndReturnsToIdle() {
+        listOf(HarnessThemeMode.Light, HarnessThemeMode.Dark).forEach { mode ->
+            runSkikoComposeUiTest(size = Size(240f, 160f)) {
+                var movement = 0f
+                setContent {
+                    HarnessTheme(themeMode = mode) {
+                        Box(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas).testTag("resize-root")) {
+                            HarnessResizeHandle(onResize = { movement += it }, modifier = Modifier.testTag("resize-handle"))
+                        }
+                    }
+                }
+                val line = onNodeWithTag("resize-handle").fetchSemanticsNode().boundsInRoot.center
+                fun brightness() = onNodeWithTag("resize-root").captureToImage().lumaAt(line.x.toInt(), line.y.toInt())
+                val idle = brightness()
+                onNodeWithTag("resize-handle").performMouseInput { moveTo(center) }
+                val active = brightness()
+                if (mode == HarnessThemeMode.Dark) assertTrue(active > idle) else assertTrue(active < idle)
+                runOnIdle { assertEquals(0f, movement, "hover does not resize") }
+                onNodeWithTag("resize-root").performMouseInput { moveTo(Offset(200f, 80f)) }
+                assertEquals(idle, brightness(), "leaving the handle restores the idle line")
+            }
+        }
+    }
+
     @Test fun windowsNavigationLivesAboveDockAndIsNotDuplicated() = runSkikoComposeUiTest(size = Size(1200f, 600f)) {
         val state = HarnessTabStripState(HarnessFixtureTabs, HarnessFixtureTabs.first().id)
         val drag = HarnessTabDragState()

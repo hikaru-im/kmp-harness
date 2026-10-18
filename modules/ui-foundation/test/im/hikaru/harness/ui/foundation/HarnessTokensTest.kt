@@ -56,6 +56,6 @@ class HarnessTokensTest {
         assertEquals(Color(0xFFFFFFFF), HarnessLightColors.Canvas)
         assertEquals(Color(0xFF0D0D0D), HarnessLightColors.Text)
         assertEquals(Color(0xFF5D5D5D), HarnessLightColors.TextMuted)
-        assertEquals(Color(0xFF171717), HarnessDarkColors.Canvas)
+        assertEquals(Color(0xFF191A1C), HarnessDarkColors.Canvas)
     }
 }

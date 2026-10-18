@@ -19,14 +19,17 @@ class HarnessComponentModelsTest {
     }
 
     @Test
-    fun selectedAndPressedGhostButtonsUseTheActivePalette() {
+    fun selectedHoveredAndPressedGhostButtonsRemainDistinct() {
         listOf(HarnessLightColors, HarnessDarkColors).forEach { colors ->
             val ordinary = harnessActionColors(colors, HarnessButtonState(), HarnessButtonVariant.Ghost, false)
             assertEquals(Color.Transparent, ordinary.background)
             val selected = harnessActionColors(colors, HarnessButtonState(selected = true), HarnessButtonVariant.Ghost, false)
-            val pressed = harnessActionColors(colors, HarnessButtonState(), HarnessButtonVariant.Ghost, true)
+            val hovered = harnessActionColors(colors, HarnessButtonState(), HarnessButtonVariant.Ghost, true)
+            val pressed = harnessActionColors(colors, HarnessButtonState(), HarnessButtonVariant.Ghost, true, pressed = true)
             assertEquals(colors.SurfaceSelected, selected.background)
-            assertEquals(selected, pressed)
+            assertEquals(colors.HoverBackground, hovered.background)
+            assertEquals(colors.PressedBackground, pressed.background)
+            assertTrue(setOf(selected.background, hovered.background, pressed.background).size == 3)
             assertEquals(colors.Danger, harnessActionColors(colors, HarnessButtonState(), HarnessButtonVariant.Destructive, false).background)
             val failed = harnessActionColors(colors, HarnessButtonState(control = HarnessControlState.Error), HarnessButtonVariant.Secondary, false)
             assertEquals(colors.Danger, failed.border)

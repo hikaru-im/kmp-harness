@@ -264,12 +264,11 @@ internal fun ConversationComposerToolbar(
                     enabled = if (stop) state.canCancel else if (voice) false else canSend, loading = busy,
                     onClick = { if (stop && state.canCancel) onCancel() else if (!busy && !voice && canSend) onSubmit() },
                     testTag = if (stop) "live-composer-stop" else if (busy) "live-composer-busy" else "live-composer-send",
-                    // Measured primary: #2C67C5 in dark, #3A83F7 in light, white glyph.
-                    containerColor = ConversationAppearance.primary, contentColor = Color.White,
+                    containerColor = ConversationAppearance.primary, contentColor = ConversationAppearance.onPrimary,
                     forceActive = voice,
                     content = { if (!busy) ConversationIcon(
                         when { stop -> ConversationGlyph.Stop; voice -> ConversationGlyph.Voice; else -> ConversationGlyph.SendArrow },
-                        Color.White,
+                        ConversationAppearance.onPrimary,
                         16.dp) })
             }
         }

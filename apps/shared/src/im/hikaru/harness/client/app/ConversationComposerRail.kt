@@ -10,6 +10,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -385,4 +386,4 @@ private fun RailLabel(text: String, color: Color = ConversationAppearance.ink, m
 }
 
 @Composable
-private fun railTextStyle(color: Color): TextStyle = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, color = color)
+private fun railTextStyle(color: Color): TextStyle = MaterialTheme.typography.bodyMedium.copy(color = color)
