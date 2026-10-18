@@ -1,6 +1,8 @@
 package im.hikaru.harness.llm.koog.openai.semantics
 
 import im.hikaru.harness.llm.koog.KoogProviderSemantics
+import im.hikaru.harness.llm.koog.DefaultKoogToolStreamMapper
+import im.hikaru.harness.llm.koog.DefaultKoogContentMessageMapper
 import im.hikaru.harness.llm.koog.openai.chat.OpenAiChatFinishReasonMapper
 import im.hikaru.harness.llm.koog.openai.chat.OpenAiChatOptionMapper
 import im.hikaru.harness.llm.koog.openai.chat.OpenAiChatToolCallTerminalPolicy
@@ -22,14 +24,18 @@ public object OpenAiKoogSemantics {
             KoogProviderSemantics(
                 provider = OpenAiChatOptionMapper.OPENAI_CHAT_COMPLETIONS_API_ID,
                 optionMapper = OpenAiChatOptionMapper(),
+                messageMapper = DefaultKoogContentMessageMapper(supportsReasoning = true),
+                toolMapper = OpenAiToolMapper(),
                 usageMapper = OpenAiChatUsageMapper(),
                 finishReasonMapper = OpenAiChatFinishReasonMapper(),
                 toolCallTerminalPolicy = OpenAiChatToolCallTerminalPolicy(),
+                toolStreamMapper = DefaultKoogToolStreamMapper(independentIndices = true),
                 failureClassifier = OpenAiFailureClassifier(),
             ),
             KoogProviderSemantics(
                 provider = OpenAiResponsesOptionMapper.OPENAI_RESPONSES_API_ID,
                 optionMapper = OpenAiResponsesOptionMapper(),
+                toolMapper = OpenAiToolMapper(),
                 usageMapper = OpenAiChatUsageMapper(),
                 finishReasonMapper = OpenAiResponsesFinishReasonMapper(),
                 replayRestorer = OpenAiResponsesReplayRestorer(),

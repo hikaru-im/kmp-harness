@@ -343,6 +343,9 @@ private class LocalSessionPrompt(
         )
 
     override suspend fun awaitIdle() = delegate.awaitIdle()
+
+    override suspend fun failure(): im.hikaru.harness.client.connection.SessionPromptFailure? =
+        delegate.failure()?.let { im.hikaru.harness.client.connection.SessionPromptFailure(it.code, it.status) }
 }
 
 /** Stable local transport failure; it intentionally excludes endpoint payloads and credentials. */

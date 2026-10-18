@@ -154,7 +154,10 @@ public data class SessionPromptReceipt(
 public interface SessionPrompt {
     public val receipt: SessionPromptReceipt
     public suspend fun awaitIdle()
+    public suspend fun failure(): SessionPromptFailure? = null
 }
+
+public data class SessionPromptFailure(val code: String, val status: Int? = null)
 
 public interface SessionApi {
     public suspend fun terminalCapability(session: SessionId): TerminalDiscoveryResult =

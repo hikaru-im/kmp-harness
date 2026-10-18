@@ -42,6 +42,9 @@ internal class KoogStreamMapper(
                 frames.transformWhile { frame ->
                     when (frame) {
                         is StreamFrame.TextDelta -> {
+                            // Chat-compatible endpoints can attach empty content to role/terminal
+                            // frames while reasoning or a tool call owns the same choice index.
+                            if (frame.text.isEmpty()) return@transformWhile true
                             val (completedReasoning, block) =
                                 state.openAfterReasoning(
                                     providerIndex = frame.index,

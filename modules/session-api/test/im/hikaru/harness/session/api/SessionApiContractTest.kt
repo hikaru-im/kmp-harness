@@ -21,8 +21,41 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import im.hikaru.harness.llm.ErrorFinishReason
+import im.hikaru.harness.llm.LlmFailure
 
 class SessionApiContractTest {
+    @Test
+    fun failureBelongsToThePromptTurnAndDoesNotExposeProviderMessage() = runTest {
+        val runtime = Runtime()
+        try {
+            runtime.install(SessionPlugin())
+            runtime.install(LlmPlugin())
+            runtime.install(AgentPlugin())
+            var calls = 0
+            runtime.context.llm.registerAdapter(listOf("scripted"), object : LlmAdapter {
+                override fun stream(options: im.hikaru.harness.llm.GenerateOptions): Flow<StreamChunk> =
+                    if (++calls == 1) flowOf(FinishChunk(ErrorFinishReason(LlmFailure(
+                        "private provider response", "KOOG_UNSUPPORTED_TOOL_SCHEMA", status = 400,
+                    )))) else flowOf(BlockStartChunk(0, "text"), TextDeltaChunk(0, "ok"), FinishChunk(StopFinishReason))
+            })
+            runtime.install(AgentLoopPlugin())
+            runtime.install(SessionApiPlugin())
+            val api = runtime.context.sessionApi
+            val session = api.create(agentOptions = AgentOptions(provider = "scripted", model = "test"))
+            val first = api.prompt(session.id, createUserMessage(listOf(TextBlock("first"))))
+            first.awaitIdle()
+            assertEquals(SessionPromptFailure("KOOG_UNSUPPORTED_TOOL_SCHEMA", 400), first.failure())
+            val second = api.prompt(session.id, createUserMessage(listOf(TextBlock("second"))))
+            second.awaitIdle()
+            assertNull(second.failure())
+            assertEquals(SessionPromptFailure("KOOG_UNSUPPORTED_TOOL_SCHEMA", 400), first.failure())
+        } finally {
+            runtime.context.dispose()
+        }
+    }
+
     @Test
     fun createPromptHistoryAndCancelUseSessionLog() = runTest {
         val runtime = Runtime()

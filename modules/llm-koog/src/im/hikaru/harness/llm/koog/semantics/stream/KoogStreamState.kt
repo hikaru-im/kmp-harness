@@ -13,6 +13,7 @@ import im.hikaru.harness.llm.ToolCallBlock
 class KoogStreamState {
     private val explicitBlocksByProviderIndex =
         linkedMapOf<Int, KoogStreamBlockState>()
+    private val independentToolBlocks = linkedMapOf<Int, KoogStreamBlockState>()
     private val currentImplicitBlockByType =
         mutableMapOf<KoogStreamBlockType, KoogStreamBlockState>()
     private val blocksInOutputOrder =
@@ -86,6 +87,27 @@ class KoogStreamState {
         val next = createBlock(providerIndex, type)
         explicitBlocksByProviderIndex[providerIndex] = next
         return listOf(end) to next
+    }
+
+    /** Chat choice indices and tool-call indices are separate protocol namespaces. */
+    internal fun openIndependentToolCall(providerIndex: Int?): Pair<List<StreamChunk>, KoogStreamBlockState> {
+        ensureActive()
+        if (providerIndex != null && providerIndex < 0) invalidState("Provider tool index must not be negative")
+        if (providerIndex == null && independentToolBlocks.values.any { !it.completed }) {
+            invalidState("Provider tool frame omitted its index while indexed tool calls remain open")
+        }
+        if (providerIndex != null && currentImplicitBlockByType[KoogStreamBlockType.TOOL_CALL]?.completed == false) {
+            invalidState("Provider tool block changed from a missing index to an explicit index before completion")
+        }
+        val completedReasoning = blocksInOutputOrder.filter {
+            it.type == KoogStreamBlockType.REASONING && !it.completed
+        }.map { block ->
+            block.complete()
+            BlockEndChunk(block.outputIndex, ReasoningBlock(block.text))
+        }
+        val block = if (providerIndex == null) open(null, KoogStreamBlockType.TOOL_CALL)
+        else independentToolBlocks.getOrPut(providerIndex) { createBlock(providerIndex, KoogStreamBlockType.TOOL_CALL) }
+        return completedReasoning to block
     }
 
     private fun openImplicit(type: KoogStreamBlockType): KoogStreamBlockState {

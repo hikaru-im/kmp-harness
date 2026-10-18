@@ -10,6 +10,11 @@ import im.hikaru.harness.session.CreateSessionOptions
 import im.hikaru.harness.session.Session
 import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.sessions
+import im.hikaru.harness.session.SessionEventNames
+import im.hikaru.harness.session.UserMessageEvent
+import im.hikaru.harness.session.TurnEndEvent
+import im.hikaru.harness.session.ErrorTurnEndReason
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -98,7 +103,11 @@ interface SessionApi {
 interface SessionPrompt {
     val receipt: SessionPromptReceipt
     suspend fun awaitIdle()
+    /** Recorded failure of this prompt's turn; does not expose Provider response bodies. */
+    suspend fun failure(): SessionPromptFailure? = null
 }
+
+data class SessionPromptFailure(val code: String, val status: Int? = null)
 
 internal class DefaultSessionApi(
     private val context: Context,
@@ -184,6 +193,8 @@ internal class DefaultSessionApi(
         return DefaultSessionPrompt(
             receipt = SessionPromptReceipt(id, messageId),
             await = agent::awaitIdle,
+            session = agent.session,
+            originalMessageId = message.id.value,
         )
     }
 
@@ -207,6 +218,21 @@ internal class DefaultSessionApi(
 private class DefaultSessionPrompt(
     override val receipt: SessionPromptReceipt,
     private val await: suspend () -> Unit,
+    private val session: Session,
+    private val originalMessageId: String,
 ) : SessionPrompt {
     override suspend fun awaitIdle() = await()
+
+    override suspend fun failure(): SessionPromptFailure? {
+        val events = session.events()
+        val turn = events.asSequence().filter { it.type == SessionEventNames.USER_MESSAGE }
+            .map { Json.decodeFromJsonElement(UserMessageEvent.serializer(), it.data) }
+            .firstOrNull { it.message.id.value == originalMessageId }?.turn ?: return null
+        val end = events.asReversed().firstOrNull {
+            it.type == SessionEventNames.TURN_END &&
+                Json.decodeFromJsonElement(TurnEndEvent.serializer(), it.data).turn == turn
+        } ?: return null
+        val reason = Json.decodeFromJsonElement(TurnEndEvent.serializer(), end.data).reason
+        return (reason as? ErrorTurnEndReason)?.failure?.let { SessionPromptFailure(it.code, it.status) }
+    }
 }

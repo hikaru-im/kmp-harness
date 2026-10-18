@@ -8,13 +8,15 @@ import im.hikaru.harness.llm.LlmException
 import im.hikaru.harness.llm.Message as HarnessMessage
 import im.hikaru.harness.llm.MessageRole
 import im.hikaru.harness.llm.TextBlock
+import im.hikaru.harness.llm.ReasoningBlock
 import im.hikaru.harness.llm.ToolCallBlock
 import im.hikaru.harness.llm.ToolResultBlock
 import im.hikaru.harness.llm.type
 
 /** Provider-neutral mapping for text, tool-call, and tool-result history. */
-internal class DefaultKoogContentMessageMapper(
+class DefaultKoogContentMessageMapper(
     private val textMapper: KoogMessageMapper = TextOnlyKoogMessageMapper(),
+    private val supportsReasoning: Boolean = false,
 ) : KoogMessageMapper {
     override fun map(
         message: HarnessMessage,
@@ -24,7 +26,7 @@ internal class DefaultKoogContentMessageMapper(
         val hasToolResult = message.content.any { block -> block is ToolResultBlock }
         return when {
             hasToolResult -> mapToolResult(message, context)
-            hasToolCall -> mapAssistantToolCalls(message)
+            hasToolCall || (supportsReasoning && message.role == MessageRole.ASSISTANT) -> mapAssistantToolCalls(message)
             else -> textMapper.map(message, context)
         }
     }
@@ -38,6 +40,8 @@ internal class DefaultKoogContentMessageMapper(
             message.content.map { block ->
                 when (block) {
                     is TextBlock -> MessagePart.Text(block.text)
+                    is ReasoningBlock -> if (supportsReasoning) MessagePart.Reasoning(block.text)
+                        else unsupportedToolMessageContent(block.type)
                     is ToolCallBlock -> {
                         if (block.name.isBlank()) {
                             invalidToolHistory(
