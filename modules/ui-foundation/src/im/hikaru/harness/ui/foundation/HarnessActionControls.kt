@@ -55,13 +55,24 @@ internal fun harnessActionColors(
     state: HarnessButtonState,
     variant: HarnessButtonVariant,
     emphasized: Boolean,
+    pressed: Boolean = false,
 ): HarnessActionColors {
     if (!state.enabled) return HarnessActionColors(colors.SurfaceSecondary, colors.TextDisabled, Color.Transparent)
     val background = when (variant) {
         HarnessButtonVariant.Primary -> if (emphasized || state.selected) colors.AccentStrong else colors.Accent
         HarnessButtonVariant.Destructive -> if (emphasized || state.selected) colors.Danger.copy(alpha = .85f) else colors.Danger
-        HarnessButtonVariant.Secondary -> if (emphasized || state.selected) colors.SurfaceSelected else colors.SurfaceSecondary
-        HarnessButtonVariant.Ghost -> if (emphasized || state.selected) colors.SurfaceSelected else Color.Transparent
+        HarnessButtonVariant.Secondary -> when {
+            state.selected -> colors.SurfaceSelected
+            pressed -> colors.PressedBackground
+            emphasized -> colors.HoverBackground
+            else -> colors.SurfaceSecondary
+        }
+        HarnessButtonVariant.Ghost -> when {
+            state.selected -> colors.SurfaceSelected
+            pressed -> colors.PressedBackground
+            emphasized -> colors.HoverBackground
+            else -> Color.Transparent
+        }
     }
     val foreground = when {
         variant == HarnessButtonVariant.Primary || variant == HarnessButtonVariant.Destructive -> colors.OnAccent
@@ -87,7 +98,8 @@ internal fun HarnessActionSurface(
     val pressed by source.collectIsPressedAsState()
     val hovered by source.collectIsHoveredAsState()
     val focused by source.collectIsFocusedAsState()
-    val colors = harnessActionColors(HarnessTokens.Colors, state.copy(selected = state.selected || highlighted), variant, state.interactive && (pressed || hovered))
+    val colors = harnessActionColors(HarnessTokens.Colors, state.copy(selected = state.selected || highlighted), variant,
+        state.interactive && (pressed || hovered), pressed = state.interactive && pressed)
     val shape = RoundedCornerShape(radius)
     Box(
         modifier = modifier
@@ -175,7 +187,8 @@ public fun HarnessSelectTrigger(
     val colors = HarnessTokens.Colors
     val background = when {
         !active -> colors.SurfaceSecondary
-        pressed || hovered -> colors.SurfaceSelected
+        pressed -> colors.PressedBackground
+        hovered -> colors.HoverBackground
         else -> colors.SurfaceElevated
     }
     val foreground = if (active) colors.Text else colors.TextDisabled

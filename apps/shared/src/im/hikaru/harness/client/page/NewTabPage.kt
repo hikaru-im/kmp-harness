@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +50,7 @@ import im.hikaru.harness.ui.foundation.HarnessIcon
 import im.hikaru.harness.ui.foundation.HarnessIconName
 import im.hikaru.harness.ui.foundation.HarnessText
 import im.hikaru.harness.ui.foundation.HarnessTokens
+import im.hikaru.harness.ui.foundation.harnessPointer
 
 /**
  * One 工具 card of the new-tab page: its Codex label, the keyboard chord the reference prints in the
@@ -107,13 +110,13 @@ public fun NewTabPage(
     onOpenTool: (NewTabTool) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas)) {
+    Column(modifier.fillMaxSize().background(HarnessTokens.Colors.WorkspaceBackground)) {
         BrowserToolbar()
         Column(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .background(HarnessTokens.Colors.SurfaceCanvas)
+                    .background(HarnessTokens.Colors.WorkspaceBackground)
                     .verticalScroll(rememberScrollState())
                     .padding(
                         horizontal = HarnessTokens.Control.BrowserPagePaddingX,
@@ -148,7 +151,7 @@ private fun BrowserToolbar() {
             Modifier
                 .fillMaxWidth()
                 .height(HarnessTokens.Control.BrowserToolbar)
-                .background(HarnessTokens.Colors.Canvas)
+                .background(HarnessTokens.Colors.WorkspaceBackground)
                 .drawBehind {
                     val thickness = 1.dp.toPx()
                     drawRect(
@@ -328,14 +331,23 @@ private fun RowScope.ToolCell(tool: NewTabTool, onOpenTool: (NewTabTool) -> Unit
     val colors = HarnessTokens.Colors
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
+    val focused by source.collectIsFocusedAsState()
+    val pressed by source.collectIsPressedAsState()
+    val shape = RoundedCornerShape(HarnessTokens.Corners.Control)
     Row(
         modifier =
             Modifier
                 .weight(1f)
                 .height(HarnessTokens.Control.BrowserToolRow)
-                .clip(RoundedCornerShape(HarnessTokens.Corners.Control))
-                .background(colors.SurfaceElevated)
-                .background(if (hovered && tool.opens) colors.ChromeFill else Color.Transparent)
+                .clip(shape)
+                .background(colors.OverlayBackground)
+                .background(when {
+                    pressed && tool.opens -> colors.PressedBackground
+                    hovered && tool.opens -> colors.HoverBackground
+                    else -> Color.Transparent
+                })
+                .border(if (focused && tool.opens) 2.dp else 1.dp,
+                    if (focused && tool.opens) colors.BorderFocused else colors.BorderSubtle, shape)
                 .hoverable(source, enabled = tool.opens)
                 .alpha(if (tool.opens) 1f else DisabledAlpha)
                 .padding(
@@ -353,10 +365,11 @@ private fun RowScope.ToolCell(tool: NewTabTool, onOpenTool: (NewTabTool) -> Unit
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .harnessPointer(tool.opens)
                     .clickable(
                         enabled = tool.opens,
                         indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
+                        interactionSource = source,
                     ) { onOpenTool(tool) }
                     .padding(
                         horizontal = HarnessTokens.Control.BrowserToolCardPaddingX,

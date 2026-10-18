@@ -163,9 +163,7 @@ public fun HarnessTabStrip(
     val panes = with(density) { region.width.toDp() }
     val seam = HarnessTokens.Control.SplitSeamWidth
     CompositionLocalProvider(LocalTabClientRegion provides clientRegion) {
-        // The band is the app background, as measured on the live bar (`rgb(246,246,246)`, the same
-        // F6F6F6 the shell paints around the page card): the strip is not the white page surface, so it
-        // paints the background itself instead of letting whatever is composed under it show through.
+        // The title bar owns the shell background; this framework only lays out its controls.
         Row(
             modifier.fillMaxWidth().height(HarnessTokens.Control.Titlebar)
                 // Read the strip's own origin rather than trusting the constant: the native inset the
@@ -177,7 +175,6 @@ public fun HarnessTabStrip(
                         measuredOrigin = measured
                     }
                 }
-                .background(HarnessTokens.Colors.AppBackground)
                 .testTag("harness-tab-strip"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -268,7 +265,7 @@ internal fun HarnessPaneHeader(
     if (!panel && title == null) return
     Row(
         Modifier.fillMaxWidth().height(HarnessTokens.Control.Titlebar)
-            .background(HarnessTokens.Colors.AppBackground).testTag("harness-pane-header"),
+            .background(HarnessTokens.Colors.WorkspaceBackground).testTag("harness-pane-header"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PaneSegment(state, drag, Modifier.weight(1f), title, null,

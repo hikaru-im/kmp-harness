@@ -9,3 +9,9 @@ from the Session event log and prompt/cancel operate on the owning Agent.
 and optional HTTP status. Provider response bodies are not exposed. The Desktop
 conversation controller displays this failure instead of silently treating idle as
 success; Relay still exposes delivery acknowledgement only.
+
+`SessionPrompt.awaitIdle()` remains synchronization only. Local callers can then read
+`failure()` for the original message's recorded turn, including its stable error code
+and optional HTTP status. Provider response bodies are not exposed. The Desktop
+conversation controller displays this failure instead of silently treating idle as
+success; Relay still exposes delivery acknowledgement only.

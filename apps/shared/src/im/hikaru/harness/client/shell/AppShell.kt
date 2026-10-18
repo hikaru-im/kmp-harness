@@ -119,7 +119,7 @@ public fun AppShell(
 ) {
     HarnessTheme(themeMode = themeMode) {
         BoxWithConstraints(
-            modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.AppBackground),
+            modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.ShellBackground),
         ) {
             // Window-rect of the 探索 item, so the popup can anchor beside it.
             var exploreAnchor by remember { mutableStateOf(ExploreMenuAnchor(0, 0)) }
@@ -366,7 +366,7 @@ public fun AppShell(
                         ) {
                             Row(modifier = Modifier.fillMaxSize()) {
                                 if (layout == NavigatorLayout.Pushed) {
-                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigatorSurface)) {
+                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigationBackground)) {
                                         navigatorContent(spec.navigator, drawerWidth, true)
                                     }
                                 }
@@ -456,7 +456,7 @@ public fun AppShell(
                                             .shadow(8.dp)
                                             .semantics { testTag = "navigator-overlay" },
                                 ) {
-                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigatorSurface)) {
+                                    Box(Modifier.fillMaxHeight().background(HarnessTokens.Colors.NavigationBackground)) {
                                         navigatorContent(spec.navigator, drawerWidth, true)
                                     }
                                 }
@@ -618,7 +618,7 @@ public fun AppRail(
                 // The rail is the window background, not a distinct surface: the reference measures the
                 // same 246 as the app background. It draws no end edge, only a soft ~13px fade towards
                 // the page surface card (the card's 4% ring spread leftwards, 246 -> 236).
-                .background(HarnessTokens.Colors.AppBackground)
+                .background(HarnessTokens.Colors.ShellBackground)
                 // 8dp inset leaves the 36dp item box and puts the icon centre on the rail centre.
                 .padding(
                     start = HarnessTokens.Spacing.Two,
@@ -978,7 +978,7 @@ private fun ExploreMenuRow(
                 .fillMaxWidth()
                 .height(HarnessTokens.Control.MenuItemHeight)
                 .clip(shape)
-                .background(if (hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                .background(if (hovered) HarnessTokens.Colors.HoverBackground else Color.Transparent)
                 .then(if (hovered) Modifier.border(1.dp, HarnessTokens.Colors.Border, shape) else Modifier)
                 .clickable(
                     interactionSource = source,
@@ -1013,7 +1013,7 @@ private fun ExploreMenuRow(
                     .padding(end = HarnessTokens.Spacing.One)
                     .size(HarnessTokens.Control.Icon)
                     .clip(RoundedCornerShape(percent = 50))
-                    .background(if (pinHovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .background(if (pinHovered) HarnessTokens.Colors.HoverBackground else Color.Transparent)
                     .hoverable(pinSource)
                     .clickable(onClick = onTogglePin)
                     .semantics {
@@ -1074,7 +1074,7 @@ private fun RailNavItem(
                     .clip(RoundedCornerShape(HarnessTokens.Control.RailItemRadius))
                     // Codex paints a 234 hover fill on the whole item and keeps it while the pointer is
                     // on the popover the item opened; the ripple stays (the click is a real Compose one).
-                    .background(if (selected || hovered || popoverActive) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .background(if (selected || popoverActive) HarnessTokens.Colors.SurfaceSelected else if (hovered) HarnessTokens.Colors.HoverBackground else Color.Transparent)
                     .clickable(enabled = item.enabled, onClick = onClick)
                     .semantics {
                         role = Role.Tab
@@ -1900,7 +1900,7 @@ private fun MainSurface(
                 }
                 return@CompositionLocalProvider
             }
-            Column(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas)) {
+            Column(Modifier.fillMaxSize().background(HarnessTokens.Colors.WorkspaceBackground)) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                     Box(
                         Modifier.then(
@@ -1945,7 +1945,7 @@ private fun ContextPanelSurface(
 ) {
     Box(Modifier.fillMaxHeight()) {
         Column(
-            modifier = Modifier.width(width).fillMaxHeight().background(HarnessTokens.Colors.Surface)
+            modifier = Modifier.width(width).fillMaxHeight().background(HarnessTokens.Colors.WorkspaceBackground)
                 .padding(if (threadPanel) 0.dp else HarnessTokens.Spacing.Three),
             verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
         ) {

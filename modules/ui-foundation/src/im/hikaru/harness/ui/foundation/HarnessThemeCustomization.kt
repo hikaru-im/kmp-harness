@@ -30,7 +30,7 @@ public data class HarnessThemeVariant(
     val codeStyle: FontStyle = FontStyle.Normal,
 ) {
     public fun colors(base: HarnessColors): HarnessColors {
-        // Preserve every measured default exactly when there are no color/contrast edits.
+        // Preserve the default palette when there are no color/contrast edits.
         if (accent == null && background == null && foreground == null && contrast == 50) return base
         val canvas = background ?: base.Canvas
         val ink = foreground ?: base.Text
@@ -39,22 +39,34 @@ public data class HarnessThemeVariant(
         val onAccent = if (accentColor.luminance() > 0.45f) Color(0xFF0D0D0D) else Color.White
         if (background == null && foreground == null && contrast == 50) return base.copy(
             Accent = accentColor, BorderFocused = accentColor,
+            SurfaceSelected = lerp(canvas, accentColor, if (dark) 0.14f else 0.10f),
             AccentStrong = lerp(accentColor, if (dark) Color.White else Color.Black, 0.2f), OnAccent = onAccent,
         )
         return base.copy(
             Canvas = canvas,
+            // Keep all page canvases in sync; shell and navigation derive from the workspace.
+            AppBackground = if (background == null) base.AppBackground else lerp(canvas, ink, if (dark) 0.065f else 0.08f),
+            NavigatorSurface = if (background == null) base.NavigatorSurface else lerp(canvas, ink, if (dark) 0.03f else 0.04f),
+            SurfaceCanvas = canvas,
+            NavigatorPeekSurface = if (background == null) base.NavigatorPeekSurface else lerp(canvas, ink, if (dark) 0.08f else 0f),
             Surface = if (background == null) base.Surface else lerp(canvas, ink, 0.04f),
             SurfaceSecondary = if (background == null) base.SurfaceSecondary else lerp(canvas, ink, 0.06f),
-            SurfaceElevated = if (background == null) base.SurfaceElevated else lerp(canvas, ink, if (dark) 0.08f else 0.01f),
-            SurfaceSelected = lerp(canvas, ink, 0.08f),
+            SurfaceElevated = if (background == null) base.SurfaceElevated else lerp(canvas, ink, if (dark) 0.08f else 0f),
+            SurfaceSelected = lerp(canvas, accentColor, if (dark) 0.14f else 0.10f),
             Text = ink,
             TextMuted = lerp(canvas, ink, 0.4f + contrast * 0.004f),
             TextDisabled = lerp(canvas, ink, 0.35f),
+            TextSecondary = ink.copy(alpha = 0.65f),
+            SurfaceKeycap = ink.copy(alpha = 0.065f),
+            SurfaceRing = ink.copy(alpha = 0.04f),
+            SurfaceRingStrong = ink.copy(alpha = 0.08f),
             // Title-bar chrome keeps the measured alpha inks, derived from the customised ink so a
             // recoloured theme does not keep the stock light or dark channels.
             ChromeIcon = ink.copy(alpha = 0.494f),
+            ChromeText = ink,
             ChromeFill = ink.copy(alpha = 0.1f),
             ChromeSeam = ink.copy(alpha = 0.25f),
+            ChromeSeamEdge = ink.copy(alpha = 0.07f),
             ChromeRule = ink.copy(alpha = 0.078f),
             Border = lerp(canvas, ink, 0.1f + contrast * 0.002f),
             BorderSubtle = lerp(canvas, ink, 0.05f + contrast * 0.001f),

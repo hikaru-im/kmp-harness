@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
@@ -13,14 +15,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Semantic colors for one theme. Values are measured from the Codex Desktop light and dark token
- * sets in app.asar (codex-light / app-shared CSS custom properties).
+ * Shared semantic palette. Shell, navigation and workspace are opaque, ordered background layers.
+ * Component surfaces and interaction states sit above those layers.
  */
 public data class HarnessColors(
     val Canvas: Color,
     /**
-     * Window background behind the page surface card. Measured #F6F6F6 (246) on the live Codex
-     * window; the card, the navigator and the main content sit on top of it.
+     * Window and icon-rail background. See [ShellBackground].
      */
     val AppBackground: Color,
     val Surface: Color,
@@ -28,9 +29,7 @@ public data class HarnessColors(
     val SurfaceElevated: Color,
     val SurfaceSelected: Color,
     /**
-     * The page canvas the 新标签页 page's content sits on, below its own toolbar. Measured on the live
-     * pane as `bg-surface-canvas` = `color(srgb 0.98 0.98 0.98)`, i.e. 250 (#FAFAFA) — one step below
-     * the white toolbar band above it.
+     * Compatibility slot for page canvases; keep equal to [Canvas].
      */
     val SurfaceCanvas: Color,
     /**
@@ -60,19 +59,11 @@ public data class HarnessColors(
     val Warning: Color,
     val OnAccent: Color,
     /**
-     * Inverse (tooltip) surface: the Codex tooltip is a solid pill that inverts the theme — dark on
-     * light, light on dark (`--color-background-primary-solid` + `--color-text-primary-solid`).
-     */
-    /**
-     * Navigator surface. The reference renders the embedded navigator as 65% white over the page
-     * surface card (measured 252 over the 246 background), so it is a translucent fill rather than
-     * the opaque [Surface].
+     * Opaque navigation background, between the shell and workspace layers.
      */
     val NavigatorSurface: Color,
     /**
-     * The navigator hover preview's own surface. The reference paints the peeking card with
-     * `--app-shell-sidebar-popover-background`, which resolves to an *opaque* elevated surface
-     * (`rgb(255,255,255)` in light) — not the 65% tint [NavigatorSurface] gives the embedded column.
+     * Opaque elevated surface for the navigator hover preview.
      */
     val NavigatorPeekSurface: Color,
     /**
@@ -134,22 +125,28 @@ public data class HarnessColors(
     val DiffRemoved: Color,
     val DiffAddedBackground: Color,
     val DiffRemovedBackground: Color,
-)
+) {
+    public val ShellBackground: Color get() = AppBackground
+    public val NavigationBackground: Color get() = NavigatorSurface
+    public val WorkspaceBackground: Color get() = Canvas
+    public val OverlayBackground: Color get() = SurfaceElevated
+    public val HoverBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.06f else 0.04f)
+    public val PressedBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.10f else 0.08f)
+    public val UserMessageBackground: Color get() = lerp(Canvas, Accent, if (Canvas.luminance() < 0.5f) 0.20f else 0.10f)
+}
 
 /**
- * Codex light palette. Sourced from app-shared CSS:
- * gray-fixed-0/25/50/75/100/400/500/1000, alpha-05/alpha-10, blue-500, green-500, red-500, yellow-500.
+ * Light workspace palette: darker shell, quieter navigation, white work surfaces.
  */
 public val HarnessLightColors: HarnessColors =
     HarnessColors(
         Canvas = Color(0xFFFFFFFF),
-        AppBackground = Color(0xFFF6F6F6),
-        Surface = Color(0xFFF9F9F9),
-        SurfaceSecondary = Color(0xFFF3F3F3),
+        AppBackground = Color(0xFFECEDEF),
+        Surface = Color(0xFFF4F5F6),
+        SurfaceSecondary = Color(0xFFF4F5F6),
         SurfaceElevated = Color(0xFFFFFFFF),
-        SurfaceSelected = Color(0xFFEDEDED),
-        // Measured `bg-surface-canvas` on the live 新标签页 pane.
-        SurfaceCanvas = Color(0xFFFAFAFA),
+        SurfaceSelected = Color(0xFFE9EFFD),
+        SurfaceCanvas = Color(0xFFFFFFFF),
         // Measured `oklab(.2256 … / .065)` on that page's keyboard-chord pills.
         SurfaceKeycap = Color(0x111A1C1F),
         Border = Color(0x297F7F7F),
@@ -158,20 +155,19 @@ public val HarnessLightColors: HarnessColors =
         // --alpha-base (#0d0d0d), not the 8 percent gray-127 alpha-05 that rendered #f5f5f5.
         BorderSubtle = Color(0x227F7F7F),
         BorderStrong = Color(0x337F7F7F),
-        BorderFocused = Color(0xFF0169CC),
+        BorderFocused = Color(0xFF2563EB),
         Text = Color(0xFF0D0D0D),
         TextMuted = Color(0xFF5D5D5D),
         TextDisabled = Color(0xFF8F8F8F),
         // Measured 65% of the chrome ink on that page's tool cards.
         TextSecondary = Color(0xA61A1C1F),
-        Accent = Color(0xFF0169CC),
-        AccentStrong = Color(0xFF004F99),
+        Accent = Color(0xFF2563EB),
+        AccentStrong = Color(0xFF1D4ED8),
         Danger = Color(0xFFE02E2A),
         Success = Color(0xFF00A240),
         Warning = Color(0xFFE0AC00),
         OnAccent = Color(0xFFFFFFFF),
-        // Measured rail tip fill rgb(26,28,31) with white ink.
-        NavigatorSurface = Color(0xA6FFFFFF),
+        NavigatorSurface = Color(0xFFF4F5F6),
         // Measured on the live peeking card: background rgb(255,255,255).
         NavigatorPeekSurface = Color(0xFFFFFFFF),
         SurfaceRingStrong = Color(0x141A1C1F),
@@ -191,18 +187,16 @@ public val HarnessLightColors: HarnessColors =
         DiffRemovedBackground = Color(0x1AE02E2A),
     )
 
-/** Codex dark palette for the same semantic slots. */
+/** Dark layers run left to right: #26282C → #202124 → #191A1C. */
 public val HarnessDarkColors: HarnessColors =
     HarnessColors(
-        Canvas = Color(0xFF171717),
-        // Dark counterpart is a project choice; not measured on a dark Codex window yet.
-        AppBackground = Color(0xFF0F0F0F),
-        Surface = Color(0xFF202020),
-        SurfaceSecondary = Color(0xFF1C1C1C),
-        SurfaceElevated = Color(0xFF282828),
-        SurfaceSelected = Color(0xFF303030),
-        // Dark counterpart is a project choice; the page canvas is measured light-only.
-        SurfaceCanvas = Color(0xFF1A1A1A),
+        Canvas = Color(0xFF191A1C),
+        AppBackground = Color(0xFF26282C),
+        Surface = Color(0xFF202124),
+        SurfaceSecondary = Color(0xFF26282C),
+        SurfaceElevated = Color(0xFF2B2D31),
+        SurfaceSelected = Color(0xFF29303B),
+        SurfaceCanvas = Color(0xFF191A1C),
         SurfaceKeycap = Color(0x11FFFFFF),
         Border = Color(0xFF3A3A3A),
         BorderSubtle = Color(0xFF2E2E2E),
@@ -210,7 +204,7 @@ public val HarnessDarkColors: HarnessColors =
         BorderFocused = Color(0xFF8AB4F8),
         Text = Color(0xFFF2F2F2),
         TextMuted = Color(0xFFA8A8A8),
-        TextDisabled = Color(0xFF6F6F6F),
+        TextDisabled = Color(0xFF85878C),
         TextSecondary = Color(0xA6FFFFFF),
         Accent = Color(0xFF8AB4F8),
         AccentStrong = Color(0xFFB8D1FF),
@@ -218,10 +212,8 @@ public val HarnessDarkColors: HarnessColors =
         Success = Color(0xFF8FD3A8),
         Warning = Color(0xFFFFD166),
         OnAccent = Color(0xFF10213A),
-        // Dark theme inverts the pill: light fill, dark ink.
-        NavigatorSurface = Color(0xFF202020),
-        // The dark counterpart of the opaque popover surface is the dark surface itself.
-        NavigatorPeekSurface = Color(0xFF202020),
+        NavigatorSurface = Color(0xFF202124),
+        NavigatorPeekSurface = Color(0xFF2B2D31),
         SurfaceRingStrong = Color(0x14FFFFFF),
         SurfaceRing = Color(0x0AFFFFFF),
         InverseSurface = Color(0xFFFCFCFC),
@@ -233,7 +225,7 @@ public val HarnessDarkColors: HarnessColors =
         ChromeSeam = Color(0x40FFFFFF),
         ChromeSeamEdge = Color(0x12FFFFFF),
         ChromeRule = Color(0x14FFFFFF),
-        CodeBackground = Color(0xFF1A1A1A),
+        CodeBackground = Color(0xFF202124),
         DiffAdded = Color(0xFF8FD3A8),
         DiffRemoved = Color(0xFFFF8F8F),
         DiffAddedBackground = Color(0x2E8FD3A8),
@@ -376,7 +368,10 @@ public object HarnessTokens {
     /** Type scale measured from app-shared CSS (text-xs/sm/md/lg, heading-xs/sm). */
     public object Text {
         public val Xs: TextUnit = 12.sp
+        public val Label: TextUnit = 13.sp
         public val Sm: TextUnit = 14.sp
+        public val BodyLineHeight: TextUnit = 22.sp
+        public val LabelLineHeight: TextUnit = 18.sp
         public val Md: TextUnit = 16.sp
         public val Lg: TextUnit = 18.sp
         public val HeadingSm: TextUnit = 18.sp
