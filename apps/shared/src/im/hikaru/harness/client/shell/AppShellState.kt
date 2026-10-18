@@ -258,6 +258,7 @@ public data class RecentTaskItem(
     val title: String,
     val status: String? = null,
     val unread: Boolean = false,
+    val pinned: Boolean = false,
 )
 
 /**

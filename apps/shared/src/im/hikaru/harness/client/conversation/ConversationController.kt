@@ -8,6 +8,16 @@ import im.hikaru.harness.client.app.SessionStreamDriver
 import im.hikaru.harness.client.connection.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+public sealed interface ConversationCommand {
+    public data class Rename(val title: String) : ConversationCommand
+    public data object TogglePin : ConversationCommand
+    public data object MarkUnread : ConversationCommand
+    public data object ToggleArchive : ConversationCommand
+    public data object Delete : ConversationCommand
+}
 
 /** Authenticated server/tenant/member identity is part of scope. null identity denotes the local Host. */
 public data class ConversationHostScope(
@@ -41,6 +51,7 @@ public data class ConversationState(
     val sessions: List<SessionSummary> = emptyList(),
     val selectedSessionId: SessionId? = null,
     val history: List<Message> = emptyList(),
+    val historyReadSeq: Long = -1,
     val draft: String = "",
     val draftRevision: Long = 0,
     val action: ConversationAction = ConversationAction.Idle,
@@ -49,11 +60,14 @@ public data class ConversationState(
     val completionCapability: CompletionCapability = CompletionCapability.DeliveryAcknowledgedOnly,
     val lastAcceptedReceipt: SessionPromptReceipt? = null,
     val errors: Map<ConversationErrorKind, ConversationError> = emptyMap(),
+    val managingSessionId: SessionId? = null,
+    val managementError: String? = null,
 ) {
     public val canSubmit: Boolean get() = connected && host != null && draft.isNotBlank() &&
-        action == ConversationAction.Idle && !cancelling
+        action == ConversationAction.Idle && !cancelling && sessions.firstOrNull { it.id == selectedSessionId }?.archived != true
     // Stop may be available for a selected real session whose run status is unknown.
     public val canCancel: Boolean get() = connected && selectedSessionId != null && !cancelling &&
+        sessions.firstOrNull { it.id == selectedSessionId }?.let { it.live && !it.archived } != false &&
         action != ConversationAction.Creating && action != ConversationAction.Sending &&
         (action == ConversationAction.Associating || runState != ConversationRunState.Idle)
     public val lastAcceptedMessageId: String? get() = lastAcceptedReceipt?.messageId
@@ -61,6 +75,9 @@ public data class ConversationState(
 
 /** Inject operations for delayed/failure tests. Production uses only the existing Session API. */
 public interface ConversationOperations {
+    public suspend fun delete(connection: Connection, id: SessionId, revision: Long) = connection.session.deleteConversation(id, revision)
+    public suspend fun update(connection: Connection, update: ConversationUpdate): SessionSummary = connection.session.updateConversation(update)
+    public suspend fun archive(connection: Connection, id: SessionId, archived: Boolean) = connection.session.archiveConversation(id, archived)
     public suspend fun list(connection: Connection): List<SessionSummary>
     public suspend fun create(connection: Connection, options: CreateSessionOptions, agentOptions: AgentOptions): SessionSummary
     public suspend fun history(connection: Connection, id: SessionId): List<Message>
@@ -126,6 +143,10 @@ public class ConversationController(
     private var cancelJob: Job? = null
     private var streamJob: Job? = null
     private var closed = false
+    private val managementMutex = Mutex()
+    private var readJob: Job? = null
+    private var readTarget: Pair<SessionId, Long>? = null
+    private var readGeneration = 0L
 
     /**
      * null scope is logout (clear everything); null connection + retained scope is temporary disconnect.
@@ -148,6 +169,8 @@ public class ConversationController(
         val old = state.value
         val sameHost = host != null && old.host?.sameHost(host) == true
         epoch++
+        readJob?.cancel()
+        readTarget = null; readGeneration++
         selection++
         invalidateRequests()
         if (!sameHost) drafts.clear()
@@ -169,11 +192,14 @@ public class ConversationController(
         val old = state.value
         if (old.selectedSessionId == id) return
         drafts[old.selectedSessionId] = old.draft
+        // A read acknowledgement may already be committed remotely. Keep its returned revision
+        // even when navigation moves elsewhere, so the next metadata command is not stale.
+        readTarget = null; readGeneration++
         selection++
         val wasLoadingList = state.value.listPhase == ConversationDataPhase.Loading
         invalidateRequests()
         mutableState.value = state.value.copy(
-            selectedSessionId = id, history = emptyList(), historyPhase = ConversationDataPhase.Unbound,
+            selectedSessionId = id, history = emptyList(), historyReadSeq = -1, historyPhase = ConversationDataPhase.Unbound,
             draft = drafts[id].orEmpty(), draftRevision = old.draftRevision + 1,
             action = ConversationAction.Idle, runState = ConversationRunState.Unknown, cancelling = false,
             lastAcceptedReceipt = null, errors = emptyMap(),
@@ -189,7 +215,106 @@ public class ConversationController(
         mutableState.value = state.value.copy(draft = text, draftRevision = state.value.draftRevision + 1)
     }
 
+    /** A management command never sends a prompt and is never automatically retried. */
+    public fun manage(id: SessionId, command: ConversationCommand): Deferred<Boolean>? {
+        if (!state.value.connected || state.value.managingSessionId != null) return null
+        if (state.value.sessions.none { it.id == id }) return null
+        val source = connection ?: return null
+        val ownerEpoch = epoch
+        if (command == ConversationCommand.MarkUnread) { readTarget = null; readGeneration++ }
+        mutableState.value = state.value.copy(managingSessionId = id, managementError = null)
+        return work.async {
+            fun current(): Boolean = !closed && epoch == ownerEpoch && connection === source
+            try {
+                managementMutex.withLock {
+                    if (!current()) return@async false
+                    val summary = state.value.sessions.firstOrNull { it.id == id } ?: return@async false
+                    when (command) {
+                        ConversationCommand.Delete -> {
+                            operations.delete(source, id, summary.revision)
+                            if (current()) {
+                                removeSummary(id)
+                                if (state.value.selectedSessionId == id) { updateDraft(""); select(null) }
+                                drafts.remove(id)
+                            }
+                        }
+                        ConversationCommand.ToggleArchive -> {
+                            operations.archive(source, id, !summary.archived)
+                            if (current()) {
+                                replaceSummary(summary.copy(archived = !summary.archived, live = false))
+                            }
+                        }
+                        is ConversationCommand.Rename, ConversationCommand.TogglePin, ConversationCommand.MarkUnread -> {
+                            val updated = operations.update(source, ConversationUpdate(id, summary.revision,
+                                if (command is ConversationCommand.Rename) command.title.trim().also { require(it.isNotEmpty()) } else summary.customTitle,
+                                if (command == ConversationCommand.TogglePin) !summary.pinned else summary.pinned,
+                                if (command == ConversationCommand.MarkUnread) -1 else summary.lastReadSeq))
+                            currentCoroutineContext().ensureActive()
+                            if (current()) replaceSummary(updated)
+                        }
+                    }
+                }
+                current()
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Throwable) {
+                if (current()) {
+                    mutableState.value = state.value.copy(managementError = when (command) {
+                        is ConversationCommand.Rename -> null // The editor keeps the draft and displays its own failure.
+                        ConversationCommand.Delete -> "删除未能确认，列表已刷新。如果会话正在执行，请先停止后重试。"
+                        else -> "会话操作未能确认，请重试。"
+                    })
+                    refreshSessions()
+                }
+                false
+            } finally {
+                if (current()) mutableState.value = state.value.copy(managingSessionId = null)
+            }
+        }
+    }
+
+    /** Read acknowledgements do not occupy the user-command busy state or retry execution. */
+    public fun markRead(id: SessionId, throughSeq: Long): Job? {
+        val source = connection ?: return null
+        val ownerEpoch = epoch
+        readTarget = id to throughSeq
+        if (readJob?.isActive == true) return readJob
+        return work.launch {
+            while (true) {
+                val target = readTarget ?: break
+                readTarget = null
+                val generation = readGeneration
+                managementMutex.withLock {
+                    fun currentHost(): Boolean = !closed && epoch == ownerEpoch && connection === source
+                    if (!currentHost() || state.value.selectedSessionId != target.first || generation != readGeneration) return@withLock
+                    val summary = state.value.sessions.firstOrNull { it.id == target.first } ?: return@withLock
+                    if (!summary.managementAvailable || target.second <= summary.lastReadSeq) return@withLock
+                    try {
+                        val updated = operations.update(source, ConversationUpdate(target.first, summary.revision, summary.customTitle,
+                            summary.pinned, minOf(target.second, summary.lastEventSeq)))
+                        currentCoroutineContext().ensureActive()
+                        if (currentHost()) replaceSummary(updated)
+                    } catch (cancelled: CancellationException) { throw cancelled
+                    } catch (_: Throwable) { /* A later history update can acknowledge again. */ }
+                }
+            }
+        }.also { readJob = it }
+    }
+
+    private fun replaceSummary(summary: SessionSummary) {
+        listRequest++; listJob?.cancel()
+        mutableState.value = state.value.copy(sessions = state.value.sessions.map { if (it.id == summary.id) summary else it },
+            listPhase = ConversationDataPhase.Ready)
+    }
+
+    private fun removeSummary(id: SessionId) {
+        listRequest++; listJob?.cancel()
+        val remaining = state.value.sessions.filterNot { it.id == id }
+        mutableState.value = state.value.copy(sessions = remaining,
+            listPhase = if (remaining.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready)
+    }
+
     /** Data refresh never cancels or retries an execution command. */
+    public fun dismissManagementError() { mutableState.value = state.value.copy(managementError = null) }
     public fun refresh() { refreshSessions(); refreshHistory() }
 
     /**
@@ -214,10 +339,13 @@ public class ConversationController(
             try {
                 val result = operations.list(fence.connection).toList()
                 currentCoroutineContext().ensureActive()
-                if (valid(fence) && request == listRequest) mutableState.value = state.value.copy(
-                    sessions = result, listPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
-                    errors = without(ConversationErrorKind.List),
-                )
+                if (valid(fence) && request == listRequest) {
+                    mutableState.value = state.value.copy(
+                        sessions = result, listPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
+                        errors = without(ConversationErrorKind.List),
+                    )
+                    if (historyNeedsCatchup()) refreshHistory()
+                }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
                 if (valid(fence) && request == listRequest) {
@@ -234,6 +362,7 @@ public class ConversationController(
     public fun refreshHistory(): Job? {
         val fence = capture() ?: return null
         val id = fence.selected ?: return null
+        val readableThrough = state.value.sessions.firstOrNull { it.id == id }?.lastEventSeq ?: -1
         val request = ++historyRequest
         historyJob?.cancel()
         mutableState.value = state.value.copy(historyPhase = ConversationDataPhase.Loading, errors = without(ConversationErrorKind.History))
@@ -241,10 +370,16 @@ public class ConversationController(
             try {
                 val result = operations.history(fence.connection, id).map(::snapshotMessage)
                 currentCoroutineContext().ensureActive()
-                if (valid(fence) && request == historyRequest) mutableState.value = state.value.copy(
-                    history = result, historyPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
-                    errors = without(ConversationErrorKind.History),
-                )
+                if (valid(fence) && request == historyRequest) {
+                    mutableState.value = state.value.copy(
+                        history = result, historyReadSeq = readableThrough,
+                        historyPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
+                        runState = if (state.value.action == ConversationAction.Idle &&
+                            state.value.sessions.firstOrNull { it.id == id }?.live == false) ConversationRunState.Idle else state.value.runState,
+                        errors = without(ConversationErrorKind.History),
+                    )
+                    if (historyNeedsCatchup()) refreshHistory()
+                }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
                 if (valid(fence) && request == historyRequest) {
@@ -257,6 +392,9 @@ public class ConversationController(
             }
         }
     }
+
+    private fun historyNeedsCatchup(): Boolean = state.value.historyPhase == ConversationDataPhase.Ready &&
+        (state.value.sessions.firstOrNull { it.id == state.value.selectedSessionId }?.lastEventSeq ?: -1) > state.value.historyReadSeq
 
     /** Retry is explicit through this entry. Ambiguous transport errors are never automatically resent. */
     public fun submit(
@@ -330,6 +468,7 @@ public class ConversationController(
                     runState = if (capability == CompletionCapability.LocalIdle) ConversationRunState.Running else ConversationRunState.Unknown,
                 )
                 refreshHistory()
+                refreshSessions()
                 if (capability == CompletionCapability.LocalIdle) {
                     phase = ConversationErrorKind.Completion
                     prompt.awaitIdle()
@@ -345,6 +484,7 @@ public class ConversationController(
                         mutableState.value = state.value.copy(errors = state.value.errors + (ConversationErrorKind.Completion to error))
                     }
                     refreshHistory()
+                    refreshSessions()
                 }
                 // Delivery-only deliberately does not call awaitIdle: Relay returns Unit immediately.
             } catch (cancelled: CancellationException) { throw cancelled

@@ -66,7 +66,10 @@ class Session internal constructor(
                     ignorable = true.takeIf { key.ignorable },
                 )
 
-            log += envelope
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                if (lifecycle.hasEntered) eventContext.get(SessionDurabilityKey)?.append(header, envelope)
+                log += envelope
+            }
 
             if (lifecycle.hasEntered) {
                 eventContext.emitContained(

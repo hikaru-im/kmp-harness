@@ -100,6 +100,21 @@ public class RemoteConnection private constructor(
         override suspend fun list(): List<SessionSummary> =
             invoke("session.list", null).decodeResult<List<SessionSummary>>()
 
+        override suspend fun deleteConversation(id: SessionId, expectedRevision: Long) {
+            invoke("session.conversation.delete", kotlinx.serialization.json.buildJsonObject {
+                put("id", JsonPrimitive(id.value)); put("expectedRevision", JsonPrimitive(expectedRevision))
+            }).decodeResult<Unit>()
+        }
+
+        override suspend fun updateConversation(update: ConversationUpdate): SessionSummary =
+            invoke("session.conversation.update", json.encodeToJsonElement(ConversationUpdate.serializer(), update)).decodeResult<SessionSummary>()
+
+        override suspend fun archiveConversation(id: SessionId, archived: Boolean) {
+            invoke("session.conversation.archive", kotlinx.serialization.json.buildJsonObject {
+                put("id", JsonPrimitive(id.value)); put("archived", JsonPrimitive(archived))
+            }).decodeResult<Unit>()
+        }
+
         override suspend fun create(id: SessionId?, options: CreateSessionOptions, agentOptions: AgentOptions): SessionSummary {
             val request = WireCreateSessionRequest(id, options, agentOptions)
             return invoke("session.create", json.encodeToJsonElement(WireCreateSessionRequest.serializer(), request)).decodeResult()

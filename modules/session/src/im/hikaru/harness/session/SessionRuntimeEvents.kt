@@ -3,6 +3,13 @@ package im.hikaru.harness.session
 import im.hikaru.harness.runtime.event.EventKey
 import im.hikaru.harness.runtime.event.ParallelEventKey
 
+/** Required writes run before an append is published; observational event handlers cannot suspend. */
+interface SessionDurability {
+    suspend fun append(header: SessionHeader, event: SessionEventEnvelope)
+    suspend fun checkpoint(session: Session)
+}
+object SessionDurabilityKey : im.hikaru.harness.runtime.service.ServiceKey<SessionDurability>("session-durability")
+
 data class SessionNotice(
     val session: Session,
 )

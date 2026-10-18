@@ -16,6 +16,16 @@ import im.hikaru.harness.session.TurnEndEvent
 import im.hikaru.harness.session.ErrorTurnEndReason
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
+import im.hikaru.harness.session.persistence.*
+import im.hikaru.harness.session.SessionArchiveKey
+import im.hikaru.harness.session.deriveMessages
+import im.hikaru.harness.session.foldRequestContext
+import im.hikaru.harness.agent.AgentQuiescentRestore
+import im.hikaru.harness.agent.AgentArchiveBegin
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 @Serializable
 data class SessionSummary(
@@ -23,7 +33,23 @@ data class SessionSummary(
     val createdAt: Long,
     val cwd: String? = null,
     val agentPreset: String? = null,
+    val title: String? = null,
+    val updatedAt: Long = createdAt,
+    val pinned: Boolean = false,
+    val unread: Boolean = false,
+    val archived: Boolean = false,
+    val revision: Long = 0,
+    val lastEventSeq: Long = -1,
+    val managementAvailable: Boolean = false,
+    val archiveAvailable: Boolean = false,
+    val live: Boolean = true,
+    val customTitle: String? = null,
+    val lastReadSeq: Long = -1,
 )
+
+@Serializable
+data class ConversationUpdate(val id: SessionId, val expectedRevision: Long, val title: String?,
+    val pinned: Boolean, val lastReadSeq: Long)
 
 @Serializable
 data class SessionPromptReceipt(
@@ -33,6 +59,9 @@ data class SessionPromptReceipt(
 
 /** Provider-neutral Session facade. */
 interface SessionApi {
+    suspend fun deleteConversation(id: SessionId, expectedRevision: Long): Unit = error("Conversation deletion is unavailable")
+    suspend fun updateConversation(update: ConversationUpdate): SessionSummary = error("Conversation management is unavailable")
+    suspend fun archiveConversation(id: SessionId, archived: Boolean): Unit = error("Archive management is unavailable")
     suspend fun terminalCapability(session: SessionId): HostTerminalDiscoveryResult =
         HostTerminalDiscoveryResult.Unavailable(session, "Terminal Host service is unavailable")
 
@@ -112,6 +141,7 @@ data class SessionPromptFailure(val code: String, val status: Int? = null)
 internal class DefaultSessionApi(
     private val context: Context,
 ) : SessionApi {
+    private val restoreMutex = Mutex()
     private val descendantsReader = LiveSessionDescendants(context.agents)
 
     override suspend fun terminalCapability(session: SessionId): HostTerminalDiscoveryResult =
@@ -172,47 +202,156 @@ internal class DefaultSessionApi(
     override suspend fun readChildHistory(parent: SessionId, child: SessionId): ChildHistoryResult =
         descendantsReader.readChildHistory(parent, child)
 
-    override suspend fun list(): List<SessionSummary> =
-        context.agents.list().map { agent -> summary(agent.session) }
+    override suspend fun list(): List<SessionSummary> = conversationSummaries()
+
+    private suspend fun conversationSummaries(id: SessionId? = null, includeSubagents: Boolean = false): List<SessionSummary> {
+        val live = context.agents.list().map { it.session }.filter { id == null || it.id == id }.associateBy { it.id }
+        val persistence = context.get(SessionPersistenceKey)
+        val catalog = persistence?.conversationCatalog(id)?.associateBy { it.header.id }
+        val durableHeaders = catalog?.mapValues { it.value.header }
+            ?: persistence?.listHeaders().orEmpty().filter { id == null || it.id == id }.associateBy { it.id }
+        val headers = durableHeaders + live.mapValues { it.value.header }
+        val automaticallySaved = context.get(im.hikaru.harness.session.SessionDurabilityKey) != null
+        val gate = context.get(SessionArchiveKey)
+        return headers.values.filter { includeSubagents || it.origin != im.hikaru.harness.session.SessionOrigin.SUBAGENT }.mapNotNull { header ->
+            val durable = catalog?.get(header.id)
+            val metadata = if (catalog != null) durable?.metadata else persistence?.metadata(header.id)
+            if (metadata?.deleted == true) return@mapNotNull null
+            // A deleted live instance must stay hidden even if its best-effort cleanup has failed.
+            if (catalog != null && durable == null && persistence?.metadata(header.id)?.deleted == true) return@mapNotNull null
+            val durableActivity = durable?.activity?.takeIf { automaticallySaved || header.id !in live }
+            val events = if (durableActivity != null) emptyList() else live[header.id]?.events() ?: persistence?.readEvents(header.id).orEmpty()
+            val automaticTitle = im.hikaru.harness.session.defaultConversationTitle(deriveMessages(events))
+            val lastSeq = durableActivity?.lastSeq ?: events.lastOrNull()?.seq ?: -1
+            SessionSummary(id = header.id, createdAt = header.createdAt, cwd = header.cwd, agentPreset = header.agentPreset,
+                title = metadata?.title ?: durableActivity?.title ?: automaticTitle,
+                updatedAt = durableActivity?.updatedAt ?: events.lastOrNull()?.time ?: header.createdAt,
+                pinned = metadata?.pinned ?: false, unread = lastSeq > (metadata?.lastReadSeq ?: -1),
+                archived = gate?.isArchived(header) ?: false, revision = metadata?.revision ?: 0, lastEventSeq = lastSeq,
+                managementAvailable = persistence?.supportsConversationMetadata == true, archiveAvailable = gate?.supportsManagement == true,
+                live = header.id in live, customTitle = metadata?.title, lastReadSeq = metadata?.lastReadSeq ?: -1)
+        }
+    }
+
+    override suspend fun updateConversation(update: ConversationUpdate): SessionSummary {
+        val persistence = context.get(SessionPersistenceKey) ?: error("Conversation persistence is unavailable")
+        context.sessions.get(update.id)?.let { checkpoint(it) }
+        persistence.updateMetadata(update.id, update.expectedRevision, update.title, update.pinned, update.lastReadSeq)
+        return conversationSummaries(update.id).single()
+    }
+
+    override suspend fun deleteConversation(id: SessionId, expectedRevision: Long) = restoreMutex.withLock {
+        val persistence = context.get(SessionPersistenceKey) ?: error("Conversation persistence is unavailable")
+        when (val prepared = context.agents.beginArchive(AgentId(id.value))) {
+            is AgentArchiveBegin.Granted -> try {
+                withContext(NonCancellable) {
+                    persistence.deleteConversation(id, expectedRevision)
+                    check(prepared.preparation.commit() == null) { "Deleted; execution cleanup needs refresh" }
+                }
+            } finally { prepared.preparation.dispose() }
+            AgentArchiveBegin.NotRegistered -> {
+                check(context.sessions.get(id) == null) { "Conversation is still live" }
+                persistence.deleteConversation(id, expectedRevision)
+            }
+            else -> error("Conversation is busy; delete after execution stops")
+        }
+    }
+
+    override suspend fun archiveConversation(id: SessionId, archived: Boolean): Unit = restoreMutex.withLock {
+        val persistence = context.get(SessionPersistenceKey) ?: error("Conversation persistence is unavailable")
+        check(persistence.metadata(id)?.deleted != true) { "Conversation was deleted" }
+        val gate = context.get(SessionArchiveKey)?.takeIf { it.supportsManagement } ?: error("Archive management is unavailable")
+        if (!archived) {
+            val header = persistence.listHeaders()?.firstOrNull { it.id == id } ?: error("Session is not durable")
+            check(gate.setArchived(header, false) == null) { "Unarchived; crash durability is uncertain" }
+            return@withLock
+        }
+        when (val prepared = context.agents.beginArchive(AgentId(id.value))) {
+            is AgentArchiveBegin.Granted -> try {
+                val session = context.sessions.get(id) ?: error("Session is unavailable")
+                checkpoint(session)
+                withContext(NonCancellable) {
+                    val durabilityWarning = gate.setArchived(session.header, true)
+                    val cleanupWarning = prepared.preparation.commit()
+                    check(durabilityWarning == null && cleanupWarning == null) { "Archived; durability or cleanup needs refresh" }
+                }
+            } finally { prepared.preparation.dispose() }
+            AgentArchiveBegin.NotRegistered -> {
+                val header = persistence.listHeaders()?.firstOrNull { it.id == id } ?: error("Session is not durable")
+                check(context.sessions.get(id) == null) { "Session is still live" }
+                check(gate.setArchived(header, true) == null) { "Archived; crash durability is uncertain" }
+            }
+            else -> error("Conversation is busy; archive after execution stops")
+        }
+    }
 
     override suspend fun create(
         id: SessionId?,
         options: CreateSessionOptions,
         agentOptions: AgentOptions,
     ): SessionSummary {
+        if (id != null) check(context.get(SessionPersistenceKey)?.listHeaders()?.none { it.id == id } != false) {
+            "Session already exists in durable storage"
+        }
         val handle = context.agents.create(id?.let { AgentId(it.value) }, agentOptions, options)
-        return summary(handle.agent.session)
+        checkpoint(handle.agent.session)
+        return conversationSummaries(handle.agent.session.id, includeSubagents = true).single()
     }
 
-    override suspend fun history(id: SessionId): List<Message> =
-        requireAgent(id).session.deriveMessages()
+    override suspend fun history(id: SessionId): List<Message> {
+        check(context.get(SessionPersistenceKey)?.metadata(id)?.deleted != true) { "Conversation was deleted" }
+        return context.sessions.get(id)?.deriveMessages() ?: context.get(SessionPersistenceKey)?.readEvents(id)
+            ?.let(::deriveMessages) ?: error("Session history is unavailable")
+    }
 
     override suspend fun prompt(id: SessionId, message: Message): SessionPrompt {
-        val agent = requireAgent(id)
+        check(context.get(SessionPersistenceKey)?.metadata(id)?.deleted != true) { "Conversation was deleted" }
+        val agent = restoreMutex.withLock {
+            context.agents.get(AgentId(id.value)) ?: run {
+                val persistence = context.get(SessionPersistenceKey) ?: error("Session persistence is unavailable")
+                val loaded = persistence.loadQuiescent(id)
+                check(loaded is SessionQuiescentLoad.Loaded) { "Session cannot be restored: ${(loaded as SessionQuiescentLoad.Rejected).reason}" }
+                val events = loaded.session.events()
+                val request = foldRequestContext(events)
+                val config = im.hikaru.harness.session.foldRequestHeader(events)?.config
+                try { when (val restored = context.agents.restoreQuiescent(loaded.session, AgentOptions(
+                    cwd = loaded.session.header.cwd, preset = loaded.session.header.agentPreset,
+                    provider = request?.provider ?: config?.provider, model = request?.model ?: config?.model,
+                    reasoningEffort = config?.reasoningEffort, maxTokens = config?.maxTokens))) {
+                    is AgentQuiescentRestore.Granted -> restored.handle.agent
+                    is AgentQuiescentRestore.Rejected -> error(restored.reason)
+                } } catch (error: Throwable) {
+                    withContext(NonCancellable) { loaded.handle.dispose() }
+                    throw error
+                }
+            }
+        }
         val messageId = agent.followup(message)
+        checkpoint(agent.session)
         return DefaultSessionPrompt(
             receipt = SessionPromptReceipt(id, messageId),
             await = agent::awaitIdle,
             session = agent.session,
             originalMessageId = message.id.value,
+            checkpoint = { checkpoint(agent.session) },
         )
     }
 
     override suspend fun cancel(id: SessionId, keepInbox: Boolean) {
         requireAgent(id).cancel(keepInbox = keepInbox)
+        context.sessions.get(id)?.let { checkpoint(it) }
+    }
+
+    /** The durability hook already commits every event; explicit snapshots serve manual-save hosts. */
+    private suspend fun checkpoint(session: Session) {
+        if (context.get(im.hikaru.harness.session.SessionDurabilityKey) == null)
+            context.get(SessionPersistenceKey)?.flush(session)
     }
 
     private suspend fun requireAgent(id: SessionId) =
         context.agents.get(AgentId(id.value))
             ?: error("Session '${id.value}' is not live")
 
-    private fun summary(session: Session): SessionSummary =
-        SessionSummary(
-            id = session.id,
-            createdAt = session.header.createdAt,
-            cwd = session.header.cwd,
-            agentPreset = session.header.agentPreset,
-        )
 }
 
 private class DefaultSessionPrompt(
@@ -220,8 +359,9 @@ private class DefaultSessionPrompt(
     private val await: suspend () -> Unit,
     private val session: Session,
     private val originalMessageId: String,
+    private val checkpoint: suspend () -> Unit = {},
 ) : SessionPrompt {
-    override suspend fun awaitIdle() = await()
+    override suspend fun awaitIdle() { await(); checkpoint() }
 
     override suspend fun failure(): SessionPromptFailure? {
         val events = session.events()

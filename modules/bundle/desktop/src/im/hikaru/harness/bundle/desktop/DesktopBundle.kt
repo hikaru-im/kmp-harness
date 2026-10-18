@@ -60,7 +60,7 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             sessionPersistencePluginDefinition(
                 jvmSessionPersistenceDatabaseFactory(
                     defaultHarnessHome.resolve("harness-sessions.db").toFile()
-                )
+                ), autoSave = true
             ),
             LlmRetryPluginDefinition,
         )

@@ -28,6 +28,13 @@ import kotlinx.coroutines.ensureActive
 
 /** Typed in-process endpoints backing both LocalConnection and a future relay adapter. */
 public object SessionListEndpoint : ApiEndpoint<Unit, List<SessionSummary>>("session.list")
+public object ConversationUpdateEndpoint : ApiEndpoint<im.hikaru.harness.session.api.ConversationUpdate, SessionSummary>("session.conversation.update")
+@kotlinx.serialization.Serializable
+public data class ConversationArchiveRequest(val id: SessionId, val archived: Boolean)
+public object ConversationArchiveEndpoint : ApiEndpoint<ConversationArchiveRequest, Unit>("session.conversation.archive")
+@kotlinx.serialization.Serializable
+public data class ConversationDeleteRequest(val id: SessionId, val expectedRevision: Long)
+public object ConversationDeleteEndpoint : ApiEndpoint<ConversationDeleteRequest, Unit>("session.conversation.delete")
 
 @kotlinx.serialization.Serializable
 public data class SessionCreateRequest(
@@ -70,6 +77,9 @@ public suspend fun ApiGateway.registerSessionApi(owner: Context): Disposable {
             require(request === Unit)
             withSessionApi(owner) { it.list() }
         },
+        register(owner, ConversationUpdateEndpoint) { update -> withSessionApi(owner) { it.updateConversation(update) } },
+        register(owner, ConversationArchiveEndpoint) { request -> withSessionApi(owner) { it.archiveConversation(request.id, request.archived) } },
+        register(owner, ConversationDeleteEndpoint) { request -> withSessionApi(owner) { it.deleteConversation(request.id, request.expectedRevision) } },
         register(owner, SessionCreateEndpoint) { request ->
             withSessionApi(owner) { it.create(request.id, request.options, request.agentOptions) }
         },

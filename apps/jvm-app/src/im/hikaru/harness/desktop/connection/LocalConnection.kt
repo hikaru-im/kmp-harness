@@ -171,6 +171,21 @@ public class LocalConnection(
             override suspend fun list(): List<ClientSessionSummary> =
                 invoke(SessionListEndpoint, Unit).map(::toClientSummary)
 
+            override suspend fun deleteConversation(id: ClientSessionId, expectedRevision: Long) {
+                invoke(im.hikaru.harness.api.gateway.session.ConversationDeleteEndpoint,
+                    im.hikaru.harness.api.gateway.session.ConversationDeleteRequest(SessionId(id.value), expectedRevision))
+            }
+
+            override suspend fun updateConversation(update: im.hikaru.harness.client.connection.ConversationUpdate): ClientSessionSummary =
+                invoke(im.hikaru.harness.api.gateway.session.ConversationUpdateEndpoint,
+                    im.hikaru.harness.session.api.ConversationUpdate(im.hikaru.harness.session.SessionId(update.id.value),
+                        update.expectedRevision, update.title, update.pinned, update.lastReadSeq)).let(::toClientSummary)
+
+            override suspend fun archiveConversation(id: ClientSessionId, archived: Boolean) {
+                invoke(im.hikaru.harness.api.gateway.session.ConversationArchiveEndpoint,
+                    im.hikaru.harness.api.gateway.session.ConversationArchiveRequest(SessionId(id.value), archived))
+            }
+
             override suspend fun create(
                 id: ClientSessionId?,
                 options: ClientCreateSessionOptions,
@@ -262,6 +277,10 @@ private fun toClientSummary(summary: SessionSummary): ClientSessionSummary =
         createdAt = summary.createdAt,
         cwd = summary.cwd,
         agentPreset = summary.agentPreset,
+        title = summary.title, updatedAt = summary.updatedAt, pinned = summary.pinned, unread = summary.unread,
+        archived = summary.archived, revision = summary.revision, lastEventSeq = summary.lastEventSeq,
+        managementAvailable = summary.managementAvailable, archiveAvailable = summary.archiveAvailable,
+        live = summary.live, customTitle = summary.customTitle, lastReadSeq = summary.lastReadSeq,
     )
 
 internal fun toClientMessage(message: Message): ClientMessage =

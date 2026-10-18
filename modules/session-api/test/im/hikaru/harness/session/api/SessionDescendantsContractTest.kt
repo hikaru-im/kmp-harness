@@ -89,7 +89,7 @@ class SessionDescendantsContractTest {
             val history = assertIs<ChildHistoryResult.Available>(fixture.api.readChildHistory(id("root"), id("child")))
             assertEquals(id("root"), history.parent)
             assertEquals(id("child"), history.child)
-            assertEquals(listOf(message), history.messages)
+            assertEquals(listOf(message.copy(timestampMillis = child.agent.session.events().single().time)), history.messages)
             assertEquals(child.agent.session.deriveMessages(), history.messages)
             child.dispose()
             assertTrue(assertIs<SessionDescendantsResult.Available>(fixture.api.descendants(id("root"))).children.isEmpty())

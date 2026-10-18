@@ -18,6 +18,23 @@ import kotlin.test.*
 /** Successful reads use the production Desktop bootstrap, real Room and native temporary Git. */
 class DesktopWorktreeSessionObserverTest {
     @Test
+    fun deletedDurableAndLiveSessionsStayOutOfWorktreeObservations() = withObservationFixture { f ->
+        val unloaded = f.session("deleted-durable")
+        f.context.persistence.flush(unloaded.session)
+        unloaded.dispose()
+        val live = f.session("deleted-live")
+        f.context.persistence.flush(live.session)
+        f.context.persistence.deleteConversation(SessionId("deleted-durable"), 0)
+        f.context.persistence.deleteConversation(SessionId("deleted-live"), 0)
+        f.session("kept")
+        val observation = f.observe()
+        assertEquals(ManagedSessionObservationStatus.Observed, observation.status)
+        assertEquals(listOf("kept"), observation.sessions.map { it.id })
+        assertNotNull(f.context.sessions.get(SessionId("deleted-live")), "Observation must not dispose live sessions")
+        assertEquals(3, f.context.persistence.listHeaders()!!.size, "Raw durable identities remain available")
+    }
+
+    @Test
     fun emptyRoomAndLiveStoreAreAnObservedEmptyReadWithOwnerAndTime() = withObservationFixture { f ->
         val before = System.currentTimeMillis()
         val observation = f.observe()
@@ -33,7 +50,7 @@ class DesktopWorktreeSessionObserverTest {
     }
 
     @Test
-    fun realDurableUnloadedLiveUnflushedAndDualSourcePreserveLineageWithoutWrites() = withObservationFixture { f ->
+    fun realDurableAndAutomaticallySavedLiveSourcesPreserveLineageWithoutWrites() = withObservationFixture { f ->
         val parent = f.session("durable-parent")
         parent.session.append(SessionEventKeys.TurnStart, TurnStartEvent(1L))
         parent.session.append(SessionEventKeys.StepStart, StepStartEvent(1L, 1L))
@@ -63,7 +80,7 @@ class DesktopWorktreeSessionObserverTest {
             assertEquals(setOf(ManagedSessionSource.Durable), byId.getValue("durable-parent").sources)
             assertEquals(setOf(ManagedSessionSource.Durable), byId.getValue("malformed-events").sources)
             assertEquals(setOf(ManagedSessionSource.Live, ManagedSessionSource.Durable), byId.getValue("dual-child").sources)
-            assertEquals(setOf(ManagedSessionSource.Live), byId.getValue("live-unflushed").sources)
+            assertEquals(setOf(ManagedSessionSource.Live, ManagedSessionSource.Durable), byId.getValue("live-unflushed").sources)
             assertEquals("durable-parent", byId.getValue("dual-child").parentSessionId)
             assertEquals("dual-child", byId.getValue("live-unflushed").parentSessionId)
         }
@@ -360,8 +377,9 @@ internal class WorktreeObservationFixture : AutoCloseable {
         observer.observe(binding, owner, listOf(root.toString())) { currentOwner }.getValue(root.toString())
 
     suspend fun registerLinkedWorktree() {
-        assertIs<GitCreateWorktreeResult.Created>(DesktopManagedGitBackend(actual, repository()).createWorktree(
-            gitRepository, GitCreateWorktreeRequest(binding, linked.toString(), "codex/observation")))
+        val result = DesktopManagedGitBackend(actual, repository()).createWorktree(
+            gitRepository, GitCreateWorktreeRequest(binding, linked.toString(), "codex/observation"))
+        assertIs<GitCreateWorktreeResult.Created>(result, result.toString())
     }
 
     suspend fun <T> database(block: suspend (SessionPersistenceDatabase) -> T): T {
