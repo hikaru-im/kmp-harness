@@ -24,7 +24,8 @@ public enum class RailDestination {
  *
  * - First group: `主页 · 定时任务 · 资料库 · 插件`, then `探索`.
  * - `资料库` opens this client's Project workspace, and is labelled 「项目」 to match that surface.
- * - `探索` only opens a pin menu; it never replaces the page.
+ * - `探索` only opens a pin menu; it never replaces the page. It carries the selected highlight while
+ *   the current page is a destination inside its menu that has not been pinned.
  * - Second group: the pinned destinations, initially empty. Pinning `项目` adds the `项目` slot there.
  *
  * `图像 · 站点 · 地图 · GPT · 代码审查` are outside the confirmed scope and are not offered anywhere.
@@ -37,7 +38,7 @@ public fun harnessRailItems(
     accountInitials: String? = null,
     pinned: Set<RailDestination> = emptySet(),
 ): List<AppShellRailItem> =
-    primaryRailItems(selected) +
+    primaryRailItems(selected, pinned) +
         pinnedSecondSection(pinned, selected) +
         AppShellRailItem(
             id = RAIL_ACCOUNT_ID,
@@ -47,7 +48,7 @@ public fun harnessRailItems(
             initials = accountInitials,
         )
 
-private fun primaryRailItems(selected: PageId): List<AppShellRailItem> =
+private fun primaryRailItems(selected: PageId, pinned: Set<RailDestination>): List<AppShellRailItem> =
     listOf(
         AppShellRailItem(
             id = "home",
@@ -81,16 +82,26 @@ private fun primaryRailItems(selected: PageId): List<AppShellRailItem> =
             section = RailSection.Primary,
             destination = RailDestination.Plugins,
         ),
-        // 探索 opens a pin menu; it is never the selected slot itself.
+        // 探索 opens a pin menu. While the current page belongs to one of its destinations and that
+        // destination is not pinned, 探索 itself is the selected slot (Codex marks it
+        // `data-selected` + `aria-current="page"`); a pinned destination selects its own slot.
         AppShellRailItem(
             id = "explore",
             label = "探索",
             icon = HarnessIconName.Explore,
-            selected = false,
+            selected = exploreHoldsCurrentPage(selected, pinned),
             section = RailSection.Primary,
             destination = RailDestination.More,
         ),
     )
+
+/**
+ * True while the current page is a destination the 探索 menu offers and that destination has not
+ * been pinned. Codex then paints 探索 as the selected rail item; once the destination is pinned it
+ * selects its own slot and 探索 goes back to its resting state.
+ */
+internal fun exploreHoldsCurrentPage(selected: PageId, pinned: Set<RailDestination>): Boolean =
+    explorePinOptions().any { it.destination !in pinned && it.selects(selected) }
 
 /** The pinned destinations render in [explorePinOptions] order, so the rail never reorders them. */
 private fun pinnedSecondSection(
