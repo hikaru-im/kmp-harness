@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +41,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import im.hikaru.harness.client.app.ConversationAppearance
+import im.hikaru.harness.client.page.LocalWorkspaceNavigatorVisible
 import im.hikaru.harness.client.app.LocalConversationBottomInset
 import im.hikaru.harness.client.app.LocalConversationViewportHeight
 import im.hikaru.harness.client.panels.ThreadPanelLayout
@@ -78,8 +80,7 @@ public fun AppShell(
     onSettingsSelect: (SettingsNavItem) -> Unit = {},
     /** `settings.nav.back`: leaves Settings for the main app. */
     onSettingsBack: () -> Unit = {},
-    // Reveals the Codex-style header search row. The Workspace navigator no longer keeps a permanent
-    // search box; the header search action opens this row instead.
+    // The search action beneath New Chat reveals the workspace filter field.
     navigatorSearchOpen: Boolean = false,
     onToggleNavigatorSearch: () -> Unit = {},
     onToggleProject: (String) -> Unit,
@@ -116,14 +117,18 @@ public fun AppShell(
     pluginsNavigatorContent: (@Composable () -> Unit)? = null,
 ) {
     HarnessTheme(themeMode = themeMode) {
+        var shellOrigin by remember { mutableStateOf(Offset.Zero) }
+        var accountBounds by remember { mutableStateOf(Rect.Zero) }
         BoxWithConstraints(
-            modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.ShellBackground),
+            modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.ShellBackground)
+                .onGloballyPositioned { shellOrigin = it.boundsInWindow().topLeft },
         ) {
             // Window-rect of the 探索 item, so the popup can anchor beside it.
             var exploreAnchor by remember { mutableStateOf(ExploreMenuAnchor(0, 0)) }
             // Both hover popovers share one state machine (trigger hover tracks the item, content
             // hover keeps it, a short settle closes it) — see HoverPopoverState.
-            val previewPopover = rememberHoverPopoverState<AppShellRailItem>()
+            // Selection changes the rail item's value during navigation; hover lifetime follows its stable id.
+            val previewPopover = rememberHoverPopoverState<String>()
             val explorePopover = rememberHoverPopoverState<String>()
             // Mirror the shared state into the existing menu/anchoring plumbing.
             LaunchedEffect(explorePopover.isOpen) {
@@ -161,7 +166,7 @@ public fun AppShell(
             }
             val navigatorOnScreen = navigatorMounted && layout != NavigatorLayout.Hidden
             val previewKind =
-                previewPopover.activeKey
+                navItems.firstOrNull { it.id == previewPopover.activeKey }
                     ?.destination
                     ?.let(navigatorForDestination)
                     ?.takeIf { !navigatorOnScreen && it != NavigatorKind.None }
@@ -243,7 +248,9 @@ public fun AppShell(
                             )
                         NavigatorKind.Plugins -> {
                             if (pluginsNavigatorContent != null) {
-                                pluginsNavigatorContent()
+                                CompositionLocalProvider(LocalWorkspaceNavigatorVisible provides (layout == NavigatorLayout.Pushed)) {
+                                    pluginsNavigatorContent()
+                                }
                             } else {
                                 PluginsNavigator(state.pluginsNavigator, onPluginEnabledFilterChange)
                             }
@@ -312,6 +319,7 @@ public fun AppShell(
                             navItems = navItems,
                             onNavSelect = onNavSelect,
                             onOpenAccountMenu = onOpenAccountMenu,
+                            onAccountBounds = { accountBounds = it },
                             accountMenu = state.accountMenu,
                             onDismissAccountMenu = onDismissAccountMenu,
                             onAccountMenuAction = onAccountMenuAction,
@@ -320,11 +328,11 @@ public fun AppShell(
                             onDismissExploreMenu = onDismissExploreMenu,
                             onExploreAnchor = { exploreAnchor = it },
                             onExploreHoverChanged = { hov -> explorePopover.onTriggerHover("explore", hov) },
-                            onNavHoverChanged = { item, hov -> previewPopover.onTriggerHover(item, hov) },
+                            onNavHoverChanged = { item, hov -> previewPopover.onTriggerHover(item.id, hov) },
                             // A preview replaces this item's tip: while the current page shows no
                             // navigator column, a hovered destination that has one floats it instead.
                             popoverActiveForItem = { item ->
-                                previewPopover.activeKey?.id == item.id || (item.id == "explore" && explorePopover.isOpen)
+                                previewPopover.activeKey == item.id || (item.id == "explore" && explorePopover.isOpen)
                             },
                             tipSuppressedForItem = { item ->
                                 !navigatorOnScreen &&
@@ -392,7 +400,12 @@ public fun AppShell(
                                                     HarnessTokens.Control.SettingsContentMaxWidth
                                                 else -> HarnessTokens.Control.ContentMaxWidth
                                             },
-                                        content = content,
+                                        content = {
+                                            CompositionLocalProvider(LocalWorkspaceNavigatorVisible provides
+                                                (layout == NavigatorLayout.Pushed && paneSpec.navigator == spec.navigator)) {
+                                                content()
+                                            }
+                                        },
                                         composer = composer,
                                     )
                                 }
@@ -568,6 +581,8 @@ public fun AppShell(
             if (state.accountMenu.isOpen) {
                 AccountMenuOverlay(
                     state = state.accountMenu,
+                    anchorBounds = accountBounds.translate(-shellOrigin),
+                    avatarInitials = navItems.firstOrNull { it.id == RAIL_ACCOUNT_ID }?.initials,
                     onDismiss = onDismissAccountMenu,
                     onAction = onAccountMenuAction,
                 )
@@ -598,6 +613,7 @@ public fun AppRail(
     popoverActiveForItem: (AppShellRailItem) -> Boolean = { false },
     tooltipScope: Any? = Unit,
     tooltipSuppressed: Boolean = false,
+    onAccountBounds: (Rect) -> Unit = {},
 ) {
     val accountItem =
         navItems.firstOrNull { it.id == RAIL_ACCOUNT_ID }
@@ -619,7 +635,7 @@ public fun AppRail(
                     start = HarnessTokens.Spacing.Two,
                     top = HarnessTokens.Spacing.Two,
                     end = HarnessTokens.Spacing.Two,
-                    bottom = HarnessTokens.Spacing.Two,
+                    bottom = HarnessTokens.Control.RailAccountBottomInset,
                 ),
         horizontalAlignment = Alignment.CenterHorizontally,
         // Codex pitch is 44px: a 36px item plus an 8px gap.
@@ -674,6 +690,8 @@ public fun AppRail(
         // column; the rail avatar only opens or dismisses it.
         RailAccountAvatar(
             item = accountItem,
+            expanded = accountMenu.isOpen,
+            modifier = Modifier.onGloballyPositioned { onAccountBounds(it.boundsInWindow()) },
             onClick = {
                 if (accountMenu.isOpen) {
                     onDismissAccountMenu()
@@ -697,6 +715,7 @@ public fun AppRail(
 private fun AccountMenu(
     state: AccountMenuState,
     onAction: (AccountMenuAction) -> Unit,
+    avatarInitials: String?,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(HarnessTokens.Control.MenuRadius)
@@ -719,10 +738,11 @@ private fun AccountMenu(
                 .width(HarnessTokens.Control.MenuWidth)
                 .clip(shape)
                 .background(HarnessTokens.Colors.SurfaceElevated)
+                .semantics { testTag = "account-menu" }
                 .padding(HarnessTokens.Control.MenuPadding)
-                .semantics { testTag = "account-menu" },
+                .verticalScroll(rememberScrollState()),
     ) {
-        AccountMenuIdentity(state)
+        AccountMenuIdentity(state, avatarInitials)
         // The row list is a pure model so the signed-in/out structure is unit-testable; see
         // accountMenuItems in AppShellState.kt.
         accountMenuItems(state).forEach { item ->
@@ -746,63 +766,35 @@ private fun AccountMenu(
 @Composable
 private fun BoxScope.AccountMenuOverlay(
     state: AccountMenuState,
+    anchorBounds: Rect,
+    avatarInitials: String?,
     onDismiss: () -> Unit,
     onAction: (AccountMenuAction) -> Unit,
 ) {
-    Box(
-        modifier =
-            Modifier
-                .matchParentSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) { onDismiss() }
-                .semantics { testTag = "account-menu-scrim" },
-    )
-    AccountMenu(
-        state = state,
-        onAction = onAction,
-        modifier =
-            Modifier
-                .align(Alignment.BottomStart)
-                .padding(
-                    start = HarnessTokens.Control.RailWidth + HarnessTokens.Spacing.Two,
-                    bottom = HarnessTokens.Spacing.Two,
-                ),
-    )
+    HarnessAnchoredOverlay(anchorBounds, onDismiss, "account-menu") {
+        AccountMenu(state = state, onAction = onAction, avatarInitials = avatarInitials)
+    }
 }
 
 /** Identity header: account avatar, name, and the compressed connection line. */
 @Composable
-private fun AccountMenuIdentity(state: AccountMenuState) {
+private fun AccountMenuIdentity(state: AccountMenuState, avatarInitials: String?) {
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .height(HarnessTokens.Control.MenuHeaderHeight)
                 .padding(horizontal = HarnessTokens.Control.MenuItemPaddingX),
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Control.MenuIconGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier =
-                Modifier
-                    .size(HarnessTokens.Control.MenuAvatar)
-                    .clip(CircleShape)
-                    .background(HarnessTokens.Identity.AvatarSurface),
-            contentAlignment = Alignment.Center,
-        ) {
-            HarnessText(
-                railInitials(state.identityLabel),
-                color = HarnessTokens.Identity.OnAvatar,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-            )
-        }
+        HarnessAvatar(avatarInitials, size = HarnessTokens.Control.MenuAvatar)
         Column(modifier = Modifier.weight(1f)) {
             HarnessText(state.identityLabel, style = MaterialTheme.typography.titleSmall, maxLines = 1)
             HarnessText(
-                state.modeLabel + " · " + state.connectionLabel,
+                listOfNotNull(state.modeLabel.takeIf { state.isLoggedIn }, state.connectionLabel)
+                    .filter { it.isNotBlank() && it != state.identityLabel }
+                    .distinct().joinToString(" · "),
                 color = HarnessTokens.Colors.TextMuted,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
@@ -847,11 +839,13 @@ private fun AccountMenuRow(
         horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Control.MenuIconGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HarnessIcon(
-            icon,
-            tint = if (enabled) HarnessTokens.Colors.TextMuted else HarnessTokens.Colors.TextDisabled,
-            size = HarnessTokens.Control.MenuIcon,
-        )
+        Box(Modifier.width(HarnessTokens.Control.MenuLeadingWidth), contentAlignment = Alignment.Center) {
+            HarnessIcon(
+                icon,
+                tint = if (enabled) HarnessTokens.Colors.TextMuted else HarnessTokens.Colors.TextDisabled,
+                size = HarnessTokens.Control.MenuIcon,
+            )
+        }
         HarnessText(
             title,
             modifier = Modifier.weight(1f),
@@ -1112,50 +1106,35 @@ private fun RailNavItem(
 private fun RailAccountAvatar(
     item: AppShellRailItem,
     onClick: () -> Unit,
+    expanded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     // Codex anchors the account chip at the rail bottom and fills it with the account colour and
     // initials; without a colour source yet we use the measured reference fill and fall back to the
     // generic user glyph when the caller has no label to derive initials from.
     val initials = item.initials?.takeIf { it.isNotBlank() }
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
     Box(
-        modifier =
-            Modifier
-                .size(HarnessTokens.Control.RailAvatar)
-                .clip(CircleShape)
-                .background(
-                    if (initials == null) {
-                        HarnessTokens.Colors.SurfaceSelected
-                    } else {
-                        HarnessTokens.Identity.AvatarSurface
-                    },
-                )
-                .then(
-                    if (item.selected) {
-                        Modifier.border(1.dp, HarnessTokens.Colors.BorderStrong, CircleShape)
-                    } else {
-                        Modifier
-                    },
-                )
-                .clickable(enabled = item.enabled, onClick = onClick)
-                .semantics {
-                    role = Role.Tab
-                    testTag = "rail-" + item.id
-                },
+        modifier = modifier.size(HarnessTokens.Control.RailItem)
+            .clip(RoundedCornerShape(HarnessTokens.Control.RailItemRadius))
+            .background(if (expanded || hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+            .hoverable(interactionSource)
+            .clickable(enabled = item.enabled, interactionSource = interactionSource, indication = null, onClick = onClick)
+            .semantics {
+                role = Role.Button
+                contentDescription = item.label
+                stateDescription = if (expanded) "已展开" else "已收起"
+                testTag = "rail-" + item.id
+            },
         contentAlignment = Alignment.Center,
     ) {
-        if (initials == null) {
-            HarnessIcon(HarnessIconName.User, tint = HarnessTokens.Colors.Text, size = 14.dp)
-        } else {
-            HarnessText(
-                initials,
-                color = HarnessTokens.Identity.OnAvatar,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-            )
-        }
+        HarnessAvatar(
+            initials,
+            modifier = if (item.selected) Modifier.border(1.dp, HarnessTokens.Colors.BorderStrong, CircleShape) else Modifier,
+        )
     }
 }
-
 /** Dimming behind the floating navigator; the Codex window dims its surface the same way. */
 private val NavigatorScrim: Color = Color.Black.copy(alpha = 0.32f)
 
@@ -1182,13 +1161,11 @@ private fun WorkspaceNavigator(
     onOpenProjectContext: ((String) -> Unit)?,
 ) {
     val query = navigator.searchQuery.trim()
-    // Codex structure: a workspace-selector header with notification/search actions, a New Chat row,
-    // a 项目 section, then 最近. The Harness subtitle, the permanent search box and the header "+" are
-    // gone, and 已固定 is no longer a separate level.
+    // Keep actions fixed above one scrolling project/conversation list.
     Column(
         modifier = Modifier.fillMaxSize(),
     ) {
-        SidebarHeader(navigator = navigator, searchOpen = searchOpen, onToggleSearch = onToggleSearch)
+        SidebarHeader(navigator = navigator)
         Column(
             modifier =
                 Modifier
@@ -1199,6 +1176,13 @@ private fun WorkspaceNavigator(
             verticalArrangement = Arrangement.spacedBy(HarnessTokens.Control.NavigatorRowGap),
         ) {
             SidebarNewChatRow(onClick = onNewTask)
+            SidebarNewChatRow(
+                label = "搜索会话",
+                onClick = onToggleSearch,
+                selected = searchOpen,
+                icon = HarnessIconName.Search,
+                testTag = "workspace-search",
+            )
             if (searchOpen) {
                 SidebarSearchRow(value = navigator.searchQuery, onValueChange = onSearch)
             }
@@ -1232,7 +1216,7 @@ private fun WorkspaceNavigator(
                                 } else {
                                     node.copy(children = node.children.filter { it.title.contains(query, ignoreCase = true) })
                                 },
-                            expanded = node.projectId in state.navigation.expandedProjectIds,
+                            expanded = query.isNotEmpty() || node.projectId in state.navigation.expandedProjectIds,
                             selectedThreadId = state.navigation.selectedThreadId,
                             onToggle = onToggleProject,
                             onSelectNode = onSelectNode,
@@ -1241,7 +1225,7 @@ private fun WorkspaceNavigator(
                     }
                 }
                 if (visibleRecentTasks.isNotEmpty()) {
-                    SectionLabel("最近")
+                    SectionLabel("最近会话")
                     visibleRecentTasks.forEach { task ->
                         RecentTaskRow(
                             task = task,
@@ -1250,6 +1234,10 @@ private fun WorkspaceNavigator(
                         )
                     }
                 }
+                if (query.isNotEmpty() && projects.isEmpty() && visibleRecentTasks.isEmpty()) {
+                    SidebarHint("没有找到匹配的项目或会话")
+                }
+                Spacer(Modifier.height(HarnessTokens.Spacing.Four))
             }
         }
     }
@@ -1594,32 +1582,38 @@ private fun NavigatorRow(
 @Composable
 private fun SidebarNewChatRow(
     onClick: () -> Unit,
+    label: String = "新聊天",
+    icon: HarnessIconName = HarnessIconName.NewChat,
+    selected: Boolean = false,
+    testTag: String = "new-task",
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .height(HarnessTokens.Control.Row)
                 .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
+                .background(if (selected || hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                .hoverable(interactionSource)
                 .clickable(onClick = onClick)
                 .semantics {
                     role = Role.Button
-                    testTag = "new-task"
+                    this.testTag = testTag
                 }
                 .padding(horizontal = HarnessTokens.Spacing.Two),
         horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HarnessIcon(HarnessIconName.NewChat, tint = HarnessTokens.Colors.Text, size = HarnessTokens.Control.NavigatorIcon)
-        HarnessText("新聊天", color = HarnessTokens.Colors.Text, maxLines = 1)
+        HarnessIcon(icon, tint = HarnessTokens.Colors.Text, size = HarnessTokens.Control.NavigatorIcon)
+        HarnessText(label, color = HarnessTokens.Colors.Text, maxLines = 1)
     }
 }
 
 @Composable
 private fun SidebarHeader(
     navigator: WorkspaceNavigatorState,
-    searchOpen: Boolean,
-    onToggleSearch: () -> Unit,
 ) {
     Row(
         modifier =
@@ -1644,22 +1638,12 @@ private fun SidebarHeader(
         ) {
             HarnessText(
                 navigator.workspaceLabel,
+                modifier = Modifier.weight(1f, fill = false),
                 color = HarnessTokens.Colors.Text,
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
             )
             HarnessIcon(HarnessIconName.ChevronDown, tint = HarnessTokens.Colors.TextMuted, size = HarnessTokens.Control.NavigatorChevron)
-        }
-        HarnessIconButton(
-            contentDescription = "Search",
-            onClick = onToggleSearch,
-            modifier = Modifier.semantics { testTag = "workspace-search" },
-        ) {
-            HarnessIcon(
-                HarnessIconName.Search,
-                tint = if (searchOpen) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextMuted,
-                size = HarnessTokens.Control.NavigatorIcon,
-            )
         }
     }
 }
@@ -1686,7 +1670,7 @@ private fun SidebarSearchRow(
             HarnessIcon(HarnessIconName.Search, tint = HarnessTokens.Colors.TextMuted, size = HarnessTokens.Control.NavigatorChevron)
             Box(modifier = Modifier.weight(1f)) {
                 if (value.isEmpty()) {
-                    HarnessText("搜索", color = HarnessTokens.Colors.TextMuted, maxLines = 1)
+                    HarnessText("搜索项目或会话", color = HarnessTokens.Colors.TextMuted, maxLines = 1)
                 }
                 BasicTextField(
                     value = value,
@@ -1713,11 +1697,11 @@ private fun SectionLabel(text: String) {
                 .fillMaxWidth()
                 .padding(
                     start = HarnessTokens.Control.NavigatorPaddingX,
-                    top = HarnessTokens.Control.NavigatorSectionGap,
+                    top = HarnessTokens.Spacing.Five,
                     bottom = HarnessTokens.Control.NavigatorSectionRun,
                 ),
         color = HarnessTokens.Colors.TextMuted,
-        style = MaterialTheme.typography.titleMedium,
+        style = MaterialTheme.typography.labelMedium,
         maxLines = 1,
     )
 }
@@ -1738,7 +1722,8 @@ private fun RecentTaskRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    // Codex renders the 最近 rows as plain titles: no leading clock, primary text, selected fill.
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
     ConversationContextMenu(task.id) {
         Row(
             modifier =
@@ -1746,10 +1731,12 @@ private fun RecentTaskRow(
                     .fillMaxWidth()
                     .height(HarnessTokens.Control.NavRow)
                     .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
-                    .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .background(if (selected || hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .hoverable(interactionSource)
                     .clickable(onClick = onClick)
                     .semantics {
                         role = Role.Tab
+                        this.selected = selected
                         testTag = "recent-" + task.id
                     }
                     .padding(start = HarnessTokens.Control.NavigatorPaddingX, end = HarnessTokens.Control.NavigatorPaddingX),
@@ -1779,6 +1766,7 @@ private fun ProjectRow(
     onSelectNode: (WorkspaceItemNode) -> Unit,
     onOpenContext: ((String) -> Unit)?,
 ) {
+    var showAll by remember(node.projectId) { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     Column(
@@ -1792,19 +1780,20 @@ private fun ProjectRow(
                     .fillMaxWidth()
                     .height(HarnessTokens.Control.NavRow)
                     .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
+                    .background(if (hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
                     .hoverable(interactionSource)
                     .clickable { onToggle(node.projectId) }
                     .semantics {
                         role = Role.Button
+                        stateDescription = if (expanded) "已展开" else "已收起"
                         testTag = "project-" + node.projectId
                     }
                     .padding(start = HarnessTokens.Control.NavigatorPaddingX, end = HarnessTokens.Control.NavigatorPaddingX),
             horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Codex uses the Projects folder as the leading glyph; expansion is shown by the children,
-            // not a chevron.
-            HarnessIcon(HarnessIconName.Folder, tint = HarnessTokens.Colors.Text, size = HarnessTokens.Control.NavigatorIcon)
+            // Keep expansion visible even when a project has no conversations.
+            HarnessIcon(if (expanded) HarnessIconName.ChevronDown else HarnessIconName.ChevronRight, tint = HarnessTokens.Colors.TextMuted, size = HarnessTokens.Control.NavigatorIcon)
             HarnessText(node.name, modifier = Modifier.weight(1f), color = HarnessTokens.Colors.Text, maxLines = 1)
             // Codex keeps the row action hidden until the row is hovered.
             if (hovered && onOpenContext != null) {
@@ -1814,8 +1803,21 @@ private fun ProjectRow(
             }
         }
         if (expanded) {
-            node.children.forEach { child ->
+            val preview = node.children.take(5).toMutableList()
+            node.children.firstOrNull { it.id == selectedThreadId && it !in preview }?.let { preview.add(it) }
+            val visibleChildren = if (showAll) node.children else preview
+            visibleChildren.forEach { child ->
                 ProjectChildRow(child = child, selected = child.id == selectedThreadId, onClick = { onSelectNode(child) })
+            }
+            if (node.children.size > preview.size) {
+                HarnessButton(
+                    text = if (showAll) "收起会话" else "查看全部 ${node.children.size} 条会话",
+                    onClick = { showAll = !showAll },
+                    variant = HarnessButtonVariant.Ghost,
+                    size = HarnessControlSize.Compact,
+                    modifier = Modifier.padding(start = NavigatorTextIndent),
+                    testTag = "project-show-all-${node.projectId}",
+                )
             }
         }
     }
@@ -1827,6 +1829,8 @@ private fun ProjectChildRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
     // Children align under the project name (no leading glyph), the Codex tree indent.
     ConversationContextMenu(child.id) {
         Row(
@@ -1835,10 +1839,12 @@ private fun ProjectChildRow(
                     .fillMaxWidth()
                     .height(HarnessTokens.Control.NavRow)
                     .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
-                    .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .background(if (selected || hovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .hoverable(interactionSource)
                     .clickable(onClick = onClick)
                     .semantics {
                         role = Role.Tab
+                        this.selected = selected
                         testTag = "node-" + child.id
                     }
                     .padding(start = NavigatorTextIndent, end = HarnessTokens.Control.NavigatorPaddingX),

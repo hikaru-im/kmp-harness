@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
@@ -22,9 +23,7 @@ import im.hikaru.harness.ui.foundation.*
 @Composable
 public fun SettingsFormFrame(title: String, testTag: String, content: @Composable ColumnScope.() -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // The Shell already caps the Settings content column at SettingsContentMaxWidth, so the page uses
-        // the full 728px column and shifts it 8px left, exactly like Settings > General. Every Settings page
-        // then shares one left and right edge; only below 728px does the column fall back to a 16px inset.
+        // The shell owns centering; pages only add an inset when the content column is narrow.
         val narrowContent = maxWidth < HarnessTokens.Control.SettingsContentMaxWidth
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -35,7 +34,7 @@ public fun SettingsFormFrame(title: String, testTag: String, content: @Composabl
                 Modifier.widthIn(max = HarnessTokens.Control.SettingsContentMaxWidth).fillMaxWidth()
                     // A stable geometry anchor for the shared page frame: the contract test measures this
                     // node against the Shell's own main content column.
-                    .then(if (narrowContent) Modifier.padding(horizontal = 16.dp) else Modifier.offset(x = (-8).dp))
+                    .then(if (narrowContent) Modifier.padding(horizontal = 16.dp) else Modifier)
                     .semantics { this.testTag = testTag + "-column" },
                 verticalArrangement = Arrangement.spacedBy(32.dp),
             ) {
@@ -53,29 +52,49 @@ public fun SettingsFormFrame(title: String, testTag: String, content: @Composabl
 }
 
 @Composable
-public fun SettingsFormSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+public fun SettingsFormSection(title: String, titleTag: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        HarnessText(title, Modifier.heightIn(min = 32.dp).padding(bottom = 6.dp), style = MaterialTheme.typography.titleMedium)
+        HarnessText(title, Modifier.semantics { titleTag?.let { testTag = it } }, style = MaterialTheme.typography.titleMedium)
         content()
     }
 }
 
 @Composable
-public fun SettingsFormCard(content: @Composable ColumnScope.() -> Unit) {
+public fun SettingsFormCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(HarnessTokens.Control.SettingsCardRadius)
-    Column(Modifier.fillMaxWidth().background(HarnessTokens.Colors.SurfaceElevated, shape)
+    Column(modifier.fillMaxWidth().background(HarnessTokens.Colors.SurfaceElevated, shape)
         .border(1.dp, HarnessTokens.Colors.BorderSubtle, shape)
         .padding(horizontal = HarnessTokens.Control.SettingsRowInsetX, vertical = 8.dp),
         content = content)
 }
 
+/** Secondary technical information stays available without competing with everyday settings. */
 @Composable
-public fun SettingsFormRow(label: String, description: String? = null, control: @Composable () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 8.dp)) {
+public fun SettingsFormDetails(title: String, testTag: String, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HarnessButton(if (expanded) "收起$title" else title, { expanded = !expanded },
+            variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact, testTag = testTag)
+        if (expanded) content()
+    }
+}
+
+@Composable
+public fun SettingsFormRow(
+    label: String, description: String? = null, modifier: Modifier = Modifier,
+    status: String? = null, statusTag: String? = null, control: @Composable () -> Unit,
+) {
+    BoxWithConstraints(modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 12.dp)) {
         val labelContent: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                HarnessText(label, style = MaterialTheme.typography.bodyMedium)
-                description?.let { HarnessText(it, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    HarnessText(label, style = MaterialTheme.typography.bodyMedium)
+                    status?.let {
+                        HarnessText(it, Modifier.semantics { statusTag?.let { tag -> testTag = tag } },
+                            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                description?.takeIf { it.isNotBlank() }?.let { HarnessText(it, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
             }
         }
         if (maxWidth < 600.dp) {
@@ -126,6 +145,7 @@ public fun SettingsFormInput(
         BasicTextField(
             value = draft, onValueChange = { draft = it }, enabled = enabled, singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = HarnessTokens.Colors.Text),
+            cursorBrush = SolidColor(HarnessTokens.Colors.Text),
             modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp)
                 .onFocusChanged { state -> if (wasFocused && !state.isFocused) commit(); wasFocused = state.isFocused }
                 .onPreviewKeyEvent { event ->

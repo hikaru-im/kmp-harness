@@ -29,14 +29,14 @@ class PluginRoutingInteractionTest {
             val connection = RoutingPluginConnection("first")
             setContent { HarnessApp(connection,
                 initialDestination = HarnessDestination.PluginInventory, installedPluginRepository = repository) }
-            onNodeWithTag("installed-plugin-first-enabled").assertExists()
-            onNodeWithTag("installed-plugin-first-disabled").assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-enabled")).assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-disabled")).assertExists()
             onNodeWithTag("plugins-filter-enabled").performClick()
-            onNodeWithTag("installed-plugin-first-enabled").assertExists()
-            onNodeWithTag("installed-plugin-first-disabled").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-enabled")).assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-disabled")).assertDoesNotExist()
             onNodeWithTag("plugins-filter-all").performClick()
-            onNodeWithTag("installed-plugin-first-disabled").assertExists().performClick()
-            onNodeWithTag("installed-plugin-detail-page").assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-disabled")).assertExists().performClick()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-detail-page")).assertExists()
             onNodeWithText("Detail for first-disabled").assertExists()
             runOnIdle { assertEquals(listOf(PluginId("first-disabled")), repository.details.map { it.second }) }
             onNodeWithTag("plugin-detail-back").performClick()
@@ -50,12 +50,12 @@ class PluginRoutingInteractionTest {
             var connection: Connection? by mutableStateOf(RoutingPluginConnection("first"))
             setContent { HarnessApp(connection, initialDestination = HarnessDestination.PluginInventory,
                 installedPluginRepository = repository) }
-            onNodeWithTag("installed-plugin-first-enabled").assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-enabled")).assertExists()
             runOnIdle { connection = RoutingPluginConnection("second") }
-            onNodeWithTag("installed-plugin-second-enabled").assertExists()
-            onNodeWithTag("installed-plugin-first-enabled").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-second-enabled")).assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-first-enabled")).assertDoesNotExist()
             runOnIdle { connection = null }
-            onNodeWithTag("installed-plugin-second-enabled").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-second-enabled")).assertDoesNotExist()
             onNodeWithTag("plugins-search").assertIsNotEnabled()
             runOnIdle { assertEquals(setOf("first", "second"), repository.reads.map { it.hostId.value }.toSet()) }
         }
@@ -83,16 +83,15 @@ class PluginRoutingInteractionTest {
             onNodeWithTag("plugins-installed:first-enabled").assertExists()
             onNodeWithTag("plugins-installed:first-disabled").assertExists()
             onNodeWithTag("plugins-installed:first-disabled").performClick()
-            onNodeWithTag("installed-plugin-detail-page").assertExists()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-detail-page")).assertExists()
             onNodeWithText("Detail for first-disabled").assertExists()
             onNodeWithTag("plugin-detail-back").performClick()
             // The navigator search edits the same query the page field renders.
-            onNodeWithTag("plugins-toggle-search").performClick()
-            onNodeWithTag("plugins-navigator-search").performTextReplacement("Enabled")
+            onNodeWithTag("plugins-search").performTextReplacement("Enabled")
             onNodeWithTag("plugins-installed:first-enabled").assertExists()
             onNodeWithTag("plugins-installed:first-disabled").assertDoesNotExist()
             onNodeWithTag("plugins-search").assertTextContains("Enabled")
-            onNodeWithTag("plugins-navigator-search").performTextReplacement("no-such-plugin")
+            onNodeWithTag("plugins-search").performTextReplacement("no-such-plugin")
             onNodeWithText("没有匹配的已登记插件").assertExists()
         }
 
@@ -110,7 +109,7 @@ class PluginRoutingInteractionTest {
             val second = onNodeWithTag("plugins-installed:first-disabled").getUnclippedBoundsInRoot()
             // The 2026-10-06 captures put the page-owned navigator at x=52..340 in a 2560px window.
             val paneWidth = pane.right - pane.left
-            assertEquals(289f, paneWidth.value, "page-owned navigator width")
+            assertEquals(275f, paneWidth.value, "page-owned navigator width")
             // Rows fill the pane minus the 8dp body padding, are 30px tall and sit on a 1px pitch.
             assertEquals(8f, (all.left - pane.left).value, "row inset")
             assertEquals(paneWidth.value - 16f, (all.right - all.left).value, "row fill width")

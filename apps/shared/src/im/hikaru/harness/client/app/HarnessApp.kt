@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import im.hikaru.contracts.harness.identity.HostDescription
+import im.hikaru.harness.client.account.AccountWorkspacePage
 import im.hikaru.harness.client.account.AccountException
 import im.hikaru.harness.client.account.AccountState
 import im.hikaru.harness.client.account.BackendTenant
@@ -1384,7 +1385,7 @@ public fun HarnessApp(
 
 
                     PageId.Account ->
-                        AccountScreen(
+                        AccountWorkspacePage(
                             account = account,
                             state = accountState,
                             status = connectionState,
@@ -1749,130 +1750,12 @@ private fun HarnessConnectionState.toIndicatorState() = when (this) {
 }
 
 @Composable
-private fun AccountScreen(
-    account: MemberAccount?,
-    state: AccountState,
-    status: HarnessConnectionState,
-    host: HostDescription?,
-    onOpenSettings: () -> Unit,
-    onLoggedIn: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    var mobile by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("账号", style = MaterialTheme.typography.titleLarge)
-        HarnessSurface(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Four),
-                horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            ) {
-                HarnessBadge(status.label, color = status.toBadgeColor())
-                Column(modifier = Modifier.weight(1f)) {
-                    HarnessText("连接状态", color = HarnessTokens.Colors.Text)
-                    HarnessText(host?.displayName ?: "当前没有选中的 Host", color = HarnessTokens.Colors.TextMuted)
-                }
-            }
-        }
-        // The account panel is the shell overflow: Host and Settings open from here instead of owning
-        // a fixed rail slot.
-        AccountEntryRow(HarnessIconName.Settings, "设置", onOpenSettings)
-        if (account == null) {
-            Text("本地模式无需登录。")
-            Text("连接本地 Harness 不需要远程账号。")
-        } else if (state.session == null) {
-            Text("选择租户后登录远程 Harness。")
-            OutlinedTextField(mobile, { mobile = it }, label = { Text("手机号") }, singleLine = true)
-            OutlinedTextField(password, { password = it }, label = { Text("密码") }, singleLine = true)
-            Button(
-                onClick = {
-                    error = null
-                    loading = true
-                    scope.launch {
-                        try {
-                            account.login(mobile, password)
-                            onLoggedIn()
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: AccountException) {
-                            error = failure.message
-                        } finally {
-                            loading = false
-                        }
-                    }
-                },
-                enabled = !loading && mobile.isNotBlank() && password.isNotBlank() && state.target != null,
-            ) { Text(if (loading) "登录中" else "登录") }
-            if (state.target == null) Text("请先在租户页选择目标。")
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        } else {
-            Text("已登录用户：${state.session.identity.userId}")
-            Text("持久化：${state.persistence.name}")
-            Button(onClick = { scope.launch { account.logout() } }) { Text("退出登录") }
-        }
-    }
-}
-
-@Composable
-private fun AccountEntryRow(
-    icon: HarnessIconName,
-    label: String,
-    onClick: () -> Unit,
-) {
-    HarnessSurface(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Four),
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HarnessIcon(icon, tint = HarnessTokens.Colors.TextMuted)
-            HarnessText(label, modifier = Modifier.weight(1f), color = HarnessTokens.Colors.Text)
-        }
-    }
-}
-
-@Composable
 private fun HarnessConnectionState.toBadgeColor() = when (this) {
     HarnessConnectionState.Online,
     HarnessConnectionState.Local -> HarnessTokens.Colors.Success
     HarnessConnectionState.Disconnected,
     HarnessConnectionState.ProtocolIncompatible -> HarnessTokens.Colors.Danger
     else -> HarnessTokens.Colors.Accent
-}
-
-@Composable
-private fun TenantScreen(account: MemberAccount?, state: AccountState) {
-    val scope = rememberCoroutineScope()
-    var baseUrl by remember { mutableStateOf(state.target?.baseUrl ?: "https://") }
-    var tenantId by remember { mutableStateOf(state.target?.tenantId?.toString() ?: "") }
-    var error by remember { mutableStateOf<String?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("租户", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("后端地址") }, singleLine = true)
-        OutlinedTextField(tenantId, { tenantId = it }, label = { Text("租户 ID") }, singleLine = true)
-        Button(onClick = {
-            val id = tenantId.toLongOrNull()
-            if (account == null || id == null) {
-                error = "请选择有效租户"
-            } else {
-                scope.launch {
-                    try {
-                        account.selectTarget(BackendTenant(baseUrl.trimEnd('/'), id))
-                        error = null
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Throwable) {
-                        error = failure.message ?: "租户不可用"
-                    }
-                }
-            }
-        }) { Text("选择租户") }
-        Text("当前：${state.target?.tenantId ?: "未选择"}")
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-    }
 }
 
 @Composable
@@ -1995,21 +1878,13 @@ private fun BoundGitSettingsPage(
         }
         return
     }
-    Column(Modifier.fillMaxSize()) {
+    val directoryPicker: (@Composable () -> Unit)? =
         if (state.binding?.access == GitAccess.LocalReadOnly && cwdChoices.isNotEmpty()) {
-            Column(
-                Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Four),
-                verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-            ) {
-                HarnessText("会话目录 / 本机初始目录", color = HarnessTokens.Colors.TextMuted)
-                im.hikaru.harness.client.git.GitSessionDirectoryPicker(controller, state, bindingReady, cwdChoices)
-            }
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (worktrees) WorktreesPage(controller, Modifier.fillMaxSize(), managedController = managedWorktrees,
-                worktreeSettings = worktreeSettings, onSaveWorktreeSettings = onSaveWorktreeSettings,
-                sessions = liveSessions, onOpenSession = onOpenSession, onNewChatInWorktree = onNewChatInWorktree)
-            else SettingsGitPage(controller, Modifier.fillMaxSize())
-        }
-    }
+            { im.hikaru.harness.client.git.GitSessionDirectoryPicker(controller, state, bindingReady, cwdChoices, compact = true) }
+        } else null
+    if (worktrees) WorktreesPage(controller, Modifier.fillMaxSize(), managedController = managedWorktrees,
+        worktreeSettings = worktreeSettings, onSaveWorktreeSettings = onSaveWorktreeSettings,
+        sessions = liveSessions, onOpenSession = onOpenSession, onNewChatInWorktree = onNewChatInWorktree,
+        directoryPicker = directoryPicker)
+    else SettingsGitPage(controller, Modifier.fillMaxSize(), directoryPicker = directoryPicker)
 }

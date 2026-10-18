@@ -234,7 +234,15 @@ private fun ComposeUiTest.pluginsPageInputDiagnostic(label: String, tag: String,
     println("PLUGINS_INPUT_DIAGNOSTIC $evidence")
 }
 
-internal fun ComposeUiTest.pluginsPageMouseClick(tag: String) {
+/** The same inventory item lives in the navigator on wide screens and in the page on compact screens. */
+internal fun ComposeUiTest.pluginsPageRowTag(tag: String): String {
+    if (!tag.startsWith("installed-plugin-")) return tag
+    val navigatorTag = "plugins-installed:" + tag.removePrefix("installed-plugin-")
+    return if (onAllNodesWithTag(navigatorTag).fetchSemanticsNodes().isNotEmpty()) navigatorTag else tag
+}
+
+internal fun ComposeUiTest.pluginsPageMouseClick(requestedTag: String) {
+    val tag = pluginsPageRowTag(requestedTag)
     pluginsPageSettle()
     val target = onNodeWithTag(tag).assertIsDisplayed()
     val root = pluginsPagePointerRoot(target)

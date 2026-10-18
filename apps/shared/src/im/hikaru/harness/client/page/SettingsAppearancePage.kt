@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.*
@@ -136,6 +137,7 @@ public fun SettingsAppearancePage(
         HarnessText("支持本客户端的 harness-theme-v1 分享文本。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
         BasicTextField(importDraft, { importDraft = it; importError = null; pendingImport = null }, enabled = enabled,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = HarnessTokens.Colors.Text),
+            cursorBrush = SolidColor(HarnessTokens.Colors.Text),
             modifier = Modifier.widthIn(min = 200.dp, max = 480.dp).fillMaxWidth().heightIn(min = 100.dp, max = 180.dp)
                 .verticalScroll(rememberScrollState()).border(1.dp, HarnessTokens.Colors.BorderStrong, RoundedCornerShape(8.dp))
                 .padding(12.dp).semantics { testTag = "appearance-import-input" })

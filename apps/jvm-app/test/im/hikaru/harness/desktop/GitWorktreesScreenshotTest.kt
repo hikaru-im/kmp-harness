@@ -151,6 +151,7 @@ class GitWorktreesScreenshotTest {
                             }
                             Case.GitLoading, Case.GitDataLoading -> {
                                 onNodeWithTag("git-refresh").assertIsNotEnabled()
+                                revealRepositoryInput()
                                 onNodeWithTag("git-repository-select").assertIsNotEnabled()
                                 onNodeWithTag("git-checkout-branch").assertIsNotEnabled()
                                 onNodeWithTag("git-diff-source").assertIsNotEnabled()
@@ -165,12 +166,13 @@ class GitWorktreesScreenshotTest {
                             Case.GitError, Case.GitUnavailable, Case.GitNotRepository -> {
                                 onNodeWithTag("git-refresh").assertIsEnabled()
                                 onNodeWithTag("git-clean").assertDoesNotExist()
-                                onNodeWithText("已暂存 0 · 未暂存 0 · 未跟踪 0").assertDoesNotExist()
+                                listOf("已暂存 0", "未暂存 0", "未跟踪 0").forEach { onNodeWithText(it).assertDoesNotExist() }
                                 onNodeWithTag("git-diff-source").assertIsNotEnabled()
                             }
                             Case.GitRemote, Case.WorktreesRemote -> {
                                 onNodeWithTag("git-unavailable").assertExists()
                                 onNodeWithTag("git-refresh").assertIsNotEnabled()
+                                revealRepositoryInput()
                                 onNodeWithTag("git-repository-select").assertIsNotEnabled()
                             }
                             Case.GitReadError -> {
@@ -183,7 +185,7 @@ class GitWorktreesScreenshotTest {
                             }
                             Case.GitLongReady -> {
                                 onNodeWithTag("git-repository-root").assertTextEquals(GitWorktreesPageFixture.longRoot)
-                                onNodeWithTag("git-current-branch").performScrollTo().assertTextEquals(GitWorktreesPageFixture.longRef)
+                                onNodeWithTag("git-current-branch").performScrollTo().assertTextEquals(GitWorktreesPageFixture.longRef.removePrefix("refs/heads/"))
                                 save("status-paths")
                             }
                             Case.GitBranchMenu -> {

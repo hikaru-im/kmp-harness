@@ -28,6 +28,7 @@ class GitPageInteractionTest {
                 assertTrue(f.backend.discoveries.isEmpty(), "typing is only a draft")
                 onNodeWithTag("git-repository-select").assertIsEnabled().performMouseInput { click() }
                 waitUntil { f.git.state.value.repository is GitRead.Loading }
+                revealRepositoryInput()
                 onNodeWithTag("git-repository-select").assertIsNotEnabled().performMouseInput { click() }
                 onNodeWithTag("git-repository-path").assertIsNotEnabled()
                 onNodeWithTag("git-refresh").assertIsNotEnabled().performMouseInput { click() }
@@ -42,6 +43,7 @@ class GitPageInteractionTest {
                 runOnIdle { f.backend.readGate = readGate }
                 onNodeWithTag("git-refresh").performScrollTo().assertIsEnabled().performMouseInput { click() }
                 onNodeWithTag("git-refresh").assertIsNotEnabled().performMouseInput { click() }
+                revealRepositoryInput()
                 onNodeWithTag("git-repository-select").assertIsNotEnabled()
                 onNodeWithTag("git-diff-source").assertIsNotEnabled()
                 onNodeWithTag("git-clean").assertDoesNotExist()
@@ -67,7 +69,7 @@ class GitPageInteractionTest {
                     onNodeWithTag(tag).assertExists()
                     onNodeWithTag("git-error").assertTextEquals("controlled discovery failure")
                     onNodeWithTag("git-clean").assertDoesNotExist()
-                    onNodeWithText("已暂存 0 · 未暂存 0 · 未跟踪 0").assertDoesNotExist()
+                    listOf("已暂存 0", "未暂存 0", "未跟踪 0").forEach { onNodeWithText(it).assertDoesNotExist() }
                     onNodeWithTag("git-diff-empty").assertDoesNotExist()
                     onNodeWithTag("git-diff-source").assertIsNotEnabled()
                     runOnIdle { f.backend.discoveryFailure = null }
@@ -185,7 +187,7 @@ class GitPageInteractionTest {
             f.git.refresh()
             runSkikoComposeUiTest(size = Size(600f, 800f)) {
                 setContent { HarnessTheme { SettingsGitPage(f.git) } }
-                onNodeWithText("已暂存 1 · 未暂存 1 · 未跟踪 1").assertExists()
+                listOf("已暂存 1", "未暂存 1", "未跟踪 1").forEach { onNodeWithText(it).assertExists() }
                 onNodeWithText("没有分支引用。").assertDoesNotExist()
                 onNodeWithTag("git-diff-empty").assertDoesNotExist()
                 onNodeWithTag("git-clean").assertDoesNotExist()
@@ -220,6 +222,7 @@ class GitPageInteractionTest {
                 runOnIdle { controller.bind(GitWorktreesPageFixture.binding.copy(access = GitAccess.RemoteUnavailable, generation = 2)) }
                 onNodeWithTag("git-unavailable").assertExists()
                 onNodeWithTag("git-refresh").assertIsNotEnabled()
+                revealRepositoryInput()
                 onNodeWithTag("git-repository-select").assertIsNotEnabled()
                 onNodeWithTag("git-checkout-submit").assertIsNotEnabled()
                 onNodeWithTag("git-commit-open").assertIsNotEnabled()

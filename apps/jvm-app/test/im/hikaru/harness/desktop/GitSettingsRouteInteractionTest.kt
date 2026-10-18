@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -21,16 +23,58 @@ import im.hikaru.harness.client.app.HarnessApp
 import im.hikaru.harness.client.app.HarnessDestination
 import im.hikaru.harness.client.connection.*
 import im.hikaru.harness.client.git.*
+import im.hikaru.harness.client.settings.LocalShortcutsRepository
+import im.hikaru.harness.client.settings.MemoryShortcutsStore
+import im.hikaru.harness.client.settings.ShortcutPlatform
+import im.hikaru.harness.client.settings.ShortcutsRepository
 import im.hikaru.harness.desktop.connection.LocalConnection
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicReference
+import java.io.File
+import org.jetbrains.skia.Image
+import org.jetbrains.skia.EncodedImageFormat
 import kotlin.test.*
 
 /** Complete production route and app-owned GitController; only existing service seams are adapters. */
 @OptIn(ExperimentalTestApi::class)
 class GitSettingsRouteInteractionTest {
+    @Test
+    fun captureIntegratedGitAndWorktreesForReview() {
+        val directory = System.getenv("HARNESS_GIT_SETTINGS_REVIEW_DIR")?.takeIf { it.isNotBlank() }?.let(::File) ?: return
+        directory.mkdirs()
+        for ((width, height) in listOf(1440 to 900, 600 to 800)) {
+            for (theme in listOf(HarnessThemeMode.Light, HarnessThemeMode.Dark)) {
+                val fixture = GitRouteFixture()
+                runSkikoComposeUiTest(size = Size(width.toFloat(), height.toFloat())) {
+                    setGitRouteContent(fixture) {
+                        HarnessApp(fixture.connection, initialDestination = HarnessDestination.Settings,
+                            connectionTransport = ConnectionTransport.Local, gitBackend = fixture.backend,
+                            gitInitialCwd = GitWorktreesPageFixture.root, themeMode = theme)
+                    }
+                    enterGit()
+                    fun save(page: String) {
+                        settleGitLayout()
+                        val bitmap = onRoot().captureToImage()
+                        Image.makeFromBitmap(bitmap.asSkiaBitmap()).use { image ->
+                            val bytes = image.encodeToData(EncodedImageFormat.PNG)?.use { it.bytes } ?: error("PNG encoding failed")
+                            File(directory, "$page-$width-$height-${theme.name.lowercase()}.png").writeBytes(bytes)
+                        }
+                    }
+                    onNodeWithTag("git-repository-path").assertDoesNotExist()
+                    onAllNodesWithText(GitWorktreesPageFixture.root).assertCountEquals(1)
+                    save("git")
+                    selectWorktrees()
+                    awaitRepository(GitWorktreesPageFixture.root)
+                    onNodeWithTag("git-repository-path").assertDoesNotExist()
+                    onAllNodesWithTag("git-repository-root").assertCountEquals(1)
+                    save("worktrees")
+                }
+            }
+        }
+    }
+
     @Test
     fun mouseSettingsAndSessionDirectorySelectionEnterGitAndWorktreesWithActualRepository() {
         for ((width, height) in listOf(1440 to 900, 600 to 800)) {
@@ -44,6 +88,9 @@ class GitSettingsRouteInteractionTest {
                     onNodeWithTag("navigator-overlay").assertIsDisplayed()
                 }
                 enterGit()
+                onNodeWithText("会话目录 / 本机初始目录").assertDoesNotExist()
+                onNodeWithTag("git-repository-path").assertDoesNotExist()
+                onAllNodesWithText(GitWorktreesPageFixture.root).assertCountEquals(1)
                 if (width == 600) {
                     onNodeWithTag("settings-navigator").assertDoesNotExist()
                 } else {
@@ -60,13 +107,13 @@ class GitSettingsRouteInteractionTest {
                 assertEquals(GitWorktreesPageFixture.longRoot, f.reads.discoveries.last().second)
                 assertEquals(GitWorktreesPageFixture.longRoot, f.reads.statusReads.last().root)
                 assertEquals(GitWorktreesPageFixture.binding.hostId, f.reads.statusReads.last().binding.hostId)
-                onNodeWithTag("git-session-cwd-value").assertTextEquals(GitWorktreesPageFixture.longRoot)
+                onNodeWithTag("git-repository-root").assertTextEquals(GitWorktreesPageFixture.longRoot)
                 val picker = onNodeWithTag("git-session-cwd").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-                assertTrue(picker.height in 40f..100f, "long cwd must not expand the fixed header")
+                assertTrue(picker.height in 36f..100f, "a long cwd must not expand the compact directory control")
                 assertTrue(picker.left >= 0f && picker.right <= width.toFloat())
                 scrollGitNodeIntoView(onNodeWithTag("git-diff-source"))
-                assertEquals(picker, onNodeWithTag("git-session-cwd").fetchSemanticsNode().boundsInRoot,
-                    "page scrolling must leave the session picker in place")
+                assertNotEquals(picker, onNodeWithTag("git-session-cwd").fetchSemanticsNode().boundsInRoot,
+                    "directory selection now belongs to the page's repository card")
                 selectWorktrees()
                 if (width == 600) {
                     onNodeWithTag("settings-navigator").assertDoesNotExist()
@@ -94,6 +141,9 @@ class GitSettingsRouteInteractionTest {
                     connectionTransport = ConnectionTransport.Local, gitBackend = f.backend,
                     gitInitialCwd = GitWorktreesPageFixture.root) }
                 enterGit()
+                onNodeWithText("会话目录 / 本机初始目录").assertDoesNotExist()
+                onNodeWithTag("git-repository-path").assertDoesNotExist()
+                onAllNodesWithText(GitWorktreesPageFixture.root).assertCountEquals(1)
                 val oldOption = retainClearOption(f)
                 runOnIdle { f.reads.discoveryGate = discovery; f.reads.readGate = reads }
                 openDirectoryMenu(f)
@@ -109,7 +159,7 @@ class GitSettingsRouteInteractionTest {
                 assertDisabledPickerRejectsMouse()
                 runOnIdle { oldOption() }
                 assertEquals(before, f.reads.discoveries.size)
-                onNodeWithTag("git-session-cwd").assertTextEquals(GitWorktreesPageFixture.longRoot)
+                assertSelectedDirectory(GitWorktreesPageFixture.longRoot)
                 runOnIdle { reads.complete(Unit) }
                 awaitEnabledPicker()
                 // Refresh a ready repository separately: retained current-selection callbacks must
@@ -122,7 +172,7 @@ class GitSettingsRouteInteractionTest {
                     awaitDisabledPicker()
                     assertDisabledPickerRejectsMouse()
                     runOnIdle { currentOption() }
-                    onNodeWithTag("git-session-cwd").assertTextEquals(GitWorktreesPageFixture.longRoot)
+                    assertSelectedDirectory(GitWorktreesPageFixture.longRoot)
                     assertEquals(before, f.reads.discoveries.size)
                     runOnIdle { refreshReads.complete(Unit) }
                     awaitEnabledPicker()
@@ -227,6 +277,9 @@ class GitSettingsRouteInteractionTest {
                     connectionTransport = ConnectionTransport.Local, gitBackend = f.backend,
                     gitInitialCwd = GitWorktreesPageFixture.root) }
                 enterGit()
+                onNodeWithText("会话目录 / 本机初始目录").assertDoesNotExist()
+                onNodeWithTag("git-repository-path").assertDoesNotExist()
+                onAllNodesWithText(GitWorktreesPageFixture.root).assertCountEquals(1)
                 val oldOption = retainClearOption(f)
                 when (mutation) {
                     Mutation.Checkout -> {
@@ -254,7 +307,7 @@ class GitSettingsRouteInteractionTest {
                 val before = f.reads.discoveries.size
                 assertDisabledPickerRejectsMouse()
                 runOnIdle { oldOption() }
-                onNodeWithTag("git-session-cwd").assertTextEquals(GitWorktreesPageFixture.root)
+                assertSelectedDirectory(GitWorktreesPageFixture.root)
                 assertEquals(before, f.reads.discoveries.size)
                 assertEquals(1, f.reads.switches.size + f.reads.creations.size + f.backend.commits.size)
                 runOnIdle { gate.complete(Unit) }
@@ -265,7 +318,9 @@ class GitSettingsRouteInteractionTest {
 
     private fun ComposeUiTest.setGitRouteContent(f: GitRouteFixture, content: @Composable () -> Unit) {
         setContent {
-            CompositionLocalProvider(LocalGitSelectEventObserver provides f.selectObserver) {
+            val shortcuts = remember { ShortcutsRepository(MemoryShortcutsStore(), ShortcutPlatform.Windows) }
+            CompositionLocalProvider(LocalGitSelectEventObserver provides f.selectObserver,
+                LocalShortcutsRepository provides shortcuts) {
                 // Observe the complete app hit path without consuming or replacing any input.
                 Box(Modifier.fillMaxSize().pointerInput(f) {
                     f.events.add("app-probe-start")
@@ -300,9 +355,16 @@ class GitSettingsRouteInteractionTest {
     }
     private fun ComposeUiTest.selectWorktrees() {
         if (onAllNodesWithTag("settings-navigator").fetchSemanticsNodes().isEmpty()) {
-            // Reopen the drawer through its production affordance when the previous selection
-            // dismissed it: the rail always draws the titlebar toggle.
-            clickGitNode(onNodeWithContentDescription("Toggle sidebar").assertIsDisplayed())
+            // This headless shell has no native title bar; use the production sidebar shortcut.
+            scrollGitNodeIntoView(onNodeWithTag("git-session-cwd"))
+                .performSemanticsAction(SemanticsActions.RequestFocus) { request -> assertTrue(request()) }
+            onRoot().performKeyInput {
+                keyDown(Key.CtrlLeft); keyDown(Key.ShiftLeft); pressKey(Key.S)
+                keyUp(Key.ShiftLeft); keyUp(Key.CtrlLeft)
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithTag("settings-navigator").fetchSemanticsNodes().isNotEmpty()
+            }
             onNodeWithTag("navigator-scrim").assertIsDisplayed()
             onNodeWithTag("navigator-overlay").assertIsDisplayed()
         }
@@ -320,8 +382,7 @@ class GitSettingsRouteInteractionTest {
         openDirectoryMenu(f)
         val clear = requireNotNull(onNodeWithTag("menu:0").fetchSemanticsNode().config[SemanticsActions.OnClick].action)
         // Dismiss with a real option click, retaining only the platform callback for the fence check.
-        val selected = onNodeWithTag("git-session-cwd").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text]
-            .single().text
+        val selected = onNodeWithTag("git-session-cwd").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
         clickGitNode(scrollGitNodeIntoView(directoryOption(selected)))
         return clear
     }
@@ -345,7 +406,7 @@ class GitSettingsRouteInteractionTest {
         awaitEnabledPicker()
         val shellBefore = directoryMenuEvidence()
         f.events.add("menu-click-begin shell={$shellBefore}")
-        val pointerEvidence = clickGitNode(onNodeWithTag("git-session-cwd"))
+        val pointerEvidence = clickGitNode(scrollGitNodeIntoView(onNodeWithTag("git-session-cwd")))
         f.events.add("menu-click-end")
         try {
             waitUntil(conditionDescription = "mouse-opened directory menu contains the long cwd option", timeoutMillis = 10_000) {
@@ -382,6 +443,10 @@ class GitSettingsRouteInteractionTest {
     private fun directoryOptionMatcher(cwd: String) = hasText(cwd) and hasClickAction() and !hasTestTag("git-session-cwd") and
         hasAnyAncestor(hasTestTag("git-session-cwd-menu"))
     private fun ComposeUiTest.directoryOption(cwd: String) = onNode(directoryOptionMatcher(cwd))
+    private fun ComposeUiTest.assertSelectedDirectory(cwd: String) {
+        onNodeWithTag("git-session-cwd").assert(SemanticsMatcher.expectValue(
+            androidx.compose.ui.semantics.SemanticsProperties.StateDescription, cwd))
+    }
     private fun ComposeUiTest.awaitDisabledPicker() = waitUntil {
         onAllNodes(hasTestTag("git-session-cwd") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty()
     }
@@ -389,7 +454,7 @@ class GitSettingsRouteInteractionTest {
         onAllNodes(hasTestTag("git-session-cwd") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
     }
     private fun ComposeUiTest.assertDisabledPickerRejectsMouse() {
-        clickGitNode(onNodeWithTag("git-session-cwd").assertIsDisplayed().assertIsNotEnabled())
+        clickGitNode(scrollGitNodeIntoView(onNodeWithTag("git-session-cwd")).assertIsNotEnabled())
         onNodeWithTag("git-session-cwd-menu").assertDoesNotExist()
     }
     private enum class Mutation { Checkout, Create, Commit }

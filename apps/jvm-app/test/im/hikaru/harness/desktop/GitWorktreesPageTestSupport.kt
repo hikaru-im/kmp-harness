@@ -8,6 +8,15 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.test.assertTrue
 
+/** Manual paths are secondary to the confirmed repository summary. */
+@OptIn(ExperimentalTestApi::class)
+internal fun ComposeUiTest.revealRepositoryInput() {
+    if (onAllNodesWithTag("git-repository-select").fetchSemanticsNodes().isEmpty()) {
+        onNodeWithTag("git-repository-edit").performScrollTo().performClick()
+        settleGitLayout()
+    }
+}
+
 /** Complete layout after state/scroll changes before resolving a mouse target's coordinates. */
 @OptIn(ExperimentalTestApi::class)
 internal fun ComposeUiTest.settleGitLayout() {

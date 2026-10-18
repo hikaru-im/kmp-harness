@@ -39,7 +39,7 @@ class PageShellSpecTest {
             )
         noNavigatorPages.forEach { page ->
             assertEquals(NavigatorKind.None, pageShellSpec(page).navigator, "no navigator for " + page)
-            assertEquals(PageShellSpec.NoNavigator, pageShellSpec(page), "no navigator spec for " + page)
+            if (page != PageId.Account) assertEquals(PageShellSpec.NoNavigator, pageShellSpec(page), "no navigator spec for " + page)
         }
     }
 
@@ -58,21 +58,22 @@ class PageShellSpecTest {
      * the shared column, so the Settings/thread layouts cannot be handed a bare surface by accident.
      */
     @Test
-    fun onlyTheNewTabPageBringsItsOwnContentColumn() {
+    fun workspaceManagementPagesAndNewTabOwnTheirContentColumns() {
         assertTrue(pageShellSpec(PageId.NewTab).ownContentColumn)
+        listOf(PageId.Plugins, PageId.PluginDetail("desktop-client"), PageId.Account).forEach {
+            assertTrue(pageShellSpec(it).ownContentColumn)
+            assertFalse(pageShellSpec(it).docksComposer)
+        }
 
         val sharedColumnPages: List<PageId> =
             listOf(
                 PageId.Home,
                 PageId.Thread("thread-1"),
                 PageId.Settings(),
-                PageId.Plugins,
-                PageId.PluginDetail("desktop-client"),
                 PageId.ScheduledTasks(),
                 PageId.Library,
                 PageId.Projects(),
                 PageId.Project("kmp-harness"),
-                PageId.Account,
             )
         sharedColumnPages.forEach { page ->
             assertFalse(pageShellSpec(page).ownContentColumn, "shared content column for " + page)

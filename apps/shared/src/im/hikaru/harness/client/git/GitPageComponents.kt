@@ -22,6 +22,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -71,7 +73,9 @@ internal fun GitPageValue(value: String, tag: String, muted: Boolean = false) {
 
 /** Session picker stays above the page scroll area; retained popup callbacks cannot redirect a new selection. */
 @Composable
-internal fun GitSessionDirectoryPicker(controller: GitController, state: GitState, bindingReady: Boolean, choices: List<String>) {
+internal fun GitSessionDirectoryPicker(
+    controller: GitController, state: GitState, bindingReady: Boolean, choices: List<String>, compact: Boolean = false,
+) {
     val options = (listOf<String?>(null) + choices + listOfNotNull(state.selectedCwd)).distinct()
     val selection = remember(controller, state.binding, state.selectedCwd) { booleanArrayOf(true) }
     val latestSelection by rememberUpdatedState(selection)
@@ -97,7 +101,8 @@ internal fun GitSessionDirectoryPicker(controller: GitController, state: GitStat
                 "liveCanRead=${current.pageCanRead}, selectionAlive=${selection[0]}"))
     }
     key(selection) {
-        GitPageSelect(state.selectedCwd, options, { it ?: "选择目录" }, enabled, "git-session-cwd") { cwd ->
+        GitPageSelect(state.selectedCwd, options, { it ?: "选择目录" }, enabled, "git-session-cwd",
+            triggerLabel = if (compact) "切换目录" else null) { cwd ->
             val live = controller.state.value
             if (selection[0] && latestSelection === selection && latestReady && cwd in latestOptions &&
                 live.binding == state.binding && live.selectedCwd == state.selectedCwd && live.pageCanRead) {
@@ -110,7 +115,8 @@ internal fun GitSessionDirectoryPicker(controller: GitController, state: GitStat
 /** Bounded anchor and scrollable menu, with complete wrapping option labels. */
 @Composable
 internal fun <T> GitPageSelect(
-    value: T, options: List<T>, label: (T) -> String, enabled: Boolean, testTag: String, onSelect: (T) -> Unit,
+    value: T, options: List<T>, label: (T) -> String, enabled: Boolean, testTag: String,
+    triggerLabel: String? = null, onSelect: (T) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val observer = LocalGitSelectEventObserver.current
@@ -157,7 +163,7 @@ internal fun <T> GitPageSelect(
         } finally { latestRecord("pointer-probe-stop", "") }
     }
     BoxWithConstraints(Modifier.fillMaxWidth().then(observation)) {
-        val menuWidth = maxWidth.coerceAtMost(560.dp)
+        val menuWidth = if (triggerLabel != null) 480.dp else maxWidth.coerceAtMost(560.dp)
         // A retained semantics action belongs to its option lifetime, even when index keys and labels match.
         key(optionsLifetime) {
             HarnessMenu(
@@ -186,20 +192,26 @@ internal fun <T> GitPageSelect(
                 },
                 onContentApplied = if (observer == null) null else { -> record("menu-content-applied") },
                 anchor = { toggle ->
-                    HarnessText(label(value), Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                    Row(Modifier.fillMaxWidth().heightIn(min = 36.dp)
                         .border(1.dp, HarnessTokens.Colors.Border, RoundedCornerShape(8.dp))
                         .background(HarnessTokens.Colors.SurfaceElevated, RoundedCornerShape(8.dp))
-                        .testTag(testTag).clickable(enabled = enabled, role = Role.Button) {
+                        .testTag(testTag).semantics { stateDescription = label(value) }
+                        .clickable(enabled = enabled, role = Role.Button) {
                             if (active[0] && latestEnabled) { record("click-before"); toggle(); record("click-after") }
                         }
-                        .padding(horizontal = 12.dp, vertical = 10.dp), maxLines = 2,
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HarnessText(triggerLabel ?: label(value), Modifier.weight(1f), maxLines = 2,
                         color = if (enabled) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextDisabled,
-                        style = MaterialTheme.typography.bodyMedium)
+                            style = MaterialTheme.typography.bodyMedium)
+                        HarnessIcon(HarnessIconName.ChevronDown, size = 14.dp,
+                            tint = if (enabled) HarnessTokens.Colors.TextMuted else HarnessTokens.Colors.TextDisabled)
+                    }
                 },
             )
         }
     }
-    if (label(value).length > 64) GitPageValue(label(value), "$testTag-value", muted = true)
+    if (triggerLabel == null && label(value).length > 64) GitPageValue(label(value), "$testTag-value", muted = true)
 }
 
 @Composable

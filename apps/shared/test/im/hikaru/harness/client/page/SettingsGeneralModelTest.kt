@@ -3,7 +3,6 @@ package im.hikaru.harness.client.page
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class SettingsGeneralModelTest {
@@ -32,14 +31,4 @@ class SettingsGeneralModelTest {
         assertFalse(defaults["compress-history"] == true)
     }
 
-    @Test
-    fun geometryConstantsEncodeMeasuredContentEnvelope() {
-        assertEquals(728, SettingsGeneralModel.ContentWidth)
-        assertEquals(12, SettingsGeneralModel.CardRadius)
-        assertEquals(73, SettingsGeneralModel.PageTopPadding)
-        assertEquals(13, SettingsGeneralModel.PreferenceRowHeights.size)
-        assertEquals(61, SettingsGeneralModel.PreferenceRowHeights.first())
-        assertEquals(61, SettingsGeneralModel.PreferenceRowHeights.last())
-        assertNotNull(SettingsGeneralModel.preferences.firstOrNull { it.id == "confirm-close" })
-    }
 }

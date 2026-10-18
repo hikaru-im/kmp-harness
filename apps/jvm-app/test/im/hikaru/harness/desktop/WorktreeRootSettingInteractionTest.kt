@@ -59,7 +59,7 @@ class WorktreeRootSettingInteractionTest {
                 waitUntil(timeoutMillis = 5_000) {
                     onAllNodesWithTag("git-worktree-create-auto-path").fetchSemanticsNodes().isNotEmpty()
                 }
-                onNodeWithTag("git-worktree-create-auto-path").assertTextContains("/tmp/managed-worktrees/feature-root-seed", substring = true)
+                onNodeWithTag("git-worktree-create-auto-path").assertTextEquals("路径随分支名称自动生成")
                 onNodeWithTag("git-worktree-create-path").assertTextContains("/tmp/managed-worktrees/feature-root-seed", substring = true)
                 onNodeWithTag("git-worktree-create-submit").assertIsEnabled()
             }
@@ -140,7 +140,7 @@ class WorktreeRootSettingInteractionTest {
                 assertTrue(store.value?.autoCleanupEnabled == true)
                 onNodeWithTag("worktree-auto-cleanup-confirm:confirm").performClick()
                 waitUntil(timeoutMillis = 5_000) { store.value?.autoCleanupEnabled == false }
-                onNodeWithTag("worktree-keep-count-description")
+                onNodeWithText("自动删除已停用", substring = true)
                     .assertTextContains("自动删除已停用", substring = true)
             }
         } finally { scope.cancel(); fixture.close() }

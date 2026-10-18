@@ -390,29 +390,28 @@ private fun DrawScope.drawHarnessIcon(
             drawLine(color, Offset(min * 0.63f, min * 0.63f), Offset(min * 0.80f, min * 0.80f), stroke.width, StrokeCap.Round)
         }
         HarnessIconName.Settings -> {
-            drawCircle(color, radius = min * 0.22f, center = Offset(center, center), style = stroke)
-            repeat(8) { index ->
-                val angle = (index * 45f) * kotlin.math.PI.toFloat() / 180f
-                val inner = min * 0.36f
-                val outer = min * 0.46f
-                drawLine(
-                    color,
-                    Offset(center + kotlin.math.cos(angle) * inner, center + kotlin.math.sin(angle) * inner),
-                    Offset(center + kotlin.math.cos(angle) * outer, center + kotlin.math.sin(angle) * outer),
-                    stroke.width,
-                    StrokeCap.Round,
-                )
+            val gear = Path().apply {
+                repeat(48) { index ->
+                    val angle = (index * 7.5f - 90f) * kotlin.math.PI.toFloat() / 180f
+                    val radius = min * if (index % 6 in 1..3) 0.44f else 0.33f
+                    val x = center + kotlin.math.cos(angle) * radius
+                    val y = center + kotlin.math.sin(angle) * radius
+                    if (index == 0) moveTo(x, y) else lineTo(x, y)
+                }
+                close()
             }
+            drawPath(gear, color, style = Stroke(stroke.width, join = StrokeJoin.Round))
+            drawCircle(color, radius = min * 0.14f, center = Offset(center, center), style = stroke)
         }
         HarnessIconName.User -> {
-            drawCircle(color, radius = min * 0.16f, center = Offset(center, min * 0.31f), style = stroke)
+            drawCircle(color, radius = min * 0.15f, center = Offset(center, min * 0.29f), style = stroke)
             drawArc(
                 color,
-                205f,
-                130f,
+                180f,
+                180f,
                 false,
-                topLeft = Offset(min * 0.23f, min * 0.38f),
-                size = Size(min * 0.54f, min * 0.42f),
+                topLeft = Offset(min * 0.20f, min * 0.52f),
+                size = Size(min * 0.60f, min * 0.60f),
                 style = stroke,
             )
         }

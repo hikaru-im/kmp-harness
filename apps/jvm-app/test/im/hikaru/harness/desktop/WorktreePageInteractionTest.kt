@@ -43,7 +43,7 @@ class WorktreePageInteractionTest {
                 waitUntil { f.ready() && f.managed.state.value.phase == ManagedWorktreePhase.Ready }
                 assertEquals(GitWorktreesPageFixture.longRoot, f.managedReads.calls.last().root)
                 onNodeWithTag("git-repository-root").assertTextEquals(GitWorktreesPageFixture.longRoot)
-                onNodeWithText("此列表不证明", substring = true).assertExists()
+                onNodeWithText("包含未托管的工作树", substring = true).assertExists()
             }
         } finally { gate.complete(Unit); f.close() }
     }
@@ -133,6 +133,7 @@ class WorktreePageInteractionTest {
                 onNodeWithTag("git-worktree-create-path").assertIsNotEnabled()
                 onNodeWithTag("git-worktree-create-branch").assertIsNotEnabled()
                 onNodeWithTag("git-worktree-create-start").assertIsNotEnabled()
+                revealRepositoryInput()
                 onNodeWithTag("git-repository-select").assertIsNotEnabled()
                 onNodeWithTag("managed-refresh").assertIsNotEnabled()
                 onNodeWithTag("git-worktree-create-success").assertDoesNotExist()
@@ -201,7 +202,7 @@ class WorktreePageInteractionTest {
             f.git.refresh()
             runSkikoComposeUiTest(size = Size(600f, 800f)) {
                 setContent { HarnessTheme { WorktreesPage(f.git) } }
-                onNodeWithTag("managed-unavailable").assertTextEquals("Managed 登记服务不可用。")
+                onNodeWithTag("managed-unavailable").assertTextEquals("托管管理暂不可用。")
                 onNodeWithTag("managed-refresh").assertDoesNotExist()
                 onNodeWithTag("git-worktrees-empty").assertDoesNotExist()
                 onNodeWithText("worktree inventory failed").assertExists()
