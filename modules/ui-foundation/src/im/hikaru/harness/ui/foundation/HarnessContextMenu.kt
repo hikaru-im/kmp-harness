@@ -78,6 +78,10 @@ public fun HarnessContextMenuArea(
     }
 }
 
+// Keep native focus in the root popup and route keys to the deepest open menu.
+private class MenuKeyRouter { var handler: ((KeyEvent) -> Boolean)? = null }
+private val LocalMenuKeyRouter = staticCompositionLocalOf<MenuKeyRouter?> { null }
+
 /** Reusable menu card: grouped actions, hover/click submenus, and arrow-key navigation. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -95,32 +99,38 @@ public fun HarnessMenuCard(
         if (!item.enabled) return
         if (item.children.isNotEmpty()) submenu = item.id else onAction(item.id)
     }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    val parentRouter = LocalMenuKeyRouter.current
+    val childRouter = remember { MenuKeyRouter() }
+    LaunchedEffect(Unit) { if (parentRouter == null) focus.requestFocus() }
     val cardSize = if (compact) Modifier.widthIn(min = 148.dp, max = 264.dp).width(IntrinsicSize.Max)
         else Modifier.width(264.dp)
-    Surface(modifier.then(cardSize).semantics { testTag = "context-menu-card" }
-        .focusRequester(focus).onPreviewKeyEvent { event ->
-            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                Key.DirectionDown, Key.DirectionUp -> {
-                    val available = entries.indices.filter { (entries[it] as? HarnessContextMenuEntry.Item)?.enabled == true }
-                    if (available.isNotEmpty()) {
-                        val current = available.indexOf(active)
-                        active = available[if (event.key == Key.DirectionDown) (current + 1).mod(available.size)
-                            else if (current < 0) available.lastIndex else (current - 1).mod(available.size)]
-                        submenu = null
-                    }
-                    true
+    val handleKey: (KeyEvent) -> Boolean = { event ->
+        if (submenu != null && childRouter.handler?.invoke(event) == true) true
+        else if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+            Key.DirectionDown, Key.DirectionUp -> {
+                val available = entries.indices.filter { (entries[it] as? HarnessContextMenuEntry.Item)?.enabled == true }
+                if (available.isNotEmpty()) {
+                    val current = available.indexOf(active)
+                    active = available[if (event.key == Key.DirectionDown) (current + 1).mod(available.size)
+                        else if (current < 0) available.lastIndex else (current - 1).mod(available.size)]
+                    submenu = null
                 }
-                Key.Enter, Key.NumPadEnter, Key.DirectionRight -> {
-                    (entries.getOrNull(active) as? HarnessContextMenuEntry.Item)?.let { item ->
-                        if (event.key != Key.DirectionRight || item.children.isNotEmpty()) activate(item)
-                    }
-                    true
-                }
-                Key.Escape, Key.DirectionLeft -> { onDismissRequest(); true }
-                else -> false
+                true
             }
-        }.focusable(), shape = RoundedCornerShape(8.dp),
+            Key.Enter, Key.NumPadEnter, Key.DirectionRight -> {
+                (entries.getOrNull(active) as? HarnessContextMenuEntry.Item)?.let { item ->
+                    if (event.key != Key.DirectionRight || item.children.isNotEmpty()) activate(item)
+                }
+                true
+            }
+            Key.Escape, Key.DirectionLeft -> { onDismissRequest(); true }
+            else -> false
+        }
+    }
+    SideEffect { parentRouter?.handler = handleKey }
+    DisposableEffect(parentRouter) { onDispose { parentRouter?.handler = null } }
+    Surface(modifier.then(cardSize).semantics { testTag = "context-menu-card" }
+        .focusRequester(focus).onPreviewKeyEvent(handleKey).focusable(), shape = RoundedCornerShape(8.dp),
         color = HarnessTokens.Colors.Surface,
         border = BorderStroke(0.5.dp, HarnessTokens.Colors.Text.copy(alpha = 0.12f)), shadowElevation = 12.dp,
     ) {
@@ -164,9 +174,13 @@ public fun HarnessMenuCard(
                                     harnessPopoverPosition(anchorBounds, windowSize, popupContentSize,
                                         side = HarnessPopoverSide.End, sideOffset = 0, layoutDirection = layoutDirection)
                             } }
-                            Popup(provider, onDismissRequest = onDismissRequest,
-                                properties = PopupProperties(focusable = true)) {
-                                HarnessMenuCard(entry.children, onAction, { submenu = null; focus.requestFocus() }, compact = true)
+                            // Only the root popup owns outside-click dismissal. A focusable child
+                            // treats the parent menu as outside and intercepts its mouse input.
+                            Popup(provider, onDismissRequest = { submenu = null; focus.requestFocus() },
+                                properties = PopupProperties(focusable = false)) {
+                                CompositionLocalProvider(LocalMenuKeyRouter provides childRouter) {
+                                    HarnessMenuCard(entry.children, onAction, { submenu = null; focus.requestFocus() }, compact = true)
+                                }
                             }
                         }
                     }

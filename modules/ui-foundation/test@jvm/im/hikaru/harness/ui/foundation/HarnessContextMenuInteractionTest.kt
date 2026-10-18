@@ -108,6 +108,32 @@ class HarnessContextMenuInteractionTest {
         onNodeWithTag("context-menu-rename").assertDoesNotExist()
     }
 
+    @Test fun mouseReturnsFromSubmenuAndSwitchesParentActions() = runSkikoComposeUiTest(size = Size(800f, 600f)) {
+        val actions = mutableListOf<String>()
+        setContent {
+            HarnessTheme {
+                HarnessContextMenuArea(listOf(
+                    HarnessContextMenuEntry.Item("rename", "重命名"),
+                    HarnessContextMenuEntry.Item("copy", "复制", children = listOf(
+                        HarnessContextMenuEntry.Item("copy-id", "复制会话 ID"))),
+                    HarnessContextMenuEntry.Item("more", "更多", children = listOf(
+                        HarnessContextMenuEntry.Item("other", "其他操作"))),
+                ), onAction = actions::add) { Box(Modifier.size(40.dp).testTag("chat")) }
+            }
+        }
+        onNodeWithTag("chat").performMouseInput { click(button = MouseButton.Secondary) }
+        onNodeWithTag("context-menu-copy").performMouseInput { moveTo(center) }
+        onNodeWithTag("context-menu-copy-id").performMouseInput { moveTo(center) }
+        onNodeWithTag("context-menu-copy-id").assertIsDisplayed()
+        onNodeWithTag("context-menu-more").performMouseInput { moveTo(center) }
+        onNodeWithTag("context-menu-copy-id").assertDoesNotExist()
+        onNodeWithTag("context-menu-other").assertIsDisplayed().performMouseInput { moveTo(center) }
+        // Clicking the parent must dispatch on the first click, even while a child is open.
+        onNodeWithTag("context-menu-rename").performMouseInput { click() }
+        assertEquals(listOf("rename"), actions)
+        onNodeWithTag("context-menu-card").assertDoesNotExist()
+    }
+
     @Test fun keyboardEntersAndLeavesSubmenu() = runSkikoComposeUiTest(size = Size(800f, 600f)) {
         val actions = mutableListOf<String>()
         setContent {
