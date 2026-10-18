@@ -128,3 +128,30 @@ public fun navigatorResizeWidth(
     val upper = maxOf(ceiling, floor)
     return (currentWidth + dragDelta).coerceIn(floor, upper)
 }
+
+/** Extra inward travel after reaching the minimum; keeps merely touching the edge from closing it. */
+public val NavigatorCollapseDragDistance: Dp = 24.dp
+
+/** One pointer gesture, independent of recomposition. Collapsing is emitted only once per gesture. */
+public class NavigatorResizeDragState {
+    private var width: Dp = NavigatorMinWidth
+    private var inwardTravel: Dp = 0.dp
+    private var collapsed: Boolean = false
+
+    public fun start(currentWidth: Dp) {
+        width = currentWidth
+        inwardTravel = 0.dp
+        collapsed = false
+    }
+
+    public fun drag(delta: Dp, layout: NavigatorLayout, availableWidth: Dp): NavigatorResizeResult {
+        if (collapsed || layout == NavigatorLayout.Hidden) return NavigatorResizeResult(width, false)
+        val requested = width + delta
+        inwardTravel = if (delta > 0.dp) 0.dp else inwardTravel + maxOf(0.dp, NavigatorMinWidth - requested)
+        width = navigatorResizeWidth(width, delta, layout, availableWidth)
+        collapsed = inwardTravel >= NavigatorCollapseDragDistance
+        return NavigatorResizeResult(width, collapsed)
+    }
+}
+
+public data class NavigatorResizeResult(val width: Dp, val collapse: Boolean)
