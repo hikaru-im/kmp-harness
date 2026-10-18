@@ -19,7 +19,7 @@ class ManagedWorktreeInteractionTest {
         try {
             runSkikoComposeUiTest(size = Size(640f, 1000f)) {
                 setContent { HarnessTheme { WorktreesPage(fixture.git) } }
-                onNodeWithTag("managed-unavailable").performScrollTo().assertTextEquals("Managed 登记服务不可用。")
+                onNodeWithTag("managed-unavailable").performScrollTo().assertTextEquals("托管管理暂不可用。")
                 onNodeWithTag("managed-refresh").assertDoesNotExist()
                 onNodeWithTag("git-worktree-create-submit").performScrollTo().assertIsNotEnabled()
                 assertEquals(0, fixture.reads.calls)

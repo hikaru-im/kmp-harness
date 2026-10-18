@@ -2,7 +2,6 @@
 
 package im.hikaru.harness.client.plugins
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -44,6 +43,7 @@ import im.hikaru.harness.ui.foundation.HarnessSearchField
 import im.hikaru.harness.ui.foundation.HarnessSurface
 import im.hikaru.harness.ui.foundation.HarnessText
 import im.hikaru.harness.ui.foundation.HarnessTextField
+import im.hikaru.harness.client.page.*
 import im.hikaru.harness.ui.foundation.HarnessTokens
 
 /** Parent owns routing, scope binding and controller lifetime. This page only emits typed actions. */
@@ -53,41 +53,43 @@ public fun InstalledPluginsPage(
     onAction: (InstalledPluginsAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val navigatorVisible = LocalWorkspaceNavigatorVisible.current
     PluginPageFrame(modifier, "installed-plugins-page") { compact ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().semantics { testTag = "plugin-inventory-list" },
-            verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-        ) {
-            item {
-                PluginListHeader(state, onAction, compact)
-            }
-            item { PluginManagementFeedback(state) }
-            when (val list = state.list) {
-                is PluginLoadState.Success -> {
-                    val visible = state.visiblePlugins.orEmpty()
-                    if (list.value.isEmpty()) {
-                        item { HarnessEmptyState(
-                            if (state.hasManagementAdapter) "尚无已登记插件" else "尚无已安装插件",
-                            description = if (state.hasManagementAdapter) "添加本地插件以登记源目录。" else "当前主机的插件服务返回了空列表。",
-                        ) }
-                    } else if (visible.isEmpty()) {
-                        item { HarnessEmptyState("没有匹配的插件", description = "试试其他搜索词。") }
-                    } else {
-                        items(visible, key = { it.id.value }) { plugin ->
-                            InstalledPluginRow(plugin, state.selectedId == plugin.id) {
-                                onAction(InstalledPluginsAction.Select(plugin.id))
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            PluginListHeader(state, onAction, compact, showSearch = !navigatorVisible)
+            PluginManagementFeedback(state)
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when (val list = state.list) {
+                    is PluginLoadState.Success -> {
+                        val visible = state.visiblePlugins.orEmpty()
+                        when {
+                            list.value.isEmpty() -> WorkspaceEmptyState(
+                                if (state.hasManagementAdapter) "尚无已登记插件" else "尚无已安装插件",
+                                description = "添加插件后，可在这里查看和管理。",
+                                action = if (state.hasManagementAdapter) ({
+                                    HarnessButton("添加本地插件", { onAction(InstalledPluginsAction.BeginRegistration) },
+                                        enabled = state.canManage, testTag = "plugins-empty-add")
+                                }) else null,
+                            )
+                            visible.isEmpty() -> WorkspaceEmptyState("没有匹配的插件", "试试其他搜索词或筛选条件。")
+                            navigatorVisible -> WorkspaceEmptyState("选择插件查看详情", "从左侧列表选择插件，查看说明、Skills 和启用状态。")
+                            else -> LazyColumn(
+                                modifier = Modifier.fillMaxSize().semantics { testTag = "plugin-inventory-list" },
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                items(visible, key = { it.id.value }) { plugin ->
+                                    InstalledPluginRow(plugin, state.selectedId == plugin.id) {
+                                        onAction(InstalledPluginsAction.Select(plugin.id))
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                else -> item {
-                    PluginReadFeedback(
-                        state.list,
-                        onRetry = if (state.canRefresh) ({ onAction(InstalledPluginsAction.Refresh) }) else null,
-                    )
+                    else -> PluginReadFeedback(state.list,
+                        onRetry = if (state.canRefresh) ({ onAction(InstalledPluginsAction.Refresh) }) else null)
                 }
             }
-            if (!state.hasManagementAdapter) item { UnsupportedManagementNotice() }
+            if (!state.hasManagementAdapter) UnsupportedManagementNotice()
         }
     }
     PluginManagementDialogs(state, onAction)
@@ -105,22 +107,28 @@ public fun InstalledPluginDetailPage(
             verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
         ) {
             item {
-                FlowRow(Modifier.fillMaxWidth().semantics { testTag = "plugin-detail-actions" },
-                    horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-                    verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-                    HarnessButton(
-                        if (state.hasManagementAdapter) "返回已登记插件" else "返回已安装插件",
-                        { onAction(InstalledPluginsAction.Back) },
-                        variant = HarnessButtonVariant.Ghost,
-                        size = HarnessControlSize.Compact,
-                        testTag = "plugin-detail-back",
-                    )
-                    HarnessButton("刷新", { onAction(InstalledPluginsAction.Refresh) }, enabled = state.canRefresh,
-                        variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
-                        testTag = "plugin-detail-refresh")
+                WorkspacePageHeader(title = {
                     val plugin = (state.detail as? PluginLoadState.Success)?.value?.plugin
-                    if (state.hasManagementAdapter && plugin != null) {
-                        PluginManagementControls(state, plugin, onAction)
+                    if (plugin != null) PluginSelectableValue(plugin.name, "plugin-detail-name", title = true)
+                    else HarnessText("插件详情", style = MaterialTheme.typography.headlineSmall)
+                }) {
+                    FlowRow(Modifier.widthIn(max = 520.dp).semantics { testTag = "plugin-detail-actions" },
+                        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+                        verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
+                        HarnessButton(
+                            if (state.hasManagementAdapter) "返回已登记插件" else "返回已安装插件",
+                            { onAction(InstalledPluginsAction.Back) },
+                            variant = HarnessButtonVariant.Ghost,
+                            size = HarnessControlSize.Compact,
+                            testTag = "plugin-detail-back",
+                        )
+                        HarnessButton("刷新", { onAction(InstalledPluginsAction.Refresh) }, enabled = state.canRefresh,
+                            variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
+                            testTag = "plugin-detail-refresh")
+                        val plugin = (state.detail as? PluginLoadState.Success)?.value?.plugin
+                        if (state.hasManagementAdapter && plugin != null) {
+                            PluginManagementControls(state, plugin, onAction)
+                        }
                     }
                 }
             }
@@ -128,11 +136,7 @@ public fun InstalledPluginDetailPage(
             when (val detail = state.detail) {
                 is PluginLoadState.Success -> {
                     item {
-                        val plugin = detail.value.plugin
-                        PluginSelectableValue(plugin.name, "plugin-detail-name", title = true)
-                        if (state.hasManagementAdapter) HarnessText("启用或停用将在下一次 Agent 请求中生效。",
-                            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-                        if (state.hasLocalUpdateAdapter) HarnessText("从原源目录重新保存 Skills 快照，保留启用状态；下一次 Agent 请求生效。",
+                        if (state.hasManagementAdapter) HarnessText("更改将在下一次 Agent 请求中生效。",
                             color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                     }
                     item {
@@ -142,12 +146,12 @@ public fun InstalledPluginDetailPage(
                                 verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
                             ) {
                                 val plugin = detail.value.plugin
-                                HarnessText("文字可选择并复制；长内容可在字段内滚动。",
-                                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+
                                 PluginField("说明", plugin.description ?: "服务未提供说明", "plugin-detail-description")
                                 PluginField("版本", plugin.version ?: "服务未提供版本", "plugin-detail-version")
                                 PluginField("来源", plugin.source ?: "服务未提供来源", "plugin-detail-source")
                                 PluginField("状态", enabledLabel(plugin.enabled), "plugin-detail-status")
+                                state.scope?.let { PluginField("主机", it.hostId.value, "plugin-detail-host") }
                             }
                         }
                     }
@@ -234,62 +238,40 @@ private fun PluginPageFrame(
     tag: String,
     content: @Composable (compact: Boolean) -> Unit,
 ) {
-    BoxWithConstraints(
-        modifier.fillMaxSize().background(HarnessTokens.Colors.SurfaceElevated).semantics { testTag = tag },
-    ) {
-        val compact = maxWidth < 480.dp
-        val inset = if (compact) HarnessTokens.Spacing.Three else HarnessTokens.Spacing.Four
-        Box(
-            Modifier.align(Alignment.TopCenter).widthIn(max = 760.dp).fillMaxSize().padding(inset),
-        ) { content(compact) }
+    WorkspacePageFrame(tag, modifier) {
+        BoxWithConstraints(Modifier.fillMaxSize()) { content(maxWidth < 600.dp) }
     }
 }
-
 @Composable
 private fun PluginListHeader(
     state: InstalledPluginsState,
     onAction: (InstalledPluginsAction) -> Unit,
     compact: Boolean,
+    showSearch: Boolean,
 ) {
-    val title = if (state.hasManagementAdapter) "已登记插件" else "已安装插件"
     Column(Modifier.fillMaxWidth().semantics { testTag = "plugins-header" },
-        verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-        FlowRow(Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three),
-            verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-            HarnessText(title, style = MaterialTheme.typography.headlineSmall)
-            HarnessButton("刷新", { onAction(InstalledPluginsAction.Refresh) },
-                enabled = state.canRefresh, variant = HarnessButtonVariant.Secondary,
-                size = HarnessControlSize.Compact, testTag = "plugins-refresh")
-            if (state.hasManagementAdapter) {
-                HarnessButton("添加本地插件", { onAction(InstalledPluginsAction.BeginRegistration) },
-                    enabled = state.canManage, size = HarnessControlSize.Compact, testTag = "plugins-add-local")
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        WorkspacePageHeader("插件") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                HarnessButton("刷新", { onAction(InstalledPluginsAction.Refresh) }, enabled = state.canRefresh,
+                    variant = HarnessButtonVariant.Secondary, testTag = "plugins-refresh")
+                if (state.hasManagementAdapter) HarnessButton("添加本地插件", { onAction(InstalledPluginsAction.BeginRegistration) },
+                    enabled = state.canManage, testTag = "plugins-add-local")
             }
         }
-        state.scope?.let {
-            SelectionContainer { HarnessText("主机：" + it.hostId.value,
-                color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
-        }
-        if (state.hasManagementAdapter) {
-            HarnessText("登记本地目录并保存 Skills 文本快照；添加后默认停用。",
-                color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-        }
-        FlowRow(Modifier.fillMaxWidth().semantics { testTag = "plugins-search-actions" },
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
-            verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
+        if (showSearch) FlowRow(Modifier.fillMaxWidth().semantics { testTag = "plugins-search-actions" },
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             HarnessSearchField(state.searchQuery, { onAction(InstalledPluginsAction.Search(it)) },
-                placeholder = if (state.hasManagementAdapter) "搜索本地插件" else "搜索已安装插件",
-                accessibilityLabel = if (state.hasManagementAdapter) "搜索本地插件" else "搜索已安装插件",
-                modifier = Modifier.widthIn(max = if (compact) 320.dp else 224.dp).fillMaxWidth(),
+                placeholder = "搜索插件", accessibilityLabel = "搜索插件",
+                modifier = Modifier.widthIn(max = if (compact) 440.dp else 320.dp).fillMaxWidth(),
                 enabled = state.canSearch, testTag = "plugins-search")
             HarnessButton(if (state.enabledOnly) "显示全部插件" else "仅显示已启用",
                 { onAction(InstalledPluginsAction.SetEnabledOnly(!state.enabledOnly)) },
                 enabled = state.canSearch, selected = state.enabledOnly, variant = HarnessButtonVariant.Ghost,
-                size = HarnessControlSize.Compact, testTag = "plugins-enabled-only")
+                testTag = "plugins-enabled-only")
         }
     }
 }
-
 @Composable
 private fun InstalledPluginRow(plugin: InstalledPlugin, selected: Boolean, onClick: () -> Unit) {
     HarnessSurface(Modifier.fillMaxWidth(), selected = selected) {

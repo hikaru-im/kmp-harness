@@ -658,6 +658,8 @@ public object HarnessTokens {
         public val RailItemRadius: Dp = 10.dp
         /** Rail account avatar diameter: the Codex bottom identity chip measures 24px. */
         public val RailAvatar: Dp = 24.dp
+        /** Bottom account control reserves a full button and breathing room above the window edge. */
+        public val RailAccountBottomInset: Dp = 16.dp
         /** Rail group divider width: the Codex rail rule is `w-6`, i.e. 24px, centred in the rail. */
         public val RailDividerWidth: Dp = 24.dp
         /**
@@ -773,6 +775,8 @@ public object HarnessTokens {
         public val MenuIcon: Dp = 16.dp
         /** Item icon-to-label gap, Codex `--spacing-menu-item-content` = `spacing * 1.5` = 6px. */
         public val MenuIconGap: Dp = 6.dp
+        /** Identity avatars and action glyphs share the same leading column. */
+        public val MenuLeadingWidth: Dp = 24.dp
         /** Separator block margin, Codex `--app-menu-separator-gutter` = `spacing` = 4px. */
         public val MenuSeparatorGutter: Dp = 4.dp
         /** Identity header height: avatar row above the first item. */

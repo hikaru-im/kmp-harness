@@ -6,6 +6,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import im.hikaru.harness.client.app.HarnessTitleStripState
+import im.hikaru.harness.client.app.LocalHarnessTitleStrip
+import im.hikaru.harness.ui.foundation.HarnessButton
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.v2.runSkikoComposeUiTest
@@ -42,14 +51,15 @@ class PluginsPageInteractionTest {
                 onNodeWithTag("plugins-search").performTextInput("Plugin 1")
                 pluginsPageSettle()
                 onNodeWithTag("plugins-search").assertTextContains("Plugin 1")
-                onNodeWithTag("installed-plugin-search-host-1").assertIsDisplayed()
-                onNodeWithTag("installed-plugin-search-host-0").assertDoesNotExist()
-                pluginsPageMouseClick("plugins-enabled-only")
-                waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("plugins-enabled-only") and hasText("显示全部插件"))
+                onNodeWithTag(pluginsPageRowTag("installed-plugin-search-host-1")).assertIsDisplayed()
+                onNodeWithTag(pluginsPageRowTag("installed-plugin-search-host-0")).assertDoesNotExist()
+                pluginsPageMouseClick(if (size.width == 1440f) "plugins-filter-enabled" else "plugins-enabled-only")
+                if (size.width == 1440f) onNodeWithTag("plugins-filter-enabled").assertIsSelected()
+                else waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("plugins-enabled-only") and hasText("显示全部插件"))
                     .fetchSemanticsNodes().isNotEmpty() }
                 onNodeWithText("没有匹配的插件").assertExists()
-                pluginsPageMouseClick("plugins-enabled-only")
-                waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("installed-plugin-search-host-1").fetchSemanticsNodes().isNotEmpty() }
+                pluginsPageMouseClick(if (size.width == 1440f) "plugins-filter-all" else "plugins-enabled-only")
+                waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag(pluginsPageRowTag("installed-plugin-search-host-1")).fetchSemanticsNodes().isNotEmpty() }
                 pluginsPageMouseClick("installed-plugin-search-host-1")
                 pluginsPageAwaitEnabled("plugin-set-enabled")
                 pluginsPageAssertNavigator(pushed = size.width == 1440f)
@@ -57,7 +67,7 @@ class PluginsPageInteractionTest {
                 pluginsPageMouseClick("plugin-detail-back")
                 pluginsPageAssertNavigator(pushed = size.width == 1440f)
                 onNodeWithTag("plugins-search").assertTextContains("Plugin 1")
-                onNodeWithTag("installed-plugin-search-host-1").assertIsDisplayed()
+                onNodeWithTag(pluginsPageRowTag("installed-plugin-search-host-1")).assertIsDisplayed()
             }
         }
     }
@@ -66,8 +76,8 @@ class PluginsPageInteractionTest {
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             val repository = PluginsPageFixtureRepository()
             val connection = PluginsPageTestConnection("compact")
-            setContent { HarnessApp(connection, initialDestination = HarnessDestination.Account,
-                installedPluginRepository = repository, connectionTransport = ConnectionTransport.Local) }
+            setContent { PluginsPageWindow { HarnessApp(connection, initialDestination = HarnessDestination.Account,
+                installedPluginRepository = repository, connectionTransport = ConnectionTransport.Local) } }
             // The rail is always mounted; at 600dp it is the navigation, with no bottom bar.
             pluginsPageAwaitTag("app-rail")
             pluginsPageMouseClick("rail-plugins")
@@ -76,11 +86,11 @@ class PluginsPageInteractionTest {
             pluginsPageAssertNavigator(pushed = false)
 
             // The titlebar toggle opens and dismisses the floating drawer.
-            onNodeWithContentDescription("Toggle sidebar").performMouseInput { moveTo(center); click() }
+            pluginsPageToggleNavigator()
             pluginsPageSettle()
             onNodeWithTag("navigator-scrim").assertIsDisplayed()
             onNodeWithTag("plugins-navigator").assertIsDisplayed()
-            onNodeWithContentDescription("Toggle sidebar").performMouseInput { moveTo(center); click() }
+            pluginsPageToggleNavigator()
             pluginsPageSettle()
             pluginsPageAssertNavigator(pushed = false)
 
@@ -90,7 +100,7 @@ class PluginsPageInteractionTest {
             runOnIdle { repository.readGate = gate }
             pluginsPageMouseClick("plugins-refresh")
             waitUntil(timeoutMillis = 5_000) { repository.listReads.size > readsBefore }
-            onNodeWithContentDescription("Toggle sidebar").performMouseInput { moveTo(center); click() }
+            pluginsPageToggleNavigator()
             onNodeWithTag("navigator-scrim").assertIsDisplayed()
             runOnIdle { repository.readGate = null; gate.complete(Unit) }
             pluginsPageAwaitEnabled("plugins-search")
@@ -99,12 +109,13 @@ class PluginsPageInteractionTest {
 
             pluginsPageMouseClick("plugins-filter-enabled")
             pluginsPageAssertNavigator(pushed = false)
-            onNodeWithTag("installed-plugin-drawer-1").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-compact-1")).assertDoesNotExist()
+            pluginsPageToggleNavigator()
             onNodeWithTag("plugins-filter-all").performMouseInput { moveTo(center); click() }
             pluginsPageSettle()
             pluginsPageAssertNavigator(pushed = false)
-            onNodeWithTag("installed-plugin-drawer-1").assertIsDisplayed()
-            pluginsPageMouseClick("installed-plugin-drawer-1")
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-compact-1")).assertIsDisplayed()
+            pluginsPageMouseClick("installed-plugin-compact-1")
             pluginsPageAwaitEnabled("plugin-set-enabled")
             pluginsPageAssertNavigator(pushed = false)
         }
@@ -114,17 +125,17 @@ class PluginsPageInteractionTest {
         runSkikoComposeUiTest(size = Size(1440f, 900f)) {
             val repository = PluginsPageFixtureRepository()
             val connection = PluginsPageTestConnection("pushed")
-            setContent { HarnessApp(connection, initialDestination = HarnessDestination.PluginInventory,
-                installedPluginRepository = repository, connectionTransport = ConnectionTransport.Local) }
+            setContent { PluginsPageWindow { HarnessApp(connection, initialDestination = HarnessDestination.PluginInventory,
+                installedPluginRepository = repository, connectionTransport = ConnectionTransport.Local) } }
             pluginsPageAwaitEnabled("plugins-search")
             pluginsPageAssertNavigator(pushed = true)
             pluginsPageMouseClick("plugins-filter-enabled")
             pluginsPageAssertNavigator(pushed = true)
-            onNodeWithTag("installed-plugin-pushed-1").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-pushed-1")).assertDoesNotExist()
             pluginsPageMouseClick("plugins-filter-all")
             pluginsPageAssertNavigator(pushed = true)
 
-            onNodeWithContentDescription("Toggle sidebar").performMouseInput { moveTo(center); click() }
+            pluginsPageToggleNavigator()
             pluginsPageSettle()
             pluginsPageAssertNavigator(pushed = false)
             pluginsPageMouseClick("installed-plugin-pushed-1")
@@ -132,7 +143,7 @@ class PluginsPageInteractionTest {
             pluginsPageAssertNavigator(pushed = false)
             pluginsPageMouseClick("plugin-detail-back")
             pluginsPageAssertNavigator(pushed = false)
-            onNodeWithContentDescription("Toggle sidebar").performMouseInput { moveTo(center); click() }
+            pluginsPageToggleNavigator()
             pluginsPageSettle()
             pluginsPageAssertNavigator(pushed = true)
         }
@@ -207,7 +218,7 @@ class PluginsPageInteractionTest {
             val gate = CompletableDeferred<Unit>()
             runOnIdle { repository.readGate = gate; connection = PluginsPageTestConnection("scope-second") }
             waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("plugin-local-directory").fetchSemanticsNodes().isEmpty() }
-            onNodeWithTag("installed-plugin-scope-first-0").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-scope-first-0")).assertDoesNotExist()
             onNodeWithText("正在读取插件信息…").assertExists()
             onNodeWithTag("plugins-add-local").assertIsNotEnabled()
             runOnIdle { repository.readGate = null; gate.complete(Unit) }
@@ -218,7 +229,7 @@ class PluginsPageInteractionTest {
             runOnIdle { connection = PluginsPageTestConnection("scope-third") }
             waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("plugin-remove-confirm").fetchSemanticsNodes().isEmpty() }
             onNodeWithText("主机：scope-second").assertDoesNotExist()
-            onNodeWithTag("installed-plugin-scope-second-0").assertDoesNotExist()
+            onNodeWithTag(pluginsPageRowTag("installed-plugin-scope-second-0")).assertDoesNotExist()
             runOnIdle { connection = null }
             onNodeWithTag("plugin-detail-name").assertDoesNotExist()
             onNodeWithTag("plugin-remove-confirm").assertDoesNotExist()
@@ -395,8 +406,29 @@ private fun ComposeUiTest.pluginsPageAwaitTag(tag: String) {
 }
 
 private fun ComposeUiTest.pluginsPageAssertNavigator(pushed: Boolean) {
+    onNodeWithTag("main-surface").performMouseInput { moveTo(center) }
+    mainClock.advanceTimeBy(400)
+    waitForIdle()
+    waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("navigator-peek").fetchSemanticsNodes().isEmpty() }
     onNodeWithTag("navigator-scrim").assertDoesNotExist()
     onNodeWithTag("navigator-overlay").assertDoesNotExist()
     if (pushed) onNodeWithTag("plugins-navigator").assertIsDisplayed()
     else onNodeWithTag("plugins-navigator").assertDoesNotExist()
+}
+
+private fun ComposeUiTest.pluginsPageToggleNavigator() {
+    onNodeWithTag("plugins-test-toggle").performMouseInput { click() }
+}
+
+/** Desktop supplies this affordance in its native title strip, outside the shared shell. */
+@Composable
+private fun PluginsPageWindow(content: @Composable () -> Unit) {
+    val strip = remember { HarnessTitleStripState() }
+    CompositionLocalProvider(LocalHarnessTitleStrip provides strip) {
+        Box(Modifier.fillMaxSize()) {
+            content()
+            HarnessButton("侧栏", { strip.navigatorToggle?.invoke() }, Modifier.align(Alignment.TopEnd),
+                enabled = strip.navigatorToggle != null, testTag = "plugins-test-toggle")
+        }
+    }
 }

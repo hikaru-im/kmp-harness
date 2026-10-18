@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -51,7 +52,7 @@ public fun SettingsModelsPage(
     }
     SettingsFormFrame("模型与 Provider", "settings-models-title") {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            HarnessText(snapshot.scopeLabel + " · 配置模型服务、凭据引用和模型目录。", color = HarnessTokens.Colors.TextMuted)
+            HarnessText(snapshot.scopeLabel, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
             HarnessSearchField(query, { query = it }, placeholder = "搜索 Provider 或模型", accessibilityLabel = "搜索 Provider 或模型",
                 testTag = "models-search", enabled = !state.loading)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -76,17 +77,18 @@ public fun SettingsModelsPage(
             Column(Modifier.fillMaxWidth().semantics { testTag = "models-provider-" + provider.id }) {
                 SettingsFormSection(provider.displayName) {
                     SettingsFormCard {
-                        SettingsFormRow(provider.id, if (provider.configuration == null) "尚未配置" else "已保存配置") {
+                        SettingsFormRow("状态") {
                             HarnessText(when {
                                 provider.applying -> "正在应用"
                                 provider.applicationError != null && provider.active -> "新配置未生效，沿用上次配置"
                                 provider.applicationError != null -> "配置未生效"
                                 provider.active -> "已生效"
-                                else -> "路由未注册"
+                                provider.configuration != null -> "待生效"
+                                else -> "未配置"
                             }, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                         }
-                        SettingsFormRow("凭据", provider.configuration?.credentialName ?: "尚未设置引用") {
-                            HarnessText(if (provider.credentialConfigured) "凭据可用" else "凭据未配置", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                        SettingsFormRow("凭据", provider.configuration?.credentialName) {
+                            HarnessText(if (provider.credentialConfigured) "已配置" else "未配置", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                         }
                         provider.configuration?.baseUrl?.let { HarnessText(it, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
                         provider.catalogError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall) }
@@ -113,7 +115,7 @@ public fun SettingsModelsPage(
                 }
             }
         }
-        if (snapshot.providers.any { it.active }) HarnessText("已注册路由和模型目录反映本机已加载状态；尚未验证远端服务连接。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        if (snapshot.providers.any { it.active }) HarnessText("配置已生效不代表远端连接已验证。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
     }
     editor?.let { session -> key(session) {
         ProviderEditor(session, state, onRefresh, onSave,
@@ -289,6 +291,7 @@ private fun DraftField(
         BasicTextField(value, onChange, enabled = enabled, singleLine = !multiline,
             visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = HarnessTokens.Colors.Text),
+            cursorBrush = SolidColor(HarnessTokens.Colors.Text),
             modifier = Modifier.fillMaxWidth().heightIn(min = if (multiline) 84.dp else 36.dp, max = if (multiline) 160.dp else 80.dp)
                 .border(1.dp, HarnessTokens.Colors.BorderStrong, RoundedCornerShape(8.dp)).padding(10.dp).semantics { testTag = tag; contentDescription = label })
     }

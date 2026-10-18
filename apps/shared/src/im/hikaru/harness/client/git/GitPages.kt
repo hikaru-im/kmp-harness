@@ -16,35 +16,41 @@ import im.hikaru.harness.ui.foundation.*
 
 /** Repository reads and explicit optional local checkout. Parent owns the controller and Host binding. */
 @Composable
-public fun SettingsGitPage(controller: GitController, modifier: Modifier = Modifier) {
+public fun SettingsGitPage(
+    controller: GitController, modifier: Modifier = Modifier, directoryPicker: (@Composable () -> Unit)? = null,
+) {
     val state by controller.state.collectAsState()
     Box(modifier) {
         SettingsFormFrame("Git", "git-page") {
-            RepositoryControls(controller, state)
-            SettingsFormSection("分支与变更") {
+            RepositoryControls(controller, state, directoryPicker)
+            SettingsFormSection("工作区变更") {
                 GitPageCard {
                     ReadResult(state.status, "选择仓库后读取状态。") { status ->
                         GitPageValue(when {
-                            status.unborn -> "${status.branch ?: "HEAD"} · 尚无提交"
+                            status.unborn -> "${status.branch?.let(::gitRefLabel) ?: "HEAD"} · 尚无提交"
                             status.detached -> "Detached HEAD · ${status.headOid ?: "提交不可用"}"
-                            else -> status.branch ?: "HEAD 不可用"
+                            else -> status.branch?.let(::gitRefLabel) ?: "HEAD 不可用"
                         }, "git-current-branch")
-                        HarnessText("已暂存 ${status.stagedCount} · 未暂存 ${status.unstagedCount} · 未跟踪 ${status.untrackedCount}")
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GitStatusLabel("已暂存 ${status.stagedCount}")
+                            GitStatusLabel("未暂存 ${status.unstagedCount}")
+                            GitStatusLabel("未跟踪 ${status.untrackedCount}")
+                        }
                         if (status.changes.isEmpty()) HarnessText("工作树干净。", Modifier.testTag("git-clean"))
                         GitPageList("git-changes-list") {
                             status.changes.forEach { change ->
-                                GitPageValue("${change.indexStatus}${change.worktreeStatus}  " +
-                                    (change.originalPath?.let { "$it → " } ?: "") + change.path,
-                                    "git-change")
+                                GitChangeRow(change)
                             }
                         }
                     }
+                }
+            }
+            SettingsFormSection("分支") {
+                GitPageCard {
                     ReadResult(state.branches, "尚未读取分支。") { branches ->
                         if (branches.isEmpty()) HarnessText("没有分支引用。")
                         GitPageList("git-branches-list") {
-                            branches.forEach { branch ->
-                                GitPageValue((if (branch.current) "* " else "  ") + branch.ref, "git-branch")
-                            }
+                            branches.forEach { branch -> GitBranchRow(branch) }
                         }
                     }
                 }
@@ -52,27 +58,29 @@ public fun SettingsGitPage(controller: GitController, modifier: Modifier = Modif
             BranchCheckoutForm(controller, state)
             BranchCreationForm(controller, state)
             CommitForm(controller, state)
-            SettingsFormSection("Diff") {
-                GitPageSelect(state.diffRequest.source, GitDiffSource.entries.toList(),
-                    { when (it) {
-                        GitDiffSource.WorkingTree -> "未暂存（工作树与暂存区）"
-                        GitDiffSource.Index -> "已暂存（暂存区与 HEAD）"
-                        GitDiffSource.BaseBranch -> "基准分支与工作树"
-                    } }, state.pageReady, "git-diff-source") { source ->
-                    controller.selectDiff(GitDiffRequest(source, state.diffRequest.baseRef))
-                }
-                if (state.diffRequest.source == GitDiffSource.BaseBranch) {
-                    val branches = (state.branches as? GitRead.Ready<List<GitBranch>>)?.value.orEmpty()
-                    val refs = branches.map { it.ref }
-                    if (state.branches !is GitRead.Ready) ReadResult(state.branches, "尚未读取基准分支。") {}
-                    else if (refs.isEmpty()) HarnessText("没有可用基准分支引用。")
-                    else GitPageSelect(state.diffRequest.baseRef, listOf<String?>(null) + refs,
-                        { it ?: "选择基准分支" }, state.pageReady, "git-diff-base") { ref ->
-                        if (ref != null) controller.selectDiff(GitDiffRequest(GitDiffSource.BaseBranch, ref))
+            SettingsFormSection("差异") {
+                GitPageCard {
+                    GitPageSelect(state.diffRequest.source, GitDiffSource.entries.toList(),
+                        { when (it) {
+                            GitDiffSource.WorkingTree -> "未暂存（工作树与暂存区）"
+                            GitDiffSource.Index -> "已暂存（暂存区与 HEAD）"
+                            GitDiffSource.BaseBranch -> "基准分支与工作树"
+                        } }, state.pageReady, "git-diff-source") { source ->
+                        controller.selectDiff(GitDiffRequest(source, state.diffRequest.baseRef))
                     }
+                    if (state.diffRequest.source == GitDiffSource.BaseBranch) {
+                        val branches = (state.branches as? GitRead.Ready<List<GitBranch>>)?.value.orEmpty()
+                        val refs = branches.map { it.ref }
+                        if (state.branches !is GitRead.Ready) ReadResult(state.branches, "尚未读取基准分支。") {}
+                        else if (refs.isEmpty()) HarnessText("没有可用基准分支引用。")
+                        else GitPageSelect(state.diffRequest.baseRef, listOf<String?>(null) + refs,
+                            { it ?: "选择基准分支" }, state.pageReady, "git-diff-base") { ref ->
+                            if (ref != null) controller.selectDiff(GitDiffRequest(GitDiffSource.BaseBranch, ref))
+                        }
+                    }
+                    HarnessText("不包含未跟踪文件；文件与暂存区可能在读取期间变化。",
+                        color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                 }
-                HarnessText("Diff 不包含未跟踪文件；HEAD 变化会使读取失败。文件与暂存区并非原子快照。",
-                    color = HarnessTokens.Colors.TextMuted)
                 val readyDiff = (state.diff as? GitRead.Ready<GitDiffSnapshot>)?.value
                 // Keep the last completed patch visible while the controller's existing Loading state
                 // disables actions during a refresh. A failed read still goes through ReadResult.
@@ -130,6 +138,7 @@ public fun WorktreesPage(
      * created and no repository is written until the user sends the first message from Home.
      */
     onNewChatInWorktree: (String) -> Unit = {},
+    directoryPicker: (@Composable () -> Unit)? = null,
 ) {
     val state by controller.state.collectAsState()
     val currentRepository = (state.repository as? GitRead.Ready<GitRepository>)?.value
@@ -141,15 +150,10 @@ public fun WorktreesPage(
     LaunchedEffect(managedController, currentRepository) { managedController?.bind(currentRepository) }
     Box(modifier) {
         SettingsFormFrame("Worktrees", "worktrees-page") {
-            RepositoryControls(controller, state)
-            WorktreeRootSection(worktreeSettings, onSaveWorktreeSettings)
-            WorktreeEnvironmentSection(worktreeSettings, onSaveWorktreeSettings)
-            WorktreeCreationForm(controller, state, worktreeSettings?.settings?.configuredRoot.orEmpty())
-            ManagedWorktreeSection(managedController, managedState, state.pageReady, sessions, onOpenSession,
-                onNewChatInWorktree)
+            RepositoryControls(controller, state, directoryPicker)
             SettingsFormSection("本地 Git 工作树") {
-                HarnessText("从 Git 读取实际工作树列表，选择后读取对应目录。此列表不证明 Managed 登记、归属或保护。",
-                    color = HarnessTokens.Colors.TextMuted)
+                HarnessText("包含未托管的工作树，归属与保护状态见托管列表。",
+                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                 ReadResult(state.worktrees, "选择仓库后读取工作树。") { worktrees ->
                     if (worktrees.isEmpty()) HarnessText("没有工作树。", Modifier.testTag("git-worktrees-empty"))
                     GitPageList("git-worktrees-list") {
@@ -159,22 +163,29 @@ public fun WorktreesPage(
                                 GitPageValue(when {
                                     worktree.bare -> "Bare repository"
                                     worktree.detached -> "Detached HEAD · ${worktree.headOid ?: "提交不可用"}"
-                                    else -> worktree.branch ?: "分支不可用"
+                                    else -> worktree.branch?.let(::gitRefLabel) ?: "分支不可用"
                                 }, "git-worktree-branch")
                                 if (worktree.locked) HarnessText("已锁定" + (worktree.lockReason?.let { "：$it" } ?: ""))
                                 if (worktree.prunable) HarnessText("Git 标记为 prunable（清理不可用）" + (worktree.pruneReason?.let { "：$it" } ?: ""))
                                 WorktreeConversations(worktree.path, sessions, onOpenSession)
-                                HarnessButton("在此工作树中新建聊天", { onNewChatInWorktree(worktree.path) },
-                                    enabled = state.pageReady && !worktree.bare && !worktree.prunable,
-                                    testTag = "git-worktree-new-chat")
-                                HarnessButton("读取此工作树", { controller.selectWorktree(worktree.path) },
-                                    enabled = state.pageReady && !worktree.bare && !worktree.prunable,
-                                    testTag = "git-worktree-select")
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    HarnessButton("新建聊天", { onNewChatInWorktree(worktree.path) },
+                                        enabled = state.pageReady && !worktree.bare && !worktree.prunable,
+                                        testTag = "git-worktree-new-chat")
+                                    HarnessButton("读取此工作树", { controller.selectWorktree(worktree.path) }, variant = HarnessButtonVariant.Secondary,
+                                        enabled = state.pageReady && !worktree.bare && !worktree.prunable,
+                                        testTag = "git-worktree-select")
+                                }
                             }
                         }
                     }
                 }
             }
+            ManagedWorktreeSection(managedController, managedState, state.pageReady, sessions, onOpenSession,
+                onNewChatInWorktree)
+            WorktreeCreationForm(controller, state, worktreeSettings?.settings?.configuredRoot.orEmpty())
+            WorktreeRootSection(worktreeSettings, onSaveWorktreeSettings)
+            WorktreeEnvironmentSection(worktreeSettings, onSaveWorktreeSettings)
         }
     }
 }
@@ -195,7 +206,7 @@ private fun WorktreeConversations(root: String, sessions: List<SessionSummary>, 
         if (matching.isEmpty()) HarnessText("未找到关联到此工作树的对话",
             Modifier.testTag("worktree-conversations-empty-$dir"), color = HarnessTokens.Colors.TextMuted)
         else matching.forEach { session -> key(session.id) {
-            HarnessRow(session.id.value, description = session.cwd,
+            HarnessRow(session.id.value,
                 onClick = { onOpenSession(session) }, testTag = "worktree-conversation-${session.id.value}")
         } }
     }
@@ -211,13 +222,16 @@ private fun ManagedWorktreeSection(
     onNewChatInWorktree: (String) -> Unit,
 ) {
     var pendingRemoval by remember(controller) { mutableStateOf<ManagedWorktreeRemovalPlan?>(null) }
-    SettingsFormSection("Managed 工作树归属与保护") {
-        HarnessText("Git 列表包含未登记工作树；只读刷新不会自动认领。", color = HarnessTokens.Colors.TextMuted)
+    SettingsFormSection("托管工作树") {
         if (controller == null || state == null) {
-            HarnessText("Managed 登记服务不可用。", Modifier.testTag("managed-unavailable"))
-            HarnessText("关联会话未知；Pin 与归档服务不可用。删除与清理不可用。")
+            GitPageCard {
+                HarnessText("托管管理暂不可用。", Modifier.testTag("managed-unavailable"))
+                HarnessText("关联会话未知；固定与归档暂不可用。删除与清理不可用。",
+                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+            }
         } else {
             HarnessButton("刷新归属与保护", controller::refresh,
+                variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
                 enabled = pageReady && state.canRefresh && state.phase != ManagedWorktreePhase.Loading,
                 testTag = "managed-refresh")
             when (state.phase) {
@@ -450,7 +464,7 @@ private fun SessionObservationLabel(observation: ManagedSessionObservation, curr
 private fun BranchCheckoutForm(controller: GitController, state: GitState) {
     val refs = (state.branches as? GitRead.Ready<List<GitBranch>>)?.value.orEmpty()
         .filter { !it.remote && it.ref.startsWith("refs/heads/") }.map { it.ref }
-    SettingsFormSection("切换已有本地分支") {
+    GitFormSection("切换已有本地分支") {
         GitPageSelect(state.selectedBranchRef, listOf<String?>(null) + refs,
             { it ?: "选择已有分支" }, state.pageReady && state.checkoutAvailable &&
                 !state.checkoutNeedsRescan && !state.creationNeedsRescan && !state.commitNeedsRescan &&
@@ -484,8 +498,8 @@ private fun BranchCreationForm(controller: GitController, state: GitState) {
     val startOptions = listOf("HEAD") + localRefs
     val start = state.newBranchStartRef ?: "HEAD"
     val editable = state.pageReady && state.branchCreateAvailable && !state.pageMutationBusy && !state.branchCreateNeedsRescan
-    SettingsFormSection("新建分支并切换") {
-        HarnessText("在当前 HEAD 或已有本地分支上创建并切换到一个新分支；同名分支存在时不会创建，也不使用 force/reset。",
+    GitFormSection("新建分支并切换") {
+        HarnessText("从当前提交或已有本地分支创建；同名分支不会被覆盖。",
             Modifier.testTag("git-branch-create-policy"), color = HarnessTokens.Colors.TextMuted)
         HarnessTextField(state.newBranchName, { controller.setNewBranchName(it) }, "新分支名称",
             Modifier.fillMaxWidth(), enabled = editable, testTag = "git-branch-create-name")
@@ -527,10 +541,10 @@ private fun CommitForm(controller: GitController, observed: GitState) {
     var visible by remember(observed.binding, observed.selectedCwd) { mutableStateOf(false) }
     var message by remember(observed.binding, observed.selectedCwd) { mutableStateOf("") }
     val enabled = repo != null && snapshot != null && observed.pageReady && observed.canCommit
-    SettingsFormSection("提交已有暂存变更") {
-        HarnessText("默认仅提交已有暂存内容；可在弹窗中勾选先暂存未暂存变更。不运行 Git hooks，不签名。",
+    GitFormSection("提交已有暂存变更") {
+        HarnessText("默认提交暂存内容，可在确认时选择先暂存其他变更。不运行 hooks，不签名。",
             Modifier.testTag("git-commit-policy"), color = HarnessTokens.Colors.TextMuted)
-        HarnessButton("Commit…", { visible = true },
+        HarnessButton("提交变更…", { visible = true },
             enabled = repo != null && observed.commitAvailable && observed.unavailableReason == null, testTag = "git-commit-open")
         observed.commitDisabledReason?.let { HarnessText(it, Modifier.testTag("git-commit-disabled-reason")) }
         if (!visible) CommitOutcome(operation)
@@ -584,11 +598,11 @@ private fun CommitOutcome(commit: GitCommit) {
 
 @Composable
 private fun WorktreeRootSection(state: WorktreeSettingsState?, onSave: (WorktreeSettings) -> Unit) {
-    SettingsFormSection("工作树根目录") {
-        HarnessText("ChatGPT 创建托管工作树的目录。留空则使用默认位置。", color = HarnessTokens.Colors.TextMuted)
+    GitFormSection("工作树根目录") {
+
         if (state == null) {
             HarnessText("工作树设置服务不可用。", Modifier.testTag("worktree-root-unavailable"))
-            return@SettingsFormSection
+            return@GitFormSection
         }
         val saved = state.settings.root
         // Re-seed the draft whenever the persisted value changes (load or a completed save).
@@ -616,55 +630,43 @@ private fun WorktreeRootSection(state: WorktreeSettingsState?, onSave: (Worktree
  */
 @Composable
 private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (WorktreeSettings) -> Unit) {
-    SettingsFormSection("环境") {
+    GitFormSection("环境") {
         if (state == null) {
             HarnessText("工作树设置服务不可用。", Modifier.testTag("worktree-env-unavailable"))
-            return@SettingsFormSection
+            return@GitFormSection
         }
         val settings = state.settings
 
         // "Automatically delete old worktrees"; the original confirms before disabling it.
         var confirmDisable by remember(settings.autoCleanupEnabled) { mutableStateOf(false) }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-            Column(Modifier.weight(1f)) {
-                HarnessText("自动删除旧工作树", Modifier.testTag("worktree-auto-cleanup-label"))
-                HarnessText("推荐大多数用户启用。仅当你需要手动管理旧工作树和磁盘使用空间时，再关闭此功能。",
-                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-            }
+        SettingsFormRow("自动删除旧工作树", "超过保留数量后清理较旧的托管工作树。",
+            modifier = Modifier.testTag("worktree-auto-cleanup-label")) {
             HarnessSwitch(
                 checked = settings.autoCleanupEnabled,
                 onCheckedChange = { next -> if (next) onSave(settings.copy(autoCleanupEnabled = true)) else confirmDisable = true },
                 contentDescription = "自动删除旧工作树", enabled = state.canEdit,
                 testTag = "worktree-auto-cleanup-switch")
         }
-
         // "Auto-delete limit"; the value must stay an integer >= 1 (the original schema).
         val savedKeep = settings.keepCount.toString()
         var draft by remember(state.loaded, savedKeep) { mutableStateOf(savedKeep) }
         val keepError = keepCountError(draft)
         val keepChanged = keepCountValue(draft) != settings.keepCount
-        HarnessText("自动删除限制", Modifier.testTag("worktree-keep-count-label"))
-        HarnessText(
-            if (settings.autoCleanupEnabled) "要保留的托管工作树数量；超过后，较旧的工作树会自动被清理。ChatGPT 会在删除工作树前创建快照，因此被清理的工作树应始终可以恢复。"
-            else "自动删除已停用。ChatGPT 不会自动清理旧工作树。重新启用即可再次使用此已保存的限制。",
-            Modifier.testTag("worktree-keep-count-description"),
-            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-        HarnessTextField(draft, { draft = it }, "自动删除限制（不小于 1）", Modifier.fillMaxWidth(),
-            enabled = state.canEdit, isError = keepError != null, supportingText = keepError,
-            testTag = "worktree-keep-count-input")
-        HarnessButton("保存自动删除限制", { keepCountValue(draft)?.let { onSave(settings.copy(keepCount = it)) } },
-            enabled = state.canEdit && keepChanged && keepError == null, testTag = "worktree-keep-count-save")
-
-        // "Always fetch upstream before creating worktrees".
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-            Column(Modifier.weight(1f)) {
-                HarnessText("创建工作树前始终获取上游更新",
-                    Modifier.testTag("worktree-upstream-refresh-label"))
-                HarnessText("Codex 通常会在常规 Git 操作中获取分支更新。此设置还会在创建每个新工作树前获取上游更新。",
-                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        SettingsFormRow("自动删除限制",
+            description = if (settings.autoCleanupEnabled) "保留的托管工作树数量，至少为 1。" else "自动删除已停用，保留数量仍会保存。",
+            modifier = Modifier.testTag("worktree-keep-count-label")) {
+            Column(Modifier.widthIn(max = 240.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                HarnessTextField(draft, { draft = it }, "保留数量", Modifier.fillMaxWidth(),
+                    enabled = state.canEdit, isError = keepError != null, supportingText = keepError,
+                    testTag = "worktree-keep-count-input")
+                HarnessButton("保存", { keepCountValue(draft)?.let { onSave(settings.copy(keepCount = it)) } },
+                    variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
+                    enabled = state.canEdit && keepChanged && keepError == null, testTag = "worktree-keep-count-save")
             }
+        }
+        // "Always fetch upstream before creating worktrees".
+        SettingsFormRow("创建前获取上游更新", "创建前尝试获取远程分支的最新提交。",
+            modifier = Modifier.testTag("worktree-upstream-refresh-label")) {
             HarnessSwitch(
                 checked = settings.upstreamRefreshMode == WorktreeUpstreamRefreshMode.BestEffort,
                 onCheckedChange = { next -> onSave(settings.copy(
@@ -672,7 +674,6 @@ private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (W
                 contentDescription = "创建工作树前始终获取上游更新", enabled = state.canEdit,
                 testTag = "worktree-upstream-refresh-switch")
         }
-
         state.loadError?.let { HarnessText(it, Modifier.testTag("worktree-env-load-error"), color = HarnessTokens.Colors.Danger) }
         state.saveError?.let { HarnessText(it, Modifier.testTag("worktree-env-save-error"), color = HarnessTokens.Colors.Danger) }
         if (state.saveRevision > 0 && state.saveError == null) {
@@ -683,8 +684,8 @@ private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (W
             visible = confirmDisable,
             onDismissRequest = { confirmDisable = false },
             title = "禁用工作树自动删除功能？",
-            description = "我们强烈建议保持自动删除功能开启，以免旧工作树不断累积并占用不必要的磁盘空间。如果你希望自行管理旧工作树，可以关闭此功能，ChatGPT 将停止自动删除它们。",
-            cancelLabel = "启用自动删除功能",
+            description = "关闭后需要手动清理旧工作树，已保存的保留数量不会丢失。",
+            cancelLabel = "保持开启",
             confirmLabel = "禁用自动删除功能",
             submitState = HarnessConfirmSubmitState.Ready,
             onCancel = { confirmDisable = false },
@@ -704,12 +705,12 @@ private fun WorktreeCreationForm(controller: GitController, state: GitState, wor
     LaunchedEffect(autoPath) { if (!pathTouched && autoPath != null) path = autoPath }
     val refs = (state.branches as? GitRead.Ready<List<GitBranch>>)?.value.orEmpty().map { it.ref }
     val options = listOf("HEAD") + refs
-    SettingsFormSection("创建本地工作树") {
+    GitFormSection("创建本地工作树") {
         if (!state.creationAvailable) HarnessText("此 Host 未提供本地工作树创建能力。",
             Modifier.testTag("git-worktree-create-unavailable"), color = HarnessTokens.Colors.TextMuted)
         HarnessTextField(path, { path = it; pathTouched = true }, "新工作树绝对路径（父目录须已存在）", Modifier.fillMaxWidth(),
             enabled = state.pageReady && state.canCreateWorktree, testTag = "git-worktree-create-path")
-        if (!pathTouched && autoPath != null) HarnessText("默认创建于工作树根目录下：$autoPath",
+        if (!pathTouched && autoPath != null) HarnessText("路径随分支名称自动生成",
             Modifier.testTag("git-worktree-create-auto-path"), color = HarnessTokens.Colors.TextMuted)
         HarnessTextField(branch, { branch = it }, "新分支名称", Modifier.fillMaxWidth(),
             enabled = state.pageReady && state.canCreateWorktree, testTag = "git-worktree-create-branch")
@@ -736,29 +737,37 @@ private fun WorktreeCreationForm(controller: GitController, state: GitState, wor
 }
 
 @Composable
-private fun RepositoryControls(controller: GitController, state: GitState) {
+private fun RepositoryControls(controller: GitController, state: GitState, directoryPicker: (@Composable () -> Unit)?) {
     var cwd by remember(state.binding?.identity, state.binding?.hostId, state.selectedCwd) {
         mutableStateOf(state.selectedCwd.orEmpty())
     }
-    SettingsFormSection("仓库") {
+    var editing by remember(state.binding) { mutableStateOf(false) }
+    val repository = (state.repository as? GitRead.Ready<GitRepository>)?.value
+    GitFormSection("仓库") {
         state.unavailableReason?.let { HarnessText(it, Modifier.testTag("git-unavailable")) }
-        HarnessTextField(cwd, { cwd = it }, "本机仓库目录", Modifier.fillMaxWidth(),
-            enabled = state.pageCanRead, testTag = "git-repository-path")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HarnessButton("读取仓库", { controller.selectRepository(cwd) },
-                enabled = state.pageCanRead && cwd.isNotBlank() && cwd != state.selectedCwd,
-                testTag = "git-repository-select")
-            HarnessButton("刷新", controller::refresh, enabled = state.canRefresh && state.pageCanRead, testTag = "git-refresh")
+        ReadResult(state.repository, "选择一个本地仓库开始。") { repo ->
+            GitPageValue(repo.root, "git-repository-root")
         }
-        ReadResult(state.repository, "尚未选择仓库。") { repo ->
-            GitPageCard {
-                GitPageValue(repo.root, "git-repository-root")
-                GitPageValue("Git 目录：${repo.gitDir}", "git-repository-git-dir", muted = true)
-            }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (directoryPicker != null) Box(Modifier.width(144.dp)) { directoryPicker() }
+            HarnessButton(if (editing) "收起输入" else "输入目录", { editing = !editing },
+                variant = HarnessButtonVariant.Secondary, testTag = "git-repository-edit")
+            HarnessButton("刷新", controller::refresh, enabled = state.canRefresh && state.pageCanRead,
+                variant = HarnessButtonVariant.Secondary, testTag = "git-refresh")
+        }
+        if (repository == null || editing) {
+            HarnessTextField(cwd, { cwd = it }, "仓库目录", Modifier.fillMaxWidth(),
+                enabled = state.pageCanRead, testTag = "git-repository-path")
+            HarnessButton("读取仓库", { editing = true; controller.selectRepository(cwd) },
+                enabled = state.pageCanRead && cwd.isNotBlank() && cwd != state.selectedCwd,
+                variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
+                testTag = "git-repository-select")
+        }
+        if (repository != null) SettingsFormDetails("仓库详情", "git-repository-details") {
+            GitPageValue("Git 目录：${repository.gitDir}", "git-repository-git-dir", muted = true)
         }
     }
 }
-
 @Composable
 private fun <T> ReadResult(read: GitRead<T>, unselected: String, content: @Composable (T) -> Unit) {
     when (read) {

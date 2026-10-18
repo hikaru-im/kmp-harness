@@ -74,11 +74,12 @@ class GitBranchCheckoutInteractionTest {
                 onNodeWithTag("git-checkout-submit").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.checkout is GitBranchCheckout.Switched }
                 onNodeWithTag("git-checkout-success").assertTextEquals("已确认切换：refs/heads/feature")
-                onNodeWithTag("git-current-branch").assertTextEquals("refs/heads/feature")
+                onNodeWithTag("git-current-branch").assertTextEquals("feature")
                 onNodeWithTag("git-checkout-submit").assertIsNotEnabled()
                 assertEquals(1, switches.get())
                 assertEquals(fixture.featureOid, fixture.git(fixture.workspace, "rev-parse", "HEAD").trim())
-                assertEquals("feature content\n", Files.readString(fixture.workspace.resolve("tracked.txt")))
+                // Checkout can apply the user's Windows core.autocrlf setting in this temporary clone.
+                assertEquals("feature content\n", Files.readString(fixture.workspace.resolve("tracked.txt")).replace("\r\n", "\n"))
                 assertEquals(original, fixture.originalEvidence())
                 runOnIdle { controller.bind(fixture.binding.copy(access = GitAccess.RemoteUnavailable, generation = 2)) }
                 onNodeWithTag("git-unavailable").assertExists()

@@ -82,7 +82,8 @@ class GeneralSettingsInteractionTest {
         }
         runOnIdle { width = 420.dp }
         onNodeWithTag("settings-general-control-default-permission").assertIsNotEnabled().assertIsOff()
-        onNodeWithTag("settings-general-unavailable-default-permission").assertIsDisplayed()
+        onNodeWithTag("settings-general-unavailable-default-permission").assertIsDisplayed().assertTextEquals("暂不可用")
+        onNodeWithText("尚未接入 Host 权限配置").assertDoesNotExist()
         onNodeWithTag("settings-general-control-task-folder").performScrollTo().assertIsNotEnabled()
         onNodeWithTag("settings-general-control-terminal-location-bottom").performScrollTo().assertIsNotEnabled()
         onNodeWithTag("settings-general-control-plugins").performScrollTo().performClick()

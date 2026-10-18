@@ -27,10 +27,8 @@ import kotlin.test.*
 
 /**
  * The Settings pages that render through [im.hikaru.harness.client.page.SettingsFormFrame] must share one
- * content column: the full 728px Settings column the Shell caps, shifted 8px left exactly like
- * Settings > General. The 2026-10-06 capture measures the General card at x 1079..1806 in a 2560px
- * window, which is that 728px column minus 8px. Appearance, Models, Shortcuts, Connections, Git and
- * Worktrees have no capture of their own, so this contract keeps them on the one page geometry that does.
+ * content column. Centering belongs to the Shell, including on General, so pages cannot introduce
+ * independent offsets that make titles and cards drift when navigating between settings pages.
  */
 @OptIn(ExperimentalTestApi::class)
 class SettingsFormFrameInteractionTest {
@@ -45,8 +43,8 @@ class SettingsFormFrameInteractionTest {
                     val main = onNodeWithTag("main-content-column").getUnclippedBoundsInRoot()
                     val column = onNodeWithTag("$tag-column").getUnclippedBoundsInRoot()
                     assertClose(728f, column.right.value - column.left.value, where + " column width")
-                    assertClose(main.left.value - 8f, column.left.value, where + " column left")
-                    assertClose(main.right.value - 8f, column.right.value, where + " column right")
+                    assertClose(main.left.value, column.left.value, where + " column left")
+                    assertClose(main.right.value, column.right.value, where + " column right")
                     val title = onNodeWithTag(tag).getUnclippedBoundsInRoot()
                     assertClose(column.left.value, title.left.value, where + " title left")
                     assertClose(column.top.value, title.top.value, where + " title top")
@@ -120,6 +118,7 @@ class SettingsFormFrameInteractionTest {
     private companion object {
         /** Settings navigator slug to the page title tag that the shared frame carries. */
         val Pages = listOf(
+            "general" to "settings-general-title",
             "appearance" to "settings-appearance-title",
             "models" to "settings-models-title",
             "keyboard-shortcuts" to "settings-shortcuts-title",

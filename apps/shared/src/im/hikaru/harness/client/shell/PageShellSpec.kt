@@ -88,9 +88,9 @@ public fun pageShellSpec(page: PageId): PageShellSpec =
         is PageId.Settings -> PageShellSpec(NavigatorKind.Settings)
         PageId.Plugins,
         is PageId.PluginDetail,
-        -> PageShellSpec(NavigatorKind.Plugins)
+        -> PageShellSpec(NavigatorKind.Plugins, ownContentColumn = true, docksComposer = false)
 
-        PageId.Account -> PageShellSpec.NoNavigator
+        PageId.Account -> PageShellSpec(NavigatorKind.None, ownContentColumn = true, docksComposer = false)
     }
 
 /**

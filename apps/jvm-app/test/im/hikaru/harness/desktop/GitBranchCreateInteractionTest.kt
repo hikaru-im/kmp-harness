@@ -44,7 +44,7 @@ class GitBranchCreateInteractionTest {
                 onNodeWithTag("git-branch-create-submit").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.branchCreation is GitBranchCreation.Created }
                 onNodeWithTag("git-branch-create-success").assertTextEquals("已确认创建并切换：refs/heads/codex/page-new")
-                onNodeWithTag("git-current-branch").assertTextEquals("refs/heads/codex/page-new")
+                onNodeWithTag("git-current-branch").assertTextEquals("codex/page-new")
                 onNodeWithTag("git-branch-create-error").assertDoesNotExist()
                 assertEquals("refs/heads/codex/page-new", fixture.git(fixture.workspace, "symbolic-ref", "HEAD").trim())
                 assertEquals(fixture.baseOid, fixture.git(fixture.workspace, "rev-parse", "HEAD").trim())

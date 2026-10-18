@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.dp
 import im.hikaru.harness.ui.foundation.*
+import im.hikaru.harness.client.page.LocalWorkspaceNavigatorVisible
 
 /**
  * Page-owned navigator of the plugins page.
@@ -43,7 +44,6 @@ public fun PluginsManagementNavigator(
     onRetry: () -> Unit,
 ) {
     val list = state.list
-    var searchOpen by remember(state.scope) { mutableStateOf(state.searchQuery.isNotBlank()) }
     Column(
         Modifier.fillMaxSize()
             .padding(horizontal = HarnessTokens.Spacing.Two, vertical = HarnessTokens.Spacing.Three)
@@ -55,16 +55,13 @@ public fun PluginsManagementNavigator(
             Row(Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Spacing.Two),
                 verticalAlignment = Alignment.CenterVertically) {
                 HarnessText("插件", Modifier.weight(1f))
-                HarnessIconButton("搜索插件", { searchOpen = !searchOpen },
-                    state = HarnessButtonState(), testTag = "plugins-toggle-search") {
-                    HarnessIcon(HarnessIconName.Search, tint = HarnessTokens.Colors.TextMuted)
-                }
             }
-            if (searchOpen) HarnessSearchField(
+            HarnessSearchField(
                 value = state.searchQuery, onValueChange = onQueryChange,
                 placeholder = "搜索插件", accessibilityLabel = "搜索插件",
                 modifier = Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Spacing.Two),
-                enabled = state.canSearch, testTag = "plugins-navigator-search",
+                enabled = state.canSearch,
+                testTag = if (LocalWorkspaceNavigatorVisible.current) "plugins-search" else "plugins-navigator-search",
             )
             // The capture draws the two destination rows as one tight group on a 1px pitch, so the
             // group owns the 1px gap instead of the 12dp header gap.
@@ -75,7 +72,7 @@ public fun PluginsManagementNavigator(
                 PluginsFilterRow(label = "仅启用的插件", selected = state.enabledOnly, enabled = state.canSearch,
                     testTag = "plugins-filter-enabled") { onSetEnabledOnly(true) }
             }
-            HarnessText("已安装",
+            HarnessText(if (state.hasManagementAdapter) "已添加" else "已安装",
                 Modifier.padding(start = HarnessTokens.Spacing.Two, end = HarnessTokens.Spacing.Two,
                     top = HarnessTokens.Spacing.Two),
                 color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.labelLarge, maxLines = 1)
