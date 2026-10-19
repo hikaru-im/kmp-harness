@@ -15,6 +15,7 @@ public sealed interface ConversationCommand {
     public data class Rename(val title: String) : ConversationCommand
     public data object TogglePin : ConversationCommand
     public data object MarkUnread : ConversationCommand
+    public data object MarkRead : ConversationCommand
     public data object ToggleArchive : ConversationCommand
     public data object Delete : ConversationCommand
 }
@@ -244,11 +245,17 @@ public class ConversationController(
                                 replaceSummary(summary.copy(archived = !summary.archived, live = false))
                             }
                         }
-                        is ConversationCommand.Rename, ConversationCommand.TogglePin, ConversationCommand.MarkUnread -> {
+                        is ConversationCommand.Rename, ConversationCommand.TogglePin, ConversationCommand.MarkUnread,
+                        ConversationCommand.MarkRead -> {
                             val updated = operations.update(source, ConversationUpdate(id, summary.revision,
                                 if (command is ConversationCommand.Rename) command.title.trim().also { require(it.isNotEmpty()) } else summary.customTitle,
                                 if (command == ConversationCommand.TogglePin) !summary.pinned else summary.pinned,
-                                if (command == ConversationCommand.MarkUnread) -1 else summary.lastReadSeq))
+                                when (command) {
+                                    ConversationCommand.MarkUnread -> -1
+                                    // A chat can only be read through the newest event the list knows.
+                                    ConversationCommand.MarkRead -> maxOf(summary.lastReadSeq, summary.lastEventSeq)
+                                    else -> summary.lastReadSeq
+                                }))
                             currentCoroutineContext().ensureActive()
                             if (current()) replaceSummary(updated)
                         }

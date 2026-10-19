@@ -137,6 +137,11 @@ class RailModelTest {
                 "library" to PageId.Library,
                 "plugins" to PageId.Plugins,
                 "home" to PageId.Home,
+                // A conversation stays inside 主页's section; the navigator below it is still Home's.
+                "home" to PageId.Thread("thread-1"),
+                "home" to PageId.Thread("thread-1", taskId = "task-1"),
+                // A scheduled run opens a Thread too, but it belongs to 定时任务.
+                "scheduled" to PageId.Thread("thread-run-1", automationId = "automation-1", runId = "run-1"),
                 "scheduled" to PageId.ScheduledTasks(),
             )
         cases.forEach { (slot, page) ->

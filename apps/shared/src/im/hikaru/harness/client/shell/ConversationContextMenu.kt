@@ -18,6 +18,9 @@ internal data class ConversationNavigationActions(
     val sessions: Map<String, SessionSummary> = emptyMap(),
     val busy: Boolean = false,
     val dispatch: (String, ConversationCommand) -> Deferred<Boolean>? = { _, _ -> null },
+    /** Bulk activity-feed actions receive the ids currently shown; null disables the menu entry. */
+    val markAllRead: ((List<String>) -> Unit)? = null,
+    val archiveAll: ((List<String>) -> Unit)? = null,
     val owner: Any? = null,
 )
 internal val LocalConversationNavigationActions = staticCompositionLocalOf { ConversationNavigationActions() }

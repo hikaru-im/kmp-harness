@@ -48,6 +48,14 @@ class HarnessTokensTest {
             (HarnessTokens.Control.NavRow + HarnessTokens.Control.NavigatorRowGap).value,
             "Workspace navigator row pitch must stay at the Codex 31px",
         )
+        // Live Codex v155 workspace navigator: 52px header, 12.5px row radius, 28/24/20px hover
+        // action boxes. These stay Workspace-specific so page-owned navigators keep their 50/10px.
+        assertEquals(52f, HarnessTokens.Control.WorkspaceNavigatorHeader.value)
+        assertEquals(12.5f, HarnessTokens.Control.WorkspaceNavigatorRowRadius.value)
+        assertEquals(28f, HarnessTokens.Control.WorkspaceNavigatorHeaderAction.value)
+        assertEquals(24f, HarnessTokens.Control.WorkspaceNavigatorSectionAction.value)
+        assertEquals(20f, HarnessTokens.Control.WorkspaceNavigatorRowAction.value)
+        assertEquals(9.375f, HarnessTokens.Control.WorkspaceNavigatorActionRadius.value)
     }
 
     @Test
