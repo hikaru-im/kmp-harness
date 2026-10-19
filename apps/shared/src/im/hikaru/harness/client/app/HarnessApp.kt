@@ -230,7 +230,9 @@ import im.hikaru.harness.ui.foundation.HarnessIconName
 import im.hikaru.harness.ui.foundation.HarnessSurface
 import im.hikaru.harness.ui.foundation.HarnessText
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
+import im.hikaru.harness.ui.foundation.HarnessToastHost
 import im.hikaru.harness.ui.foundation.HarnessTokens
+import im.hikaru.harness.ui.foundation.rememberHarnessToastState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
@@ -421,6 +423,9 @@ public fun HarnessApp(
     val conversationScope = rememberCoroutineScope()
     val conversation = remember { ConversationController(conversationScope) }
     val conversationState by conversation.state.collectAsState()
+    // Window-level transient notifications; conversation failures own them today. Codex keeps its
+    // toaster at the top centre of the window, so the host is mounted once at the root.
+    val toasts = rememberHarnessToastState()
     val generationCounter = remember { longArrayOf(0L) }
     val conversationIdentity = accountState.session?.identity.takeIf { transport == ConnectionTransport.Relay }
     val connectionGeneration = remember(connection, transport, conversationIdentity) { ++generationCounter[0] }
@@ -1526,6 +1531,16 @@ public fun HarnessApp(
                         props = RootProps(render = defaultRoot),
                         fallback = defaultRoot,
                     )
+                    // Errors are outcomes, not page furniture: notify once and leave the surface alone.
+                    ConversationErrorToasts(
+                        errors = conversationState.errors,
+                        toasts = toasts,
+                        onRetryHistory = { conversation.refreshHistory() },
+                    )
+                    HarnessToastHost(
+                        state = toasts,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = HarnessToastTopInset),
+                    )
                     if (projectEditorOpen) key(projectBinding) {
                         LocalProjectEditorDialog(localProjectsState, editingProject,
                             onDismiss = { projectEditorOpen = false }, onCreate = saveProject,
@@ -1777,6 +1792,12 @@ private fun HarnessDestination.toPageId(): im.hikaru.harness.client.shell.PageId
         HarnessDestination.Settings -> im.hikaru.harness.client.shell.PageId.Settings()
         HarnessDestination.PluginInventory -> im.hikaru.harness.client.shell.PageId.Plugins
     }
+
+/**
+ * Top inset of the toast host. Codex stacks its composer-adjacent toaster under a 40px spacer plus
+ * the area's own 8px vertical margin, i.e. 48px below the top of the window content.
+ */
+private val HarnessToastTopInset = 48.dp
 
 private val HarnessDestination.icon: HarnessIconName
     get() = when (this) {

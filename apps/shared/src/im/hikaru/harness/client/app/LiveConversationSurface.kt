@@ -25,8 +25,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import im.hikaru.harness.client.conversation.ConversationDataPhase
-import im.hikaru.harness.client.conversation.ConversationErrorKind
-import im.hikaru.harness.client.conversation.ConversationRetry
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.ui.foundation.*
 
@@ -184,27 +182,13 @@ public fun LiveThreadSurface(state: ConversationState, onRetry: () -> Unit) {
                 ConversationNotice("连接已断开。重新连接后可继续此会话。", "live-thread-disconnected")
             state.historyPhase == ConversationDataPhase.Loading ->
                 ConversationNotice("正在读取会话…", "live-thread-loading")
-            state.historyPhase == ConversationDataPhase.Failed && ConversationErrorKind.History !in state.errors -> {
+            state.historyPhase == ConversationDataPhase.Failed -> {
+                // The failure itself is a toast; the surface keeps only the retry that unblocks it.
                 ConversationNotice("会话历史不可用。", "live-thread-unavailable")
-                HarnessButton("重试", onRetry, testTag = "live-thread-retry", size = HarnessControlSize.Compact)
-            }
-        }
-        state.errors.values.forEach { issue ->
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                ConversationNotice(issue.message, "live-thread-error-${issue.kind.name}", isError = true)
-                if (issue.retry != null) {
-                    // Execution retries belong to Send/Stop, never a generic history refresh.
-                    when (issue.retry) {
-                        ConversationRetry.History, ConversationRetry.Refresh -> HarnessButton(
-                            "重试", onRetry, enabled = state.connected && state.historyPhase != ConversationDataPhase.Loading,
-                            testTag = "live-thread-retry-${issue.kind.name}", size = HarnessControlSize.Compact,
-                        )
-                        ConversationRetry.SubmitExplicitly -> ConversationNotice(
-                            "确认消息尚未发送后，可在输入框中重新发送。", "live-thread-submit-recovery",
-                        )
-                        ConversationRetry.Cancel -> ConversationNotice("可使用停止按钮重试。", "live-thread-stop-recovery")
-                    }
-                }
+                HarnessButton(
+                    "重试", onRetry, enabled = state.connected && state.historyPhase != ConversationDataPhase.Loading,
+                    testTag = "live-thread-retry", size = HarnessControlSize.Compact,
+                )
             }
         }
         if (state.history.isNotEmpty()) {

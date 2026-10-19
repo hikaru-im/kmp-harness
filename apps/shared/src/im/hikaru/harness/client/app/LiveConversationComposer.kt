@@ -17,7 +17,6 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import im.hikaru.harness.client.conversation.ConversationErrorKind
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.ui.foundation.*
 
@@ -132,15 +131,8 @@ public fun LiveConversationComposer(
                 ConversationComposerToolbar(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
                     selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown,
                     permission, onPermissionSelect, draftEmpty = editor.text.isBlank())
-                val notices = Modifier.padding(horizontal = HarnessTokens.Composer.PaddingX)
-                composerFeedback(state, submitUnavailableReason)?.let { feedback ->
-                    ConversationNotice(feedback.text, feedback.tag, modifier = notices)
-                }
-                // Home has no timeline slot: preserve create/prompt/cancel errors beside its draft.
-                state.errors.values.filter { it.kind in listOf(ConversationErrorKind.Create, ConversationErrorKind.Association, ConversationErrorKind.Prompt,
-                    ConversationErrorKind.Cancel, ConversationErrorKind.Completion) }.forEach {
-                    ConversationNotice(it.message, "live-composer-error-${it.kind.name}", isError = true, modifier = notices)
-                }
+                // The composer carries no status sentence: progress lives on the stop button, failures
+                // arrive as toasts (ConversationErrorToasts), and the draft keeps the full card.
             }
         }
         }

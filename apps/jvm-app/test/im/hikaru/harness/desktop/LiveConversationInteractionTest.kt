@@ -142,12 +142,13 @@ class LiveConversationInteractionTest {
         editor.performTextReplacement("retained draft")
         runOnIdle { owner.state = owner.state.copy(connected = false) }
         onNodeWithTag("live-composer-send").assertIsNotEnabled()
-        onNodeWithTag("live-composer-disconnected").assertExists()
+        onNodeWithTag("live-composer-disconnected").assertDoesNotExist()
         editor.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         editor.performKeyInput { pressKey(Key.Enter) }
         runOnIdle { owner.state = owner.state.copy(connected = true); owner.submitReason = "当前 Host 无法创建会话。" }
         onNodeWithTag("live-composer-send").assertIsNotEnabled()
-        onNodeWithTag("live-composer-submit-unavailable").assertTextEquals("当前 Host 无法创建会话。")
+        // The disabled button carries the block; no explanation sentence sits under the draft.
+        onNodeWithTag("live-composer-submit-unavailable").assertDoesNotExist()
         editor.performKeyInput { pressKey(Key.Enter) }
         runOnIdle {
             assertTrue(owner.submitted.isEmpty())
@@ -166,19 +167,21 @@ class LiveConversationInteractionTest {
                 ConversationErrorKind.Prompt to ConversationError(ConversationErrorKind.Prompt, "发送未确认。", ConversationRetry.SubmitExplicitly),
                 ConversationErrorKind.Completion to ConversationError(ConversationErrorKind.Completion, "运行状态不可用。", null)))
         setContent { HarnessTheme { owner.Content() } }
-        onNodeWithTag("live-composer-error-Prompt").assertTextEquals("发送未确认。")
-        onNodeWithTag("live-composer-error-Completion").assertTextEquals("运行状态不可用。")
-        onNodeWithTag("live-composer-action").assertTextEquals("消息已接收，运行状态尚未确认。")
+        // Failures are toasts now: no error sentence is pinned underneath the draft.
+        onNodeWithTag("live-composer-error-Prompt").assertDoesNotExist()
+        onNodeWithTag("live-composer-error-Completion").assertDoesNotExist()
+        // Progress never prints: the stop button is the only busy indicator.
+        onNodeWithTag("live-composer-action").assertDoesNotExist()
         onNodeWithTag("live-composer-send").assertDoesNotExist()
         onNodeWithTag("live-composer-stop").assertIsEnabled().performClick()
         onNodeWithTag("live-composer-stop").assertIsNotEnabled()
-        onNodeWithTag("live-composer-action").assertTextEquals("正在停止…")
+        onNodeWithTag("live-composer-action").assertDoesNotExist()
         runOnIdle {
             assertEquals(1, owner.cancelled)
             owner.state = owner.state.copy(cancelling = false, errors = mapOf(
                 ConversationErrorKind.Cancel to ConversationError(ConversationErrorKind.Cancel, "停止失败，可重试。", ConversationRetry.Cancel)))
         }
-        onNodeWithTag("live-composer-error-Cancel").assertExists()
+        onNodeWithTag("live-composer-error-Cancel").assertDoesNotExist()
         onNodeWithTag("live-composer-stop").assertIsEnabled().performClick()
         runOnIdle { assertEquals(2, owner.cancelled) }
     }
@@ -240,9 +243,11 @@ class LiveConversationInteractionTest {
         runOnIdle { state = state.copy(historyPhase = ConversationDataPhase.Failed, errors = mapOf(
             ConversationErrorKind.History to ConversationError(ConversationErrorKind.History, "历史读取失败。", ConversationRetry.History),
             ConversationErrorKind.Prompt to ConversationError(ConversationErrorKind.Prompt, "发送未确认。", ConversationRetry.SubmitExplicitly))) }
-        onNodeWithTag("live-thread-retry-History").performClick()
-        onNodeWithTag("live-thread-submit-recovery").assertExists()
-        onNodeWithTag("live-thread-retry-Prompt").assertDoesNotExist()
+        // The surface keeps the blocking retry; the failure sentences themselves are toasts.
+        onNodeWithTag("live-thread-retry").performClick()
+        onNodeWithTag("live-thread-submit-recovery").assertDoesNotExist()
+        onNodeWithTag("live-thread-error-History").assertDoesNotExist()
+        onNodeWithTag("live-thread-error-Prompt").assertDoesNotExist()
         onNodeWithTag("live-composer").assertDoesNotExist()
         runOnIdle { assertEquals(1, retries) }
         onNodeWithText("Actual user question").performScrollTo().assertExists()

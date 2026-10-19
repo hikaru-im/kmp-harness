@@ -36,27 +36,6 @@ internal fun ConversationState.composerPrimaryAction(): ComposerPrimaryAction = 
 
 internal enum class ComposerPopup { Closed, Permissions, Reasoning, Models }
 
-internal data class ComposerFeedback(val text: String, val tag: String)
-
-/** Runtime progress wins over every other notice; one explanation owns the feedback slot. */
-internal fun composerFeedback(state: ConversationState, submitReason: String?): ComposerFeedback? = when {
-    !state.connected -> ComposerFeedback(submitReason ?: "连接 Host 后可发送消息。",
-        if (submitReason == null) "live-composer-disconnected" else "live-composer-submit-unavailable")
-    state.cancelling -> ComposerFeedback("正在停止…", "live-composer-action")
-    state.action != ConversationAction.Idle -> ComposerFeedback(when (state.action) {
-        ConversationAction.Creating -> "正在创建会话…"
-        ConversationAction.Associating -> "正在确认项目关联…"
-        ConversationAction.Sending -> "正在发送…"
-        ConversationAction.WaitingForLocalIdle -> "正在运行…"
-        ConversationAction.RunningUnknown -> "消息已接收，运行状态尚未确认。"
-        ConversationAction.Idle -> ""
-    }, "live-composer-action")
-    // Model availability never prints under the draft; an empty catalogue only leaves the picker
-    // heading visible. Having no provider configured is a first-run state rather than an error.
-    submitReason != null -> ComposerFeedback(submitReason, "live-composer-submit-unavailable")
-    else -> null
-}
-
 internal fun composerModel(
     state: ConversationState, choices: List<ConversationModelChoice>, preferences: ComposerSessionPreferences?,
 ): ConversationModelChoice? {

@@ -255,8 +255,8 @@ class LiveHarnessConversationInteractionTest {
                 onNodeWithTag("live-home").assertDoesNotExist()
                 onNodeWithTag("live-composer-editor").assertDraft("Retained reconnect draft")
                 onNodeWithTag("live-composer-send").assertIsNotEnabled()
-                onNodeWithTag("live-composer-submit-unavailable")
-                    .assertTextEquals("请连接可用的 Host 后发送消息。")
+                // The disabled send button is the whole signal: no status sentence under the draft.
+                onNodeWithTag("live-composer-submit-unavailable").assertDoesNotExist()
                 onNodeWithText("History from old connection").assertDoesNotExist()
                 runOnIdle { connection = replacement }
                 waitUntil { replacementHistory.started.isCompleted }
