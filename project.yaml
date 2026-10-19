@@ -34,6 +34,7 @@ modules:
   - modules/profile
   - modules/profile-file
   - modules/runtime
+  - modules/schedule-jvm
   - modules/session
   - modules/session-api
   - modules/session-persistence

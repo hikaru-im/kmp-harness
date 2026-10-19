@@ -39,6 +39,10 @@ import im.hikaru.harness.profile.file.FileProfileLoader
 import im.hikaru.harness.profile.file.ProfileLoadRequest
 import im.hikaru.harness.profile.file.ProfileReloadFailure
 import im.hikaru.harness.profile.file.ProfiledHarnessHost
+import im.hikaru.harness.schedule.SCHEDULE_PLUGIN_NAME
+import im.hikaru.harness.schedule.TOOL_SCHEDULE_PLUGIN_NAME
+import im.hikaru.harness.schedule.ToolSchedulePluginDefinition
+import im.hikaru.harness.schedule.schedulePluginDefinition
 import im.hikaru.harness.session.SessionPluginDefinition
 import im.hikaru.harness.session.api.SessionApiPluginDefinition
 import im.hikaru.harness.session.persistence.jvmSessionPersistenceDatabaseFactory
@@ -88,6 +92,10 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
                     defaultHarnessHome.resolve("harness-sessions.db").toFile()
                 ), autoSave = true
             ),
+            schedulePluginDefinition(
+                defaultHarnessHome.resolve("harness-schedule.db").toFile()
+            ),
+            ToolSchedulePluginDefinition,
             LlmRetryPluginDefinition,
         )
     )
@@ -130,6 +138,8 @@ internal fun desktopProfileBundle(isWindows: Boolean): ProfileBundle =
                             Entry("agent-loop", "agent-loop"),
                             Entry("session-api", "session-api"),
                             Entry("session-persistence", "session-persistence"),
+                            Entry(SCHEDULE_PLUGIN_NAME, SCHEDULE_PLUGIN_NAME),
+                            Entry(TOOL_SCHEDULE_PLUGIN_NAME, TOOL_SCHEDULE_PLUGIN_NAME),
                             Entry("llm-retry", "llm-retry"),
                         )
                 )

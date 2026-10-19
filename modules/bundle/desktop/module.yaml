@@ -21,6 +21,7 @@ dependencies:
   - ../../profile
   - ../../profile-file
   - ../../runtime
+  - ../../schedule-jvm
   - ../../session
   - ../../session-api
   - ../../session-persistence

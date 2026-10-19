@@ -75,7 +75,7 @@ class DesktopBundleTest {
                 "tools", "subprocess", "jobs", desktopShellToolPluginName(isWindowsPlatform()), "tool-jobs",
                 "terminal", "tool-terminal", "tool-subagent", "tool-subagent-control",
                 "tool-subagent-control/list-agents", "agent-loop", "session-api", "session-persistence",
-                "llm-retry",
+                "schedule", "tool-schedule", "llm-retry",
             ),
             entries.map { it.id },
         )
@@ -201,7 +201,7 @@ class DesktopBundleTest {
         try {
             val context = session.host.runtime.context
             val pluginNames = DesktopProfileBundle.patches.single().insert.orEmpty().map { it.id }
-            assertEquals(21, pluginNames.size)
+            assertEquals(23, pluginNames.size)
             assertTrue(
                 pluginNames.all { name ->
                     session.host.loader.fiber(name)?.state == FiberState.Active
@@ -270,7 +270,7 @@ class DesktopBundleTest {
             val loader = session.host.loader
             val context = session.host.runtime.context
             val dependentNames =
-                listOf("agent", "agent-loop", "session-api", "session-persistence", "llm-retry")
+                listOf("agent", "agent-loop", "session-api", "session-persistence", "schedule", "tool-schedule", "llm-retry")
             val initialPersistence = checkNotNull(context.get(SessionPersistenceKey))
 
             withContext(Dispatchers.IO) { delay(75) }
