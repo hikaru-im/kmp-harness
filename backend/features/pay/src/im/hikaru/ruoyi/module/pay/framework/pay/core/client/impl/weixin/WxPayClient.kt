@@ -1,6 +1,5 @@
 package im.hikaru.ruoyi.module.pay.framework.pay.core.client.impl.weixin
 
-import im.hikaru.ruoyi.framework.common.util.io.FileUtils
 import im.hikaru.ruoyi.framework.common.util.json.JsonUtils
 import im.hikaru.ruoyi.module.pay.enums.PayChannelEnum
 import im.hikaru.ruoyi.module.pay.enums.order.PayOrderStatusEnum
@@ -48,6 +47,7 @@ import com.github.binarywang.wxpay.constant.WxPayConstants
 import com.github.binarywang.wxpay.exception.WxPayException
 import com.github.binarywang.wxpay.service.WxPayService
 import com.github.binarywang.wxpay.service.impl.WxPayServiceImpl
+import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -376,11 +376,11 @@ class WxPayClient(
                 mchKey = config.mchKey
                 tradeType = tradeType()
                 if (config.apiVersion == WxPayClientConfig.API_VERSION_V2) {
-                    keyPath = FileUtils.createTempFile(Base64.getDecoder().decode(requireNotNull(config.keyContent))).path
+                    setKeyContent(Base64.getDecoder().decode(requireNotNull(config.keyContent)))
                 } else {
-                    privateKeyPath = FileUtils.createTempFile(requireNotNull(config.privateKeyContent)).path
+                    setPrivateKeyContent(requireNotNull(config.privateKeyContent).toByteArray(StandardCharsets.UTF_8))
                     config.publicKeyContent?.takeIf(String::isNotBlank)?.let {
-                        publicKeyPath = FileUtils.createTempFile(it).path
+                        setPublicKeyContent(it.toByteArray(StandardCharsets.UTF_8))
                     }
                     setStrictlyNeedWechatPaySerial(true)
                     setFullPublicKeyModel(true)

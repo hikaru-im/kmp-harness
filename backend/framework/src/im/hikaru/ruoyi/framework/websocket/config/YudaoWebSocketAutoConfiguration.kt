@@ -75,6 +75,7 @@ class YudaoWebSocketAutoConfiguration {
     ): WebSocketAuthorizeRequestsCustomizer = WebSocketAuthorizeRequestsCustomizer(webSocketProperties)
 
     @Configuration
+    @ConditionalOnBean(YudaoWebSocketAutoConfiguration::class)
     @ConditionalOnProperty(prefix = "yudao.websocket", name = ["sender-type"], havingValue = "local")
     class LocalWebSocketMessageSenderConfiguration {
         @Bean
