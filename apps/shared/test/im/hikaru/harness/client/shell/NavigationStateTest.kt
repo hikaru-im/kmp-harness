@@ -26,6 +26,25 @@ class NavigationStateTest {
     }
 
     @Test
+    fun pagesIsTheNavigation3BackStackWithCurrentPageLastAndNeverEmpty() {
+        // NavDisplay requires a non-empty stack; the exposed list always ends with the current page.
+        val home = NavigationState()
+        assertEquals(listOf(PageId.Home), home.pages)
+
+        val deep = home
+            .navigate(PageId.Projects(query = "harness"))
+            .navigate(PageId.Project(projectId = "project-1"))
+        assertEquals(
+            listOf(PageId.Home, PageId.Projects(query = "harness"), PageId.Project(projectId = "project-1")),
+            deep.pages,
+        )
+        assertEquals(deep.currentPage, deep.pages.last())
+
+        val back = deep.back()
+        assertEquals(listOf(PageId.Home, PageId.Projects(query = "harness")), back.pages)
+    }
+
+    @Test
     fun overlayDoesNotReplaceCurrentPage() {
         var state = NavigationState(currentPage = PageId.Thread("thread-1"))
         state = state.openOverlay(OverlayId.ProjectContext("project-1"))

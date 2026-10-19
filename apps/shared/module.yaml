@@ -21,6 +21,7 @@ dependencies:
   - $compose.animation
   - $compose.foundation: exported
   - org.jetbrains.compose.material3:material3:1.11.0-alpha07: exported
+  - org.jetbrains.androidx.navigation3:navigation3-ui:1.1.0-alpha01: exported
 
 dependencies@jvm:
   - net.java.dev.jna:jna-platform:5.18.1

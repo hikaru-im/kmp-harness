@@ -45,6 +45,8 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.ui.NavDisplay
 import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.harness.client.account.AccountWorkspacePage
 import im.hikaru.harness.client.account.AccountException
@@ -1153,6 +1155,139 @@ public fun HarnessApp(
             }
         }
         // Desktop owns the fixture tabs and the split workspace; each surface renders this page.
+        // Navigation 3 owns the conversation back stack. A side-panel tab is routed outside it:
+        // `LocalHarnessPaneTab` renders that tab's page without touching the conversation history.
+        @Composable
+        fun renderPage(current: PageId) {
+            val paneConversationState = conversationState
+            val paneConversation = conversation
+            when (current) {
+                PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = homeComposer)
+
+                PageId.NewTab -> NewTabPage(
+                    onOpenTool = { tool ->
+                        when (tool) {
+                            // 变更 is the one 工具 card this client has a destination for: the
+                            // repository's own changes, which is the Settings Git page. Choosing it
+                            // opens it as another **side panel tab** beside this one — the panel's
+                            // tabs *are* its tool pages — rather than navigating the conversation
+                            // away, which on a page with no panel would take the panel off screen
+                            // with the card still under the pointer. A window with no strip
+                            // (mobile, previews) has no panel to open it in and navigates instead.
+                            NewTabTool.Changes ->
+                                if (paneStrip != null) paneStrip.add(HarnessChangesPage)
+                                else selectPage(HarnessChangesPage.page ?: PageId.Settings(SettingsSection.Git))
+                            NewTabTool.Terminal, NewTabTool.Files, NewTabTool.SideChat -> Unit
+                        }
+                    },
+                )
+
+                PageId.Library -> LibraryPlaceholderPage()
+
+                is PageId.Projects -> LocalProjectsPage(localProjectsState, current.query,
+                    onQueryChange = { navigation = navigation.copy(currentPage = PageId.Projects(it)) },
+                    onCreate = { editingProject = null; projectEditorOpen = true },
+                    onRefresh = { localProjects.refresh() },
+                    onOpen = { selectPage(PageId.Project(it.value)) })
+
+                is PageId.Project -> LocalProjectDetailPage(localProjectsState, LocalProjectId(current.projectId), visibleConversationSessions,
+                    onBindDirectory = { editingProject = it; projectEditorOpen = true },
+                    onStart = { localProjects.select(it); selectPage(PageId.Home) },
+                    onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
+                    onRefresh = { localProjects.refresh() })
+
+                is PageId.ScheduledTasks ->
+                    if (scheduledBindingReady) {
+                        Column(Modifier.fillMaxSize().semantics { testTag = "scheduled-page" }) {
+                            schedulingUnavailableReason?.let { reason ->
+                                HarnessText(reason, Modifier.padding(HarnessTokens.Spacing.Four)
+                                    .semantics { testTag = "scheduled-service-unavailable" },
+                                    color = HarnessTokens.Colors.TextMuted)
+                            }
+                            ScheduledManagementPage(
+                                repository = scheduledRepository,
+                                onRecoverExecution = if (scheduledExecutionRecoveryEnabled && recoveryBinding != null &&
+                                    scheduledOwnerState?.invalidated == false && scheduledOwnerState.stopped == false &&
+                                    scheduledOwnerState.busy == false && executorState?.accepting == false) {
+                                    { schedulingActionScope.launch { scheduledExecutorOwner?.recover(recoveryBinding) } }
+                                } else null,
+                                executionRecoveryBusy = recoveryBinding != null && scheduledOwnerState?.busy == true,
+                                executionRecoveryError = scheduledOwnerState?.error.takeIf { recoveryBinding != null },
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                query = current.query,
+                                onQueryChange = onScheduledQueryChange,
+                                calendar = scheduleCalendar,
+                                nowEpochMillis = scheduledNow,
+                                onOpenRun = { id ->
+                                    if (scheduledBindingReady && scheduledConnected && localSchedulingAllowed) {
+                                        selectPage(PageId.Thread(id.value))
+                                    }
+                                },
+                            )
+                        }
+                    } else HarnessText("正在绑定当前 Host…", Modifier.semantics { testTag = "scheduled-binding-loading" })
+
+                is PageId.Thread -> LiveThreadSurface(
+                    state = paneConversationState,
+                    onRetry = { paneConversation.refresh() },
+                )
+
+
+                PageId.Plugins -> InstalledPluginsPage(pluginsState, pluginAction)
+                is PageId.PluginDetail -> InstalledPluginDetailPage(pluginsState, pluginAction)
+
+
+                PageId.Account ->
+                    AccountWorkspacePage(
+                        account = account,
+                        state = accountState,
+                        status = connectionState,
+                        host = host,
+                        onOpenSettings = { selectPage(PageId.Settings()) },
+                        onLoggedIn = {
+                            val target = pendingPage
+                            pendingPage = null
+                            navigation = navigation.navigate(target ?: PageId.Home)
+                        },
+                    )
+
+                is PageId.Settings -> SettingsScreen(
+                    current.section, appearanceState,
+                    onAppearanceChange = { candidate -> appearanceScope.launch { appearance.save(candidate) } },
+                    onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
+                    modelSettings = modelSettings,
+                    onModelsRefresh = { modelScope.launch { models.load() } },
+                    onModelsRetryApplication = { modelScope.launch { models.retryApplication() } },
+                    onModelsDiscover = { id, revision -> modelScope.launch { models.discoverModels(id, revision) } },
+                    onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
+                    onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
+                    onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
+                    generalState = generalState,
+                    onClosePolicyChange = { policy -> generalScope.launch { general.save(general.state.value.settings.copy(closeConfirmation = policy)) } },
+                    onGeneralRetry = { generalScope.launch { general.retry() } },
+                    worktreeSettingsState = worktreeSettingsState,
+                    onSaveWorktreeSettings = { next -> worktreeSettingsScope.launch { worktreeSettings.save(next) } },
+                    onOpenPlugins = { selectPage(PageId.Plugins) },
+                    connectionsState = connectionsState,
+                    onConnectionsRefresh = refreshConnections,
+                    onConnectionSelect = selectConnection,
+                    shortcutsRepository = shortcuts,
+                    pluginsState = pluginsState,
+                    onPluginAction = pluginAction,
+                    git = git,
+                    gitState = gitState,
+                    gitBindingReady = observedGitState.binding == gitBinding,
+                    gitUnavailableReason = if (transport == ConnectionTransport.Local && gitBackend == null)
+                        "当前未注入本机 Git 只读服务，无法读取仓库。" else gitState.unavailableReason,
+                    gitCwdChoices = gitCwdChoices,
+                    managedWorktrees = managedWorktrees,
+                    liveSessions = conversationState.sessions,
+                    onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
+                    onNewChatInWorktree = { path -> pendingWorktreeChat = path; selectPage(PageId.Home) },
+                )
+            }
+        }
+
         AppShell(
             state = runtimeState,
             themeMode = appearanceState.settings.mode.themeMode(),
@@ -1302,137 +1437,29 @@ public fun HarnessApp(
             },
             onDismissSummaryPanel = { summaryPanelOpen = false },
             content = {
-                // A pane draws the page of the tab it holds (the window provides it around each
-                // surface), so a split shows the conversation's page beside the side panel's tab. A
-                // pane that holds no tab is the conversation, which draws the page the shell has
-                // navigated to and reads `conversation`; the panel's pane never touches it.
                 val paneTab = LocalHarnessPaneTab.current
-                val panePage = paneTab?.page ?: page
-                val paneConversationState = conversationState
-                val paneConversation = conversation
-                when (val current = panePage) {
-                    PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = homeComposer)
-
-                    PageId.NewTab -> NewTabPage(
-                        onOpenTool = { tool ->
-                            when (tool) {
-                                // 变更 is the one 工具 card this client has a destination for: the
-                                // repository's own changes, which is the Settings Git page. Choosing it
-                                // opens it as another **side panel tab** beside this one — the panel's
-                                // tabs *are* its tool pages — rather than navigating the conversation
-                                // away, which on a page with no panel would take the panel off screen
-                                // with the card still under the pointer. A window with no strip
-                                // (mobile, previews) has no panel to open it in and navigates instead.
-                                NewTabTool.Changes ->
-                                    if (paneStrip != null) paneStrip.add(HarnessChangesPage)
-                                    else selectPage(HarnessChangesPage.page ?: PageId.Settings(SettingsSection.Git))
-                                NewTabTool.Terminal, NewTabTool.Files, NewTabTool.SideChat -> Unit
-                            }
+                if (paneTab != null) {
+                    // A pane draws the page of the tab it holds (the window provides it around each
+                    // surface), so a split shows the conversation's page beside the side panel's tab.
+                    renderPage(paneTab.page ?: page)
+                } else {
+                    NavDisplay(
+                        backStack = navigation.pages,
+                        modifier = Modifier.fillMaxSize(),
+                        onBack = { navigation = navigation.back() },
+                        entryProvider = entryProvider {
+                            entry<PageId.Home> { renderPage(it) }
+                            entry<PageId.NewTab> { renderPage(it) }
+                            entry<PageId.Library> { renderPage(it) }
+                            entry<PageId.Projects> { renderPage(it) }
+                            entry<PageId.Project> { renderPage(it) }
+                            entry<PageId.Thread> { renderPage(it) }
+                            entry<PageId.ScheduledTasks> { renderPage(it) }
+                            entry<PageId.Plugins> { renderPage(it) }
+                            entry<PageId.PluginDetail> { renderPage(it) }
+                            entry<PageId.Account> { renderPage(it) }
+                            entry<PageId.Settings> { renderPage(it) }
                         },
-                    )
-
-                    PageId.Library -> LibraryPlaceholderPage()
-
-                    is PageId.Projects -> LocalProjectsPage(localProjectsState, current.query,
-                        onQueryChange = { navigation = navigation.copy(currentPage = PageId.Projects(it)) },
-                        onCreate = { editingProject = null; projectEditorOpen = true },
-                        onRefresh = { localProjects.refresh() },
-                        onOpen = { selectPage(PageId.Project(it.value)) })
-
-                    is PageId.Project -> LocalProjectDetailPage(localProjectsState, LocalProjectId(current.projectId), visibleConversationSessions,
-                        onBindDirectory = { editingProject = it; projectEditorOpen = true },
-                        onStart = { localProjects.select(it); selectPage(PageId.Home) },
-                        onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
-                        onRefresh = { localProjects.refresh() })
-
-                    is PageId.ScheduledTasks ->
-                        if (scheduledBindingReady) {
-                            Column(Modifier.fillMaxSize().semantics { testTag = "scheduled-page" }) {
-                                schedulingUnavailableReason?.let { reason ->
-                                    HarnessText(reason, Modifier.padding(HarnessTokens.Spacing.Four)
-                                        .semantics { testTag = "scheduled-service-unavailable" },
-                                        color = HarnessTokens.Colors.TextMuted)
-                                }
-                                ScheduledManagementPage(
-                                    repository = scheduledRepository,
-                                    onRecoverExecution = if (scheduledExecutionRecoveryEnabled && recoveryBinding != null &&
-                                        scheduledOwnerState?.invalidated == false && scheduledOwnerState.stopped == false &&
-                                        scheduledOwnerState.busy == false && executorState?.accepting == false) {
-                                        { schedulingActionScope.launch { scheduledExecutorOwner?.recover(recoveryBinding) } }
-                                    } else null,
-                                    executionRecoveryBusy = recoveryBinding != null && scheduledOwnerState?.busy == true,
-                                    executionRecoveryError = scheduledOwnerState?.error.takeIf { recoveryBinding != null },
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                    query = current.query,
-                                    onQueryChange = onScheduledQueryChange,
-                                    calendar = scheduleCalendar,
-                                    nowEpochMillis = scheduledNow,
-                                    onOpenRun = { id ->
-                                        if (scheduledBindingReady && scheduledConnected && localSchedulingAllowed) {
-                                            selectPage(PageId.Thread(id.value))
-                                        }
-                                    },
-                                )
-                            }
-                        } else HarnessText("正在绑定当前 Host…", Modifier.semantics { testTag = "scheduled-binding-loading" })
-
-                    is PageId.Thread -> LiveThreadSurface(
-                        state = paneConversationState,
-                        onRetry = { paneConversation.refresh() },
-                    )
-
-
-                    PageId.Plugins -> InstalledPluginsPage(pluginsState, pluginAction)
-                    is PageId.PluginDetail -> InstalledPluginDetailPage(pluginsState, pluginAction)
-
-
-                    PageId.Account ->
-                        AccountWorkspacePage(
-                            account = account,
-                            state = accountState,
-                            status = connectionState,
-                            host = host,
-                            onOpenSettings = { selectPage(PageId.Settings()) },
-                            onLoggedIn = {
-                                val target = pendingPage
-                                pendingPage = null
-                                navigation = navigation.navigate(target ?: PageId.Home)
-                            },
-                        )
-
-                    is PageId.Settings -> SettingsScreen(
-                        current.section, appearanceState,
-                        onAppearanceChange = { candidate -> appearanceScope.launch { appearance.save(candidate) } },
-                        onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
-                        modelSettings = modelSettings,
-                        onModelsRefresh = { modelScope.launch { models.load() } },
-                        onModelsRetryApplication = { modelScope.launch { models.retryApplication() } },
-                        onModelsDiscover = { id, revision -> modelScope.launch { models.discoverModels(id, revision) } },
-                        onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
-                        onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
-                        onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
-                        generalState = generalState,
-                        onClosePolicyChange = { policy -> generalScope.launch { general.save(general.state.value.settings.copy(closeConfirmation = policy)) } },
-                        onGeneralRetry = { generalScope.launch { general.retry() } },
-                        worktreeSettingsState = worktreeSettingsState,
-                        onSaveWorktreeSettings = { next -> worktreeSettingsScope.launch { worktreeSettings.save(next) } },
-                        onOpenPlugins = { selectPage(PageId.Plugins) },
-                        connectionsState = connectionsState,
-                        onConnectionsRefresh = refreshConnections,
-                        onConnectionSelect = selectConnection,
-                        shortcutsRepository = shortcuts,
-                        pluginsState = pluginsState,
-                        onPluginAction = pluginAction,
-                        git = git,
-                        gitState = gitState,
-                        gitBindingReady = observedGitState.binding == gitBinding,
-                        gitUnavailableReason = if (transport == ConnectionTransport.Local && gitBackend == null)
-                            "当前未注入本机 Git 只读服务，无法读取仓库。" else gitState.unavailableReason,
-                        gitCwdChoices = gitCwdChoices,
-                        managedWorktrees = managedWorktrees,
-                        liveSessions = conversationState.sessions,
-                        onOpenSession = { selectPage(PageId.Thread(it.id.value)) },
-                        onNewChatInWorktree = { path -> pendingWorktreeChat = path; selectPage(PageId.Home) },
                     )
                 }
             },

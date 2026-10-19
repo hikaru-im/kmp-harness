@@ -1,12 +1,21 @@
 package im.hikaru.harness.client.shell
 
+import androidx.navigation3.runtime.NavKey
+import kotlinx.serialization.Serializable
+
 /**
  * Shared page identity for Desktop, Android and iOS.
  *
  * The old flat [ShellDestination] enum could not express Project > Task > Thread. Pages, overlays and
  * the back stack are modeled separately here; [ShellDestination] stays only as a compatibility adapter.
+ *
+ * Every page is a Navigation 3 [NavKey]: [NavigationState.pages] is the back stack handed to
+ * `NavDisplay`, and the serializable route shape is what a `rememberNavBackStack` or saved state would
+ * persist if the app starts restoring navigation.
  */
-public sealed interface PageId {
+@Serializable
+public sealed interface PageId : NavKey {
+    @Serializable
     public data object Home : PageId
 
     /**
@@ -15,23 +24,28 @@ public sealed interface PageId {
      * mounts the Workspace navigator (the live title strip keeps its 隐藏侧边栏 toggle while the tab is
      * on this page).
      */
+    @Serializable
     public data object NewTab : PageId
 
     /**
      * The rail 资料库 destination. Codex's Library is a file product this client does not implement,
      * so the slot opens an explicit placeholder page instead of a fabricated library.
      */
+    @Serializable
     public data object Library : PageId
 
+    @Serializable
     public data class Projects(
         val query: String = "",
     ) : PageId
 
+    @Serializable
     public data class Project(
         val projectId: String,
         val childFilter: ProjectChildFilter = ProjectChildFilter.All,
     ) : PageId
 
+    @Serializable
     public data class Thread(
         val threadId: String,
         val taskId: String? = null,
@@ -40,25 +54,31 @@ public sealed interface PageId {
         val navigationSource: String? = null,
     ) : PageId
 
+    @Serializable
     public data class ScheduledTasks(
         val query: String = "",
     ) : PageId
 
 
+    @Serializable
     public data object Plugins : PageId
 
+    @Serializable
     public data class PluginDetail(
         val pluginId: String,
     ) : PageId
 
+    @Serializable
     public data object Account : PageId
 
+    @Serializable
     public data class Settings(
         val section: SettingsSection = SettingsSection.General,
         val childTab: String? = null,
     ) : PageId
 }
 
+@Serializable
 public enum class ProjectChildFilter {
     All,
     Tasks,
@@ -66,6 +86,7 @@ public enum class ProjectChildFilter {
     Archived,
 }
 
+@Serializable
 public enum class SettingsSection {
     General,
     Appearance,
@@ -117,6 +138,13 @@ public data class NavigationState(
     val selectedThreadId: String? = null,
     val overlay: OverlayId = OverlayId.None,
 ) {
+    /**
+     * The user-owned Navigation 3 back stack: the current page is its last entry. [backStack] keeps
+     * carrying the pages *below* it so existing callers and tests keep their shape, while `NavDisplay`
+     * receives a list that is never empty.
+     */
+    public val pages: List<PageId> get() = backStack + currentPage
+
     public fun navigate(page: PageId): NavigationState =
         if (page == currentPage) this else copy(currentPage = page, backStack = backStack + currentPage)
 

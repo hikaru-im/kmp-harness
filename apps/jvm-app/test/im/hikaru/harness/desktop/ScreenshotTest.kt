@@ -134,7 +134,7 @@ class ScreenshotTest {
         val dir = File(captureDir(), "scope").apply { mkdirs() }
         listOf(CaptureSize(1440, 900), CaptureSize(600, 800)).forEach { size ->
             captureThemes.forEach { theme ->
-                render(dir, "scheduled-" + theme.slug + "-" + size.fileSuffix + ".png", size) {
+                renderInComposeTest(dir, "scheduled-" + theme.slug + "-" + size.fileSuffix + ".png", size) {
                     HarnessApp(connection = null, initialDestination = HarnessDestination.ScheduledTasks, themeMode = theme.mode)
                 }
                 render(dir, "more-" + theme.slug + "-" + size.fileSuffix + ".png", size) {
@@ -501,6 +501,32 @@ class ScreenshotTest {
             assertTrue(file.isFile && file.length() > 0, "screenshot not written: " + path)
         }
         println("SETTINGS GENERAL SCREENSHOTS: " + written.joinToString(", "))
+    }
+
+    /**
+     * `ImageComposeScene` renders on the calling thread, but Navigation 3's entry lifecycle
+     * decorator dispatches lifecycle events and asserts they arrive on the UI thread. Render shells
+     * that contain `NavDisplay` through the Compose test harness, which owns the UI thread.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    private fun renderInComposeTest(
+        dir: File,
+        name: String,
+        size: CaptureSize,
+        content: @Composable () -> Unit,
+    ): String {
+        var path: String? = null
+        runSkikoComposeUiTest(size = Size(size.width.toFloat(), size.height.toFloat())) {
+            setContent(content)
+            val bitmap = onRoot().captureToImage().asSkiaBitmap()
+            val data = requireNotNull(Image.makeFromBitmap(bitmap).encodeToData(EncodedImageFormat.PNG)) {
+                "encode failed"
+            }
+            val file = File(dir, name)
+            file.writeBytes(data.bytes)
+            path = file.absolutePath
+        }
+        return requireNotNull(path)
     }
 
     private fun render(
