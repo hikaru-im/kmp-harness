@@ -54,7 +54,10 @@ private fun primaryRailItems(selected: PageId, pinned: Set<RailDestination>): Li
             id = "home",
             label = "主页",
             icon = HarnessIconName.Home,
-            selected = selected is PageId.Home,
+            // Codex keeps 主页 selected while a conversation is open: a Thread belongs to the page
+            // that launched it, and the Workspace navigator is still Home's. Scheduled runs are the
+            // exception below; they keep 定时任务 selected.
+            selected = selected is PageId.Home || (selected is PageId.Thread && selected.automationId == null),
             section = RailSection.Primary,
             destination = RailDestination.Home,
         ),
@@ -62,7 +65,7 @@ private fun primaryRailItems(selected: PageId, pinned: Set<RailDestination>): Li
             id = "scheduled",
             label = "定时任务",
             icon = HarnessIconName.Clock,
-            selected = selected is PageId.ScheduledTasks,
+            selected = selected is PageId.ScheduledTasks || (selected is PageId.Thread && selected.automationId != null),
             section = RailSection.Primary,
             destination = RailDestination.Scheduled,
         ),

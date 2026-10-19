@@ -124,5 +124,5 @@ public fun desktopHostDescription(): HostDescription =
     HostDescription(
         protocolVersion = ProtocolVersion(major = 1, minor = 0),
         hostId = HostId("desktop-local"),
-        displayName = "KMP Harness Desktop",
+        displayName = "KMP Harness",
     )

@@ -707,29 +707,59 @@ private fun DrawScope.drawHarnessIcon(
             drawLine(color, Offset(min * 0.42f, min * 0.56f), Offset(min * 0.58f, min * 0.56f), stroke.width, StrokeCap.Round)
         }
         HarnessIconName.Bell -> {
-            // Notification bell: rounded dome, flared skirt, flat base and a clapper arc.
-            val g = CodexGrid(min)
+            // Notification bell transcribed from the live header's 16-unit filled path. Codex draws the
+            // outline as one even-odd fill (outer silhouette + inner cutout) plus a clapper, so a stroked
+            // narrow bell reads too small and sits visually off-centre beside the search glyph.
             drawPath(
-                Path().apply {
-                    moveTo(g.at(4.9f), g.at(14.0f))
-                    cubicTo(g.at(5.7f), g.at(13.3f), g.at(6.2f), g.at(12.3f), g.at(6.2f), g.at(11.2f))
-                    lineTo(g.at(6.2f), g.at(8.3f))
-                    cubicTo(g.at(6.2f), g.at(6.0f), g.at(7.9f), g.at(4.4f), g.at(10f), g.at(4.4f))
-                    cubicTo(g.at(12.1f), g.at(4.4f), g.at(13.8f), g.at(6.0f), g.at(13.8f), g.at(8.3f))
-                    lineTo(g.at(13.8f), g.at(11.2f))
-                    cubicTo(g.at(13.8f), g.at(12.3f), g.at(14.3f), g.at(13.3f), g.at(15.1f), g.at(14.0f))
-                    lineTo(g.at(4.9f), g.at(14.0f))
-                },
+                artwork16(min).apply {
+                    moveTo(7.99947f, 1.30786f)
+                    cubicTo(9.44698f, 1.30787f, 10.6392f, 1.80576f, 11.4848f, 2.65259f)
+                    cubicTo(12.3263f, 3.49545f, 12.7915f, 4.65072f, 12.8549f, 5.91235f)
+                    lineTo(12.978f, 8.35278f)
+                    cubicTo(12.9838f, 8.46755f, 13.0142f, 8.5798f, 13.0668f, 8.68188f)
+                    lineTo(13.892f, 10.2815f)
+                    cubicTo(14.0622f, 10.6116f, 14.1127f, 11.0345f, 13.9292f, 11.4055f)
+                    cubicTo(13.7294f, 11.8089f, 13.3178f, 12.0245f, 12.8295f, 12.0247f)
+                    lineTo(11.1479f, 12.0247f)
+                    cubicTo(10.8976f, 13.5375f, 9.58325f, 14.6915f, 7.99947f, 14.6917f)
+                    cubicTo(6.41567f, 14.6915f, 5.10145f, 13.5375f, 4.85103f, 12.0247f)
+                    lineTo(3.17037f, 12.0247f)
+                    cubicTo(2.68191f, 12.0246f, 2.27056f, 11.809f, 2.07076f, 11.4055f)
+                    cubicTo(1.88713f, 11.0344f, 1.93759f, 10.6117f, 2.10787f, 10.2815f)
+                    lineTo(2.93208f, 8.68188f)
+                    cubicTo(2.98475f, 8.57975f, 3.0151f, 8.46763f, 3.02095f, 8.35278f)
+                    lineTo(3.14497f, 5.91333f)
+                    cubicTo(3.20828f, 4.65152f, 3.67254f, 3.49557f, 4.51412f, 2.65259f)
+                    cubicTo(5.35966f, 1.8057f, 6.55196f, 1.30793f, 7.99947f, 1.30786f)
+                    close()
+
+                    moveTo(5.92525f, 12.0247f)
+                    cubicTo(6.15942f, 12.9534f, 6.99805f, 13.6417f, 7.99947f, 13.6418f)
+                    cubicTo(9.0009f, 13.6417f, 9.84044f, 12.9534f, 10.0747f, 12.0247f)
+                    lineTo(5.92525f, 12.0247f)
+                    close()
+
+                    moveTo(7.99947f, 2.35864f)
+                    cubicTo(6.80319f, 2.35871f, 5.88722f, 2.76384f, 5.25728f, 3.39478f)
+                    cubicTo(4.62353f, 4.02965f, 4.24499f, 4.92715f, 4.19283f, 5.96509f)
+                    lineTo(4.06978f, 8.40552f)
+                    cubicTo(4.05641f, 8.66978f, 3.98693f, 8.92819f, 3.86568f, 9.16333f)
+                    lineTo(3.04146f, 10.7629f)
+                    cubicTo(2.98937f, 10.8642f, 3.00732f, 10.9299f, 3.01216f, 10.9397f)
+                    cubicTo(3.01267f, 10.9408f, 3.01289f, 10.9439f, 3.0229f, 10.9495f)
+                    cubicTo(3.03597f, 10.9566f, 3.07868f, 10.9748f, 3.17037f, 10.9749f)
+                    lineTo(12.8295f, 10.9749f)
+                    cubicTo(12.9216f, 10.9748f, 12.9643f, 10.9565f, 12.977f, 10.9495f)
+                    cubicTo(12.987f, 10.9439f, 12.9872f, 10.9407f, 12.9877f, 10.9397f)
+                    cubicTo(12.9927f, 10.9294f, 13.0104f, 10.8638f, 12.9585f, 10.7629f)
+                    lineTo(12.1342f, 9.16333f)
+                    cubicTo(12.013f, 8.9282f, 11.9435f, 8.66978f, 11.9301f, 8.40552f)
+                    lineTo(11.8061f, 5.96606f)
+                    cubicTo(11.7539f, 4.92804f, 11.3755f, 4.02965f, 10.7417f, 3.39478f)
+                    cubicTo(10.1117f, 2.76384f, 9.19582f, 2.35865f, 7.99947f, 2.35864f)
+                    close()
+                }.evenOdd().path,
                 color,
-                style = stroke,
-            )
-            drawPath(
-                Path().apply {
-                    moveTo(g.at(8.7f), g.at(15.6f))
-                    cubicTo(g.at(9.1f), g.at(16.6f), g.at(10.9f), g.at(16.6f), g.at(11.3f), g.at(15.6f))
-                },
-                color,
-                style = stroke,
             )
         }
         HarnessIconName.NewChat -> {

@@ -1261,6 +1261,8 @@ public fun HarnessApp(
                 }
             },
             onOpenProjectContext = { projectId -> selectPage(PageId.Project(projectId)) },
+            onNewProject = { editingProject = null; projectEditorOpen = true },
+            onOpenProjects = { selectPage(PageId.Projects()) },
             modifier = modifier.onSizeChanged { shellWidthPx = it.width },
             composer = composer,
             contextPanel = contextPanel,
@@ -1459,6 +1461,28 @@ public fun HarnessApp(
                             (navigation.currentPage as? PageId.Thread)?.threadId == id) selectPage(PageId.Home)
                         applied
                     } }
+                }
+            },
+            // The activity feed changes one session at a time; awaiting each command keeps the
+            // controller's single-management-slot contract intact for bulk menu actions.
+            markAllRead = { ids ->
+                conversationScope.launch {
+                    ids.forEach { id ->
+                        val summary = currentConversationSessions.firstOrNull { it.id.value == id } ?: return@forEach
+                        if (summary.unread && summary.managementAvailable) {
+                            conversation.manage(summary.id, ConversationCommand.MarkRead)?.await()
+                        }
+                    }
+                }
+            },
+            archiveAll = { ids ->
+                conversationScope.launch {
+                    ids.forEach { id ->
+                        val summary = currentConversationSessions.firstOrNull { it.id.value == id } ?: return@forEach
+                        if (!summary.archived && summary.archiveAvailable) {
+                            conversation.manage(summary.id, ConversationCommand.ToggleArchive)?.await()
+                        }
+                    }
                 }
             },
             owner = conversationHost)) {

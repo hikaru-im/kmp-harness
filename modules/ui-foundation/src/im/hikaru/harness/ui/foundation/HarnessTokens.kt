@@ -137,8 +137,21 @@ public data class HarnessColors(
     public val NavigationBackground: Color get() = NavigatorSurface
     public val WorkspaceBackground: Color get() = Canvas
     public val OverlayBackground: Color get() = SurfaceElevated
+    /**
+     * Dialog backdrop: Codex's `--color-dialog-overlay` is `#0002`, i.e. black at 13.3%. It dims the
+     * rail, navigator and page behind the centered command menu; it is not a solid mask.
+     */
+    public val DialogScrim: Color get() = Color.Black.copy(alpha = 0.133f)
     public val HoverBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.06f else 0.04f)
     public val PressedBackground: Color get() = Text.copy(alpha = if (Canvas.luminance() < 0.5f) 0.10f else 0.08f)
+
+    /**
+     * Workspace navigator row text: the chrome ink at 85%, measured on the live v155 sidebar rows.
+     * The section labels use [ChromeIcon] (49.4%) instead.
+     */
+    public val NavigatorRowText: Color get() = ChromeText.copy(alpha = 0.85f)
+    /** Workspace navigator hover/selected wash: the chrome ink at 5.5%. */
+    public val NavigatorRowFill: Color get() = ChromeText.copy(alpha = 0.055f)
 
     /**
      * The menu row for the page that is already open. Codex paints it with
@@ -622,6 +635,24 @@ public object HarnessTokens {
          * 30.0px here; see the Workspace Navigator measurement note.
          */
         public val NavigatorRowGap: Dp = 1.dp
+        /**
+         * Workspace navigator header strip. Measured 52px on the live Codex v155 window; kept separate
+         * from [NavigatorHeader] so the page-owned navigators keep their measured 50px strip.
+         */
+        public val WorkspaceNavigatorHeader: Dp = 52.dp
+        /**
+         * Workspace navigator row corner. The live v155 `.sidebar-navigation` draws 12.5px, larger than
+         * the 10px [NavigatorRowRadius] the page-owned navigators still use.
+         */
+        public val WorkspaceNavigatorRowRadius: Dp = 12.5.dp
+        /** Workspace navigator header action box (bell/search), measured 28x28. */
+        public val WorkspaceNavigatorHeaderAction: Dp = 28.dp
+        /** Workspace section-header hover action box, measured 24x24. */
+        public val WorkspaceNavigatorSectionAction: Dp = 24.dp
+        /** Workspace row hover action box (pin/archive, project actions), measured 20x20. */
+        public val WorkspaceNavigatorRowAction: Dp = 20.dp
+        /** Corner shared by the navigator's small hover actions, measured 9.375px. */
+        public val WorkspaceNavigatorActionRadius: Dp = 9.375.dp
         /**
          * Width of a page-owned navigator. Only the Workspace navigator is user-resizable and opens
          * at [SidebarExpanded]; every page-owned navigator (Settings, Plugins, Hosts, Scheduled) is

@@ -12,6 +12,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.v2.runSkikoComposeUiTest
 import androidx.compose.ui.unit.Density
 import im.hikaru.harness.client.fixture.HarnessReferenceFixture
 import im.hikaru.harness.client.app.HarnessApp
@@ -52,6 +56,7 @@ import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import org.jetbrains.skia.EncodedImageFormat
+import org.jetbrains.skia.Image
 
 /**
  * Renders the shared shell off-screen at the reference sizes in both palettes so layout and theme
@@ -333,7 +338,8 @@ class ScreenshotTest {
             listOf(
                 NavigatorCapture("expanded", SidebarMode.Expanded, searchOpen = false, query = ""),
                 NavigatorCapture("collapsed", SidebarMode.Collapsed, searchOpen = false, query = ""),
-                NavigatorCapture("search-open", SidebarMode.Expanded, searchOpen = true, query = "DSH"),
+                NavigatorCapture("search-open", SidebarMode.Expanded, searchOpen = true, query = ""),
+                NavigatorCapture("search-filter", SidebarMode.Expanded, searchOpen = true, query = "DSH"),
             )
         val written = mutableListOf<String>()
         captureThemes.forEach { theme ->
@@ -354,6 +360,40 @@ class ScreenshotTest {
             assertTrue(file.isFile && file.length() > 0, "workspace navigator screenshot not written: " + path)
         }
         println("WORKSPACE NAVIGATOR SCREENSHOTS: " + written.joinToString(", "))
+    }
+
+    /**
+     * Activity-inbox acceptance: clicks the header bell and captures the in-sidebar feed, including
+     * the selected (accent) bell, in both palettes.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun renderWorkspaceNavigatorActivityStates() {
+        val dir = File(captureDir(), "rail").apply { mkdirs() }
+        val written = mutableListOf<String>()
+        captureThemes.forEach { theme ->
+            runSkikoComposeUiTest(size = Size(1440f, 900f)) {
+                setContent { WorkspaceNavigatorShell(theme.mode, SidebarMode.Expanded, searchOpen = false, query = "") }
+                onNodeWithTag("workspace-activity-toggle").performClick()
+                waitForIdle()
+                val bitmap = onRoot().captureToImage().asSkiaBitmap()
+                val data = requireNotNull(Image.makeFromBitmap(bitmap).encodeToData(EncodedImageFormat.PNG)) {
+                    "encode failed"
+                }
+                val name = "workspace-navigator-activity-" + theme.slug + "-1440x900"
+                val full = File(dir, name + ".png")
+                full.writeBytes(data.bytes)
+                written += full.absolutePath
+                val crop = File(dir, name + "-crop.png")
+                cropLeft(full.absolutePath, crop.absolutePath, width = 340)
+                written += crop.absolutePath
+            }
+        }
+        written.forEach { path ->
+            val file = File(path)
+            assertTrue(file.isFile && file.length() > 0, "workspace activity screenshot not written: " + path)
+        }
+        println("WORKSPACE ACTIVITY SCREENSHOTS: " + written.joinToString(", "))
     }
 
     /**
@@ -951,13 +991,13 @@ private fun WorkspaceNavigatorShell(
                 sidebar = SidebarState(mode = mode),
                 navigation =
                     NavigationState(
-                        currentPage = PageId.Projects(),
+                        currentPage = PageId.Home,
                         selectedThreadId = CodexWorkspaceNavigatorFixture.selectedThreadId,
                         expandedProjectIds = CodexWorkspaceNavigatorFixture.expandedProjectIds,
                     ),
                 connection = ConnectionIndicatorState.Local,
             ),
-        navItems = navItems(PageId.Projects()),
+        navItems = navItems(PageId.Home),
         onNavSelect = {},
         navigator =
             WorkspaceNavigatorState(
