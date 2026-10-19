@@ -152,7 +152,8 @@ class AdminUserServiceImpl(
     }
     override fun getUserListByNickname(nickname: String) = AdminUserDao.selectListByNickname(nickname)
     override fun getUserListByStatus(status: Int) = AdminUserDao.selectListByStatus(status)
-    override fun getDeptUsers(deptIds: Collection<Long>) = getUserListByDeptIds(deptIds)
+    override fun getDeptUsers(deptIds: Collection<Long>) =
+        AdminUserDao.selectListByStatusAndDeptIds(CommonStatusEnum.ENABLE.status, deptIds)
 
     @Transactional(rollbackFor = [Exception::class])
     override fun importUserList(

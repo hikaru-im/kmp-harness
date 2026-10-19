@@ -29,6 +29,12 @@ object AdminUserDao {
     fun selectListByNickname(nickname: String): List<AdminUserDO> = transaction { AdminUserTable.selectAll().where { conditions(AdminUserTable.nickname like "%$nickname%") }.map(::toEntity) }
     fun selectListByStatus(status: Int): List<AdminUserDO> = transaction { AdminUserTable.selectAll().where { conditions(AdminUserTable.status eq status) }.map(::toEntity) }
     fun selectListByDeptIds(deptIds: Collection<Long>): List<AdminUserDO> = if (deptIds.isEmpty()) emptyList() else transaction { AdminUserTable.selectAll().where { conditions(AdminUserTable.deptId inList deptIds) }.map(::toEntity) }
+    fun selectListByStatusAndDeptIds(status: Int, deptIds: Collection<Long>): List<AdminUserDO> =
+        if (deptIds.isEmpty()) emptyList() else transaction {
+            AdminUserTable.selectAll().where {
+                conditions(AdminUserTable.status eq status, AdminUserTable.deptId inList deptIds)
+            }.map(::toEntity)
+        }
     fun selectCount(): Long = transaction { AdminUserTable.selectAll().where { conditions() }.count() }
     fun selectPage(req: UserPageReqVO, deptIds: Collection<Long>? = null, userIds: Collection<Long>? = null): PageResult<AdminUserDO> = transaction {
         val ops = mutableListOf<Op<Boolean>>()
