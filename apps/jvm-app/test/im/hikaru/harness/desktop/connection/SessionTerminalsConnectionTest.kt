@@ -25,7 +25,7 @@ import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.GatewayResultCodes
 import im.hikaru.harness.api.gateway.session.*
 import im.hikaru.harness.client.connection.*
-import im.hikaru.harness.exec.jvm.ExecProcessPlugin
+import im.hikaru.harness.exec.jvm.SubprocessPlugin
 import im.hikaru.harness.llm.Message as CoreMessage
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.Runtime
@@ -875,7 +875,7 @@ class SessionTerminalsConnectionTest {
             runtime.install(AgentPlugin())
             runtime.install(ToolsPlugin())
             runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
-            runtime.install(ExecProcessPlugin())
+            runtime.install(SubprocessPlugin())
             runtime.install(SessionApiPlugin())
             f.handle = runtime.context.agents.create(AgentId("owner"), CoreAgentOptions(cwd = cwd.toString()))
             val real = runtime.context.require(SessionApiKey)

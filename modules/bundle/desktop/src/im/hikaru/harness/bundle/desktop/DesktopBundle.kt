@@ -7,7 +7,12 @@ import im.hikaru.harness.agent.AgentPluginDefinition
 import im.hikaru.harness.agent.loop.AgentLoopPluginDefinition
 import im.hikaru.harness.credentials.local.CREDENTIALS_LOCAL_PLUGIN_NAME
 import im.hikaru.harness.credentials.local.credentialsLocalPluginDefinition
-import im.hikaru.harness.exec.jvm.ExecProcessPluginDefinition
+import im.hikaru.harness.exec.jvm.SUBPROCESS_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.SubprocessPluginDefinition
+import im.hikaru.harness.exec.jvm.TOOL_BASH_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.TOOL_PWSH_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.ToolBashPluginDefinition
+import im.hikaru.harness.exec.jvm.ToolPwshPluginDefinition
 import im.hikaru.harness.home.HarnessHome
 import im.hikaru.harness.llm.LLM_PLUGIN_NAME
 import im.hikaru.harness.llm.LlmPluginDefinition
@@ -32,8 +37,13 @@ import im.hikaru.harness.session.persistence.jvmSessionPersistenceDatabaseFactor
 import im.hikaru.harness.session.persistence.sessionPersistencePluginDefinition
 import im.hikaru.harness.settings.file.SETTINGS_FILE_PLUGIN_NAME
 import im.hikaru.harness.settings.file.settingsFilePluginDefinition
+import im.hikaru.harness.subagent.tools.LIST_AGENTS_PLUGIN_NAME
+import im.hikaru.harness.subagent.tools.ListAgentsPluginDefinition
+import im.hikaru.harness.subagent.tools.TOOL_SUBAGENT_CONTROL_PLUGIN_NAME
+import im.hikaru.harness.subagent.tools.TOOL_SUBAGENT_PLUGIN_NAME
+import im.hikaru.harness.subagent.tools.ToolSubagentControlPluginDefinition
+import im.hikaru.harness.subagent.tools.ToolSubagentPluginDefinition
 import im.hikaru.harness.tools.ToolsPluginDefinition
-import im.hikaru.harness.subagent.tools.SubagentToolsPluginDefinition
 import java.nio.file.Path
 
 public const val DESKTOP_BUNDLE_NAME: String = "@hikaru-ai/harness-desktop"
@@ -53,10 +63,14 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             SessionPluginDefinition,
             AgentPluginDefinition,
             ToolsPluginDefinition,
+            SubprocessPluginDefinition,
+            ToolBashPluginDefinition,
+            ToolPwshPluginDefinition,
+            ToolSubagentPluginDefinition,
+            ToolSubagentControlPluginDefinition,
+            ListAgentsPluginDefinition,
             AgentLoopPluginDefinition,
             SessionApiPluginDefinition,
-            ExecProcessPluginDefinition,
-            SubagentToolsPluginDefinition,
             sessionPersistencePluginDefinition(
                 jvmSessionPersistenceDatabaseFactory(
                     defaultHarnessHome.resolve("harness-sessions.db").toFile()
@@ -67,7 +81,16 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
     )
 
 /** DSH-style bundle patch applied over an empty profile root. */
-public val DesktopProfileBundle: ProfileBundle =
+public val DesktopProfileBundle: ProfileBundle = desktopProfileBundle(isWindowsPlatform())
+
+/** The shell tool the default profile mounts: DSH's platform gate between `tool-bash` and `tool-pwsh`. */
+internal fun desktopShellToolPluginName(isWindows: Boolean): String =
+    if (isWindows) TOOL_PWSH_PLUGIN_NAME else TOOL_BASH_PLUGIN_NAME
+
+internal fun isWindowsPlatform(): Boolean =
+    System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+
+internal fun desktopProfileBundle(isWindows: Boolean): ProfileBundle =
     ProfileBundle(
         name = DESKTOP_BUNDLE_NAME,
         patches =
@@ -83,10 +106,13 @@ public val DesktopProfileBundle: ProfileBundle =
                             Entry("session", "session"),
                             Entry("agent", "agent"),
                             Entry("tools", "tools"),
+                            Entry(SUBPROCESS_PLUGIN_NAME, SUBPROCESS_PLUGIN_NAME),
+                            Entry(desktopShellToolPluginName(isWindows), desktopShellToolPluginName(isWindows)),
+                            Entry(TOOL_SUBAGENT_PLUGIN_NAME, TOOL_SUBAGENT_PLUGIN_NAME),
+                            Entry(TOOL_SUBAGENT_CONTROL_PLUGIN_NAME, TOOL_SUBAGENT_CONTROL_PLUGIN_NAME),
+                            Entry(LIST_AGENTS_PLUGIN_NAME, LIST_AGENTS_PLUGIN_NAME),
                             Entry("agent-loop", "agent-loop"),
                             Entry("session-api", "session-api"),
-                            Entry("exec-process", "exec-process"),
-                            Entry("subagent-tools", "subagent-tools"),
                             Entry("session-persistence", "session-persistence"),
                             Entry("llm-retry", "llm-retry"),
                         )

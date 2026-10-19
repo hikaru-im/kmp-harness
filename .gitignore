@@ -30,6 +30,19 @@ replay_pid*.log
 
 # local runtime logs
 /logs/
+__pycache__/
+
+# extracted Codex web assets: <name>-<12 hex>.<ext> at the repository root
+/*-????????????.js
+/*-????????????.css
+
+# generated desktop UI captures, probes, and verification evidence
+# (already tracked files stay tracked; add intentionally with `git add -f`)
+/docs/desktop-ui/captures/
+/docs/desktop-ui/reference/captures/
+/docs/desktop-ui/reference/fixtures/
+/docs/desktop-ui/reverse-engineering/
+/docs/desktop-ui/verification/
 
 # machine-local tool settings
 .claude/settings.local.json

@@ -3,10 +3,11 @@ package im.hikaru.harness.subagent.tools
 import im.hikaru.harness.agent.Agent
 import im.hikaru.harness.agent.AgentHandle
 import im.hikaru.harness.agent.AgentId
+import im.hikaru.harness.agent.AgentKey
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.AgentRegistry
-import im.hikaru.harness.agent.AgentKey
 import im.hikaru.harness.llm.CallId
+import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.createUserMessage
 import im.hikaru.harness.runtime.Context
@@ -31,13 +32,20 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-internal class SpawnAgentHandler(
+internal class SubagentToolHandler(
     private val hostContext: Context,
     private val registry: AgentRegistry,
     private val store: SessionStore,
 ) : ContextualToolHandler, Disposable {
     private data class CallKey(val parent: Session, val call: CallId)
-    private data class Arguments(val prompt: String, val provider: String, val model: String)
+    private data class Arguments(
+        val description: String,
+        val prompt: String,
+        val cwd: String?,
+        val provider: String?,
+        val model: String?,
+        val reasoningEffort: String?,
+    )
 
     private val mutex = Mutex()
     private val resultJson = Json { encodeDefaults = true }
@@ -45,13 +53,13 @@ internal class SpawnAgentHandler(
     private val owned = mutableSetOf<AgentHandle>()
     // A cancelled delivery can already have committed an Inbox insert. Keep its ID
     // under this call key so a repeated invocation cannot create a second child.
-    private val calls = mutableMapOf<CallKey, SpawnAgentResult?>()
+    private val calls = mutableMapOf<CallKey, SubagentResult?>()
 
     override suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult {
         val arguments: Arguments
         val ancestry: List<Agent>
         try {
-            require(request.name == SPAWN_AGENT_TOOL_NAME) { "Unexpected tool name" }
+            require(request.name == SUBAGENT_TOOL_NAME) { "Unexpected tool name" }
             arguments = decodeArguments(request.arguments)
             ancestry = captureAncestry(execution)
             require(request.scope == null || request.scope == execution.session.id.value) {
@@ -60,28 +68,36 @@ internal class SpawnAgentHandler(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            return result(SpawnAgentResult(SpawnAgentOutcome.REJECTED, error = error.message ?: "Invalid spawn request"))
+            return result(SubagentResult(SubagentOutcome.REJECTED, error = error.message ?: "Invalid subagent request"))
         }
 
         val key = CallKey(execution.session, request.callId)
         mutex.withLock {
-            if (disposed) return result(SpawnAgentResult(SpawnAgentOutcome.REJECTED, error = "Subagent tools disposed"))
+            if (disposed) return result(SubagentResult(SubagentOutcome.REJECTED, error = "Subagent tool disposed"))
             if (calls.containsKey(key)) {
-                return result(calls[key] ?: SpawnAgentResult(
-                    SpawnAgentOutcome.REJECTED, parentSessionId = execution.session.id.value,
-                    error = "This spawn call is already in flight; do not retry with a new call ID",
+                return result(calls[key] ?: SubagentResult(
+                    SubagentOutcome.REJECTED, parentSessionId = execution.session.id.value,
+                    error = "This subagent call is already in flight; do not retry with a new call ID",
                 ))
             }
             calls[key] = null
         }
 
         var child: AgentHandle? = null
-        var state = SpawnAgentResult(SpawnAgentOutcome.CREATE_FAILED, parentSessionId = execution.session.id.value)
+        var state = SubagentResult(SubagentOutcome.CREATE_FAILED, parentSessionId = execution.session.id.value)
         try {
             validateSnapshot(execution, ancestry)
-            val cwd = execution.session.header.cwd ?: ancestry.first().options.cwd
+            val parentOptions = ancestry.first().options
+            val cwd = arguments.cwd ?: execution.session.header.cwd ?: parentOptions.cwd
             val created = registry.create(
-                options = AgentOptions(cwd = cwd, provider = arguments.provider, model = arguments.model),
+                options = AgentOptions(
+                    cwd = cwd,
+                    provider = arguments.provider ?: parentOptions.provider,
+                    model = arguments.model ?: parentOptions.model,
+                    reasoningEffort = arguments.reasoningEffort?.let(::ReasoningEffortId)
+                        ?: parentOptions.reasoningEffort,
+                    maxTokens = parentOptions.maxTokens,
+                ),
                 sessionOptions = CreateSessionOptions(
                     cwd = cwd, parentSession = execution.session.id, origin = SessionOrigin.SUBAGENT,
                 ),
@@ -95,21 +111,21 @@ internal class SpawnAgentHandler(
             currentCoroutineContext().ensureActive()
             val message = createUserMessage(listOf(TextBlock(arguments.prompt)))
             state = state.copy(
-                inputMessageId = message.id.value, delivery = SpawnAgentDelivery.UNKNOWN,
-                outcome = SpawnAgentOutcome.CREATED_DELIVERY_UNKNOWN,
+                inputMessageId = message.id.value, delivery = SubagentDelivery.UNKNOWN,
+                outcome = SubagentOutcome.CREATED_DELIVERY_UNKNOWN,
             )
             try {
                 val receipt = created.agent.followup(message)
                 state = state.copy(
-                    outcome = SpawnAgentOutcome.ACCEPTED,
-                    receiptId = receipt, delivery = SpawnAgentDelivery.ACCEPTED,
+                    outcome = SubagentOutcome.ACCEPTED,
+                    receiptId = receipt, delivery = SubagentDelivery.ACCEPTED,
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 // A handler can throw after an Inbox commit. Do not claim unsent.
                 state = state.copy(
-                    outcome = SpawnAgentOutcome.CREATED_PROMPT_FAILED,
+                    outcome = SubagentOutcome.CREATED_PROMPT_FAILED,
                     error = error.message ?: "Prompt delivery failed",
                 )
             }
@@ -117,10 +133,10 @@ internal class SpawnAgentHandler(
             validateChild(created.agent, execution.session)
         } catch (error: CancellationException) {
             withContext(NonCancellable) {
-                state = state.copy(error = if (state.delivery == SpawnAgentDelivery.NOT_ATTEMPTED) {
-                    "Spawn cancelled before prompt delivery"
+                state = state.copy(error = if (state.delivery == SubagentDelivery.NOT_ATTEMPTED) {
+                    "Subagent creation cancelled before prompt delivery"
                 } else {
-                    "Spawn cancelled: delivery may already have been accepted"
+                    "Subagent creation cancelled: delivery may already have been accepted"
                 })
                 val handle = child
                 if (handle != null) {
@@ -130,7 +146,7 @@ internal class SpawnAgentHandler(
                     } catch (_: Exception) {
                         true
                     }
-                    if (state.delivery == SpawnAgentDelivery.NOT_ATTEMPTED || invalidParent) {
+                    if (state.delivery == SubagentDelivery.NOT_ATTEMPTED || invalidParent) {
                         state = rollback(handle, state)
                     }
                 }
@@ -138,7 +154,7 @@ internal class SpawnAgentHandler(
             }
             throw error
         } catch (error: Exception) {
-            state = state.copy(error = error.message ?: "Spawn creation or lineage verification failed")
+            state = state.copy(error = error.message ?: "Subagent creation or lineage verification failed")
             val handle = child
             if (handle != null) state = rollback(handle, state)
         }
@@ -172,7 +188,7 @@ internal class SpawnAgentHandler(
     }
 
     private suspend fun validateSnapshot(execution: ToolExecutionContext, path: List<Agent>) {
-        mutex.withLock { check(!disposed) { "Subagent tools disposed during spawn" } }
+        mutex.withLock { check(!disposed) { "Subagent tool disposed during spawn" } }
         checkContext(hostContext)
         checkContext(execution.context)
         check(path.first().session === execution.session) { "Execution parent identity changed" }
@@ -205,15 +221,15 @@ internal class SpawnAgentHandler(
         }
     }
 
-    private suspend fun rollback(handle: AgentHandle, state: SpawnAgentResult): SpawnAgentResult =
+    private suspend fun rollback(handle: AgentHandle, state: SubagentResult): SubagentResult =
         withContext(NonCancellable) {
             try {
                 // Never find by ID and dispose: this handle owns only this registration.
                 handle.dispose()
                 mutex.withLock { owned.remove(handle) }
-                state.copy(outcome = SpawnAgentOutcome.ROLLED_BACK)
+                state.copy(outcome = SubagentOutcome.ROLLED_BACK)
             } catch (error: Exception) {
-                state.copy(outcome = SpawnAgentOutcome.ROLLBACK_FAILED, rollbackError = error.message ?: "Child cleanup failed")
+                state.copy(outcome = SubagentOutcome.ROLLBACK_FAILED, rollbackError = error.message ?: "Child cleanup failed")
             }
         }
 
@@ -236,19 +252,38 @@ internal class SpawnAgentHandler(
 
     private fun decodeArguments(value: String): Arguments {
         val objectValue = Json.parseToJsonElement(value) as? JsonObject ?: error("Arguments must be an object")
-        require(objectValue.keys == setOf("prompt", "provider", "model")) {
-            "Only prompt, provider and model are allowed; parent identity and cwd cannot be supplied"
+        require(
+            objectValue.keys.all { it in setOf("description", "prompt", "cwd", "provider", "model", "reasoning_effort") },
+        ) {
+            "Only description, prompt, cwd, provider, model and reasoning_effort are allowed; " +
+                "parent identity cannot be supplied (got ${objectValue.keys})"
         }
         fun string(name: String): String {
             val primitive = objectValue[name] as? JsonPrimitive ?: error("$name must be a string")
             require(primitive.isString && primitive.content.isNotBlank()) { "$name must be a nonblank string" }
             return primitive.content
         }
-        return Arguments(string("prompt"), string("provider"), string("model"))
+        fun optionalString(name: String): String? =
+            if (name in objectValue) string(name) else null
+        val provider = optionalString("provider")
+        val model = optionalString("model")
+        require((provider == null) == (model == null)) {
+            "provider and model must be supplied together"
+        }
+        // DSH uses `description` as the child label. Session headers have no label field yet,
+        // so list_agents derives its label from the first task message instead.
+        return Arguments(
+            description = string("description"),
+            prompt = string("prompt"),
+            cwd = optionalString("cwd"),
+            provider = provider,
+            model = model,
+            reasoningEffort = optionalString("reasoning_effort"),
+        )
     }
 
-    private fun result(value: SpawnAgentResult): ToolExecutionResult = ToolExecutionResult(
-        content = listOf(TextBlock(resultJson.encodeToString(SpawnAgentResult.serializer(), value))),
-        isError = value.outcome != SpawnAgentOutcome.ACCEPTED,
+    private fun result(value: SubagentResult): ToolExecutionResult = ToolExecutionResult(
+        content = listOf(TextBlock(resultJson.encodeToString(SubagentResult.serializer(), value))),
+        isError = value.outcome != SubagentOutcome.ACCEPTED,
     )
 }

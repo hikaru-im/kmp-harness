@@ -25,7 +25,7 @@ import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.GatewayResultCodes
 import im.hikaru.harness.api.gateway.session.*
 import im.hikaru.harness.client.connection.*
-import im.hikaru.harness.exec.jvm.ExecProcessPlugin
+import im.hikaru.harness.exec.jvm.SubprocessPlugin
 import im.hikaru.harness.llm.Message as CoreMessage
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.Runtime
@@ -70,7 +70,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.*
 
-import im.hikaru.harness.exec.jvm.ExecProcessConfig
+import im.hikaru.harness.exec.jvm.SubprocessConfig
 import im.hikaru.harness.exec.jvm.JvmPtyTerminalSessions
 import im.hikaru.harness.exec.jvm.JvmSessionTerminalHost
 import im.hikaru.harness.session.sessions
@@ -568,7 +568,7 @@ class SessionTerminalSemanticInputConnectionTest {
             runtime.install(AgentPlugin())
             runtime.install(ToolsPlugin())
             runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
-            runtime.install(ExecProcessPlugin(ExecProcessConfig(terminalLimits = JvmPtyTerminalSessions.Limits(
+            runtime.install(SubprocessPlugin(SubprocessConfig(terminalLimits = JvmPtyTerminalSessions.Limits(
                 inputBytes = inputBytes, ioWaitMillis = 10_000))))
             runtime.install(SessionApiPlugin())
             val handle = runtime.context.agents.create(AgentId("owner"), CoreAgentOptions(cwd = cwd.toString()))

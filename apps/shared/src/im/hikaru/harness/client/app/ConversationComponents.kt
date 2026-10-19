@@ -297,8 +297,8 @@ private fun toolActivityLabel(call: ToolCallContent): String {
         name.contains("edit", ignoreCase = true) || name.contains("write", ignoreCase = true) ->
             file?.let { "编辑了 $it" } ?: "编辑了文件"
         name.contains("search", ignoreCase = true) -> "已搜索网页"
-        name.contains("bash", ignoreCase = true) || name.contains("shell", ignoreCase = true) ||
-            name.contains("exec", ignoreCase = true) -> "运行了命令"
+        name.contains("bash", ignoreCase = true) || name.contains("pwsh", ignoreCase = true) ||
+            name.contains("shell", ignoreCase = true) || name.contains("exec", ignoreCase = true) -> "运行了命令"
         else -> "加载了工具 · $name"
     }
 }

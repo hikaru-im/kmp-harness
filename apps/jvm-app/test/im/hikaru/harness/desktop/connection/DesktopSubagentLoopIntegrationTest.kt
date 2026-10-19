@@ -257,8 +257,9 @@ class DesktopSubagentLoopIntegrationTest {
             val adapter = ControlledAdapter(childTurns)
             val current = Fixture(home, profile, adapter)
             fixture = current
-            listOf("session", "agent", "llm", "tools", "agent-loop", "session-api",
-                "subagent-tools", "session-persistence").forEach { name ->
+            listOf("session", "agent", "llm", "tools", "tool-subagent", "tool-subagent-control",
+                "tool-subagent-control/list-agents", "agent-loop", "session-api",
+                "session-persistence").forEach { name ->
                 assertEquals(FiberState.Active, profile.host.loader.fiber(name)?.state, name)
             }
             assertTrue(profile.host.runtime.context.llm.listProviders().isEmpty(),
@@ -308,15 +309,16 @@ class DesktopSubagentLoopIntegrationTest {
             when (options.provider) {
                 PARENT_PROVIDER -> when (parentCalls.incrementAndGet()) {
                     1 -> {
-                        check(options.tools.orEmpty().any { it.name == "spawn_agent" })
+                        check(options.tools.orEmpty().any { it.name == "subagent" })
                         check(options.messages.any { it.content == listOf(TextBlock(PARENT_PROMPT)) })
                         val arguments = buildJsonObject {
+                            put("description", "Bounded child task")
                             put("prompt", CHILD_PROMPT)
                             put("provider", CHILD_PROVIDER)
                             put("model", MODEL)
                         }.toString()
                         emit(BlockStartChunk(0, "tool-call"))
-                        emit(BlockEndChunk(0, ToolCallBlock(CallId("real-spawn-call"), "spawn_agent", arguments)))
+                        emit(BlockEndChunk(0, ToolCallBlock(CallId("real-spawn-call"), "subagent", arguments)))
                         emit(FinishChunk(ToolCallsFinishReason))
                     }
                     2 -> {

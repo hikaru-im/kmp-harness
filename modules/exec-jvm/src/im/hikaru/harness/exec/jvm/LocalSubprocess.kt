@@ -6,7 +6,6 @@ import im.hikaru.harness.agent.AgentKey
 import im.hikaru.harness.agent.AgentRegistry
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.TextBlock
-import im.hikaru.harness.llm.ToolSchema
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.session.Session
@@ -14,8 +13,6 @@ import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.SessionKey
 import im.hikaru.harness.session.SessionStore
 import im.hikaru.harness.session.api.*
-import im.hikaru.harness.tools.ContextualToolHandler
-import im.hikaru.harness.tools.ToolCallRequest
 import im.hikaru.harness.tools.ToolExecutionContext
 import im.hikaru.harness.tools.ToolExecutionResult
 import java.io.InputStreamReader
@@ -31,7 +28,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 
 @Serializable
 public data class ExecCommand(
@@ -53,10 +49,10 @@ private data class ExecReceipt(
 )
 
 /** All authority is in-process. A matching textual scope alone never grants execution. */
-public class ExecProcessProducer(
+public class LocalSubprocess(
     private val context: Context,
-    private val config: ExecProcessConfig = ExecProcessConfig(),
-) : ContextualToolHandler, BackgroundProcessesService, Disposable {
+    private val config: SubprocessConfig = SubprocessConfig(),
+) : SubprocessService, BackgroundProcessesService, Disposable {
     private val store: SessionStore = context.require(SessionKey)
     private val agents: AgentRegistry = context.require(AgentKey)
     private val incarnation = UUID.randomUUID().toString()
@@ -67,10 +63,11 @@ public class ExecProcessProducer(
     private val claimed = mutableSetOf<Pair<Session, CallId>>()
     private val disposed = AtomicBoolean(false)
 
-    override suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult {
-        require(request.name == "exec") { "Unsupported tool" }
-        require(request.scope == execution.session.id.value) { "Tool scope does not match the trusted Session" }
-        val command = json.decodeFromString<ExecCommand>(request.arguments)
+    override suspend fun execute(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): ToolExecutionResult {
         require(command.argv.isNotEmpty() && command.argv.first().isNotBlank()) { "argv must contain an executable" }
         require(command.argv.all { '\u0000' !in it }) { "argv contains NUL" }
         require(!command.stdin || command.background) { "stdin requires a background command" }
@@ -84,7 +81,7 @@ public class ExecProcessProducer(
                 requireCurrent(agent, execution.session)
                 currentCoroutineContext().ensureActive()
                 check(!disposed.get()) { "Exec producer is disposed" }
-                check((execution.session to request.callId) !in claimed) { "Exec call already created a process" }
+                check((execution.session to callId) !in claimed) { "Shell call already created a process" }
                 makeRoom()
                 // Start + registry publication cannot be cancelled midway. Dispose shares
                 // this gate; cancellation after publication leaves a Host-owned record.
@@ -92,11 +89,11 @@ public class ExecProcessProducer(
                     val process = ProcessBuilder(command.argv).directory(cwd.toFile()).redirectErrorStream(true).start()
                     // Once start succeeds a retry may never spawn this call again,
                     // including failure during the subsequent ownership recheck.
-                    claimed += execution.session to request.callId
+                    claimed += execution.session to callId
                     val created = Entry(
                         BackgroundProcess(
                             BackgroundProcessId("$incarnation:${UUID.randomUUID()}"), execution.session.id,
-                            request.callId, json.encodeToString(command.argv), cwd.toString(),
+                            callId, json.encodeToString(command.argv), cwd.toString(),
                             System.currentTimeMillis(), incarnation, BackgroundProcessLifecycle.Running,
                             inputState = if (command.stdin) BackgroundInputState.Open else BackgroundInputState.Unsupported,
                         ), process, agent, execution.session, config.maxOutputChars,
@@ -487,13 +484,6 @@ public class ExecProcessProducer(
         )
         @Synchronized fun snapshot(): BackgroundOutputResult.Available = BackgroundOutputResult.Available(
             session.id, metadata.process, session.id, buffer, revision, truncated, lifecycle, inputState(),
-        )
-    }
-
-    public companion object {
-        public val schema: ToolSchema = ToolSchema(
-            "exec", "Execute argv in the real Session directory. Background returns an owned process handle, not completion. Set stdin=true to keep UTF-8 input open; EOF closes it. No PTY.",
-            Json.parseToJsonElement("""{"type":"object","additionalProperties":false,"required":["argv"],"properties":{"argv":{"type":"array","minItems":1,"items":{"type":"string"}},"cwd":{"type":"string","description":"Existing directory within the real Session cwd"},"background":{"type":"boolean","default":false},"timeoutMillis":{"type":"integer","minimum":1},"stdin":{"type":"boolean","default":false}}}""") as JsonObject,
         )
     }
 }

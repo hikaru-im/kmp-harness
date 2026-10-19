@@ -6,7 +6,7 @@
 
 工具参数通过 Provider 自有的 `OpenAiToolMapper` 与 SDK Schema generator 扩展点原样传递 JSON
 Schema。Chat Completions 和 Responses 都保留数组、嵌套对象和参数约束，不受通用 Koog primitive
-mapper 子集限制。默认 `exec`/`spawn_agent` 工具由离线真实 Koog HTTP fixture 验证。
+mapper 子集限制。默认 `bash`/`subagent` 工具由离线真实 Koog HTTP fixture 验证。
 
 Chat 流的 choice/text 与 tool-call 索引分别管理，支持兼容端点的 reasoning → tool-call 和空文本
 结束帧。助手 reasoning 历史保留为 `reasoning_content`，工具结果可继续进入下一轮请求。外部工具

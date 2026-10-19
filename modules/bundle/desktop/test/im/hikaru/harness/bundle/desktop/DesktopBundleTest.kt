@@ -3,8 +3,18 @@ package im.hikaru.harness.bundle.desktop
 import im.hikaru.harness.agent.agents
 import im.hikaru.harness.credentials.CredentialsKey
 import im.hikaru.harness.credentials.credentialRef
+import im.hikaru.harness.exec.jvm.TOOL_BASH_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.TOOL_PWSH_PLUGIN_NAME
 import im.hikaru.harness.home.HarnessHome
 import im.hikaru.harness.llm.llm
+import im.hikaru.harness.loader.Entry
+import im.hikaru.harness.profile.EntryPatch
+import im.hikaru.harness.profile.ProfileBundle
+import im.hikaru.harness.profile.ProfileBundleCatalog
+import im.hikaru.harness.profile.ProfilePatchReload
+import im.hikaru.harness.profile.file.FileProfileLoader
+import im.hikaru.harness.profile.file.ProfileLoadRequest
+import im.hikaru.harness.profile.file.ProfiledHarnessHost
 import im.hikaru.harness.runtime.plugin.FiberState
 import im.hikaru.harness.session.createSession
 import im.hikaru.harness.session.sessions
@@ -53,12 +63,70 @@ class DesktopBundleTest {
     @Test
     fun bundleAndCatalogShouldExposeTheSameExplicitPluginRows() {
         val entries = DesktopProfileBundle.patches.single().insert.orEmpty()
+        val absentShellTool =
+            if (isWindowsPlatform()) TOOL_BASH_PLUGIN_NAME else TOOL_PWSH_PLUGIN_NAME
 
-        assertEquals(entries.map { it.name }.toSet(), DesktopPluginCatalog.names)
+        // The platform-specific alternative stays compiled and loadable, so the
+        // compiled catalog carries one row beyond the default profile.
+        assertEquals(entries.map { it.name }.toSet() + absentShellTool, DesktopPluginCatalog.names)
         assertEquals(
-            listOf("logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent", "tools", "agent-loop", "session-api", "exec-process", "subagent-tools", "session-persistence", "llm-retry"),
+            listOf(
+                "logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent",
+                "tools", "subprocess", desktopShellToolPluginName(isWindowsPlatform()), "tool-subagent",
+                "tool-subagent-control", "tool-subagent-control/list-agents", "agent-loop", "session-api",
+                "session-persistence", "llm-retry",
+            ),
             entries.map { it.id },
         )
+    }
+
+    @Test
+    fun desktopShellToolRowShouldFollowTheHostPlatform() {
+        fun shellRows(isWindows: Boolean) =
+            desktopProfileBundle(isWindows).patches.single().insert.orEmpty()
+                .map { it.id }
+                .filter { it == TOOL_BASH_PLUGIN_NAME || it == TOOL_PWSH_PLUGIN_NAME }
+
+        assertEquals(listOf(TOOL_BASH_PLUGIN_NAME), shellRows(isWindows = false))
+        assertEquals(listOf(TOOL_PWSH_PLUGIN_NAME), shellRows(isWindows = true))
+        assertEquals(
+            setOf(TOOL_BASH_PLUGIN_NAME, TOOL_PWSH_PLUGIN_NAME),
+            DesktopPluginCatalog.names.filter {
+                it == TOOL_BASH_PLUGIN_NAME || it == TOOL_PWSH_PLUGIN_NAME
+            }.toSet(),
+        )
+    }
+
+    @Test
+    fun removedProfileRowsShouldFailWithTheirPluginName() = runTest {
+        val home = Files.createTempDirectory("desktop-bundle-removed-row")
+        val legacyBundle =
+            ProfileBundle(
+                name = "legacy-profile",
+                patches =
+                    listOf(
+                        EntryPatch(insert = listOf(Entry("subagent-tools", "subagent-tools")))
+                    ),
+            )
+        val loader =
+            FileProfileLoader(
+                home = HarnessHome.at(home),
+                bundles = ProfileBundleCatalog(listOf(DesktopProfileBundle, legacyBundle)),
+                defaultManifestName = "harness-desktop",
+                defaultBundles = listOf(DESKTOP_BUNDLE_NAME, "legacy-profile"),
+                defaultPatchReload = ProfilePatchReload.Startup,
+            )
+
+        val error =
+            assertFails {
+                ProfiledHarnessHost.start(
+                    profileLoader = loader,
+                    request = ProfileLoadRequest(),
+                    catalog = DesktopPluginCatalog,
+                    hostDescription = desktopHostDescription(),
+                )
+            }
+        assertTrue(error.message.orEmpty().contains("subagent-tools"), error.message)
     }
 
     @Test
@@ -132,7 +200,7 @@ class DesktopBundleTest {
         try {
             val context = session.host.runtime.context
             val pluginNames = DesktopProfileBundle.patches.single().insert.orEmpty().map { it.id }
-            assertEquals(14, pluginNames.size)
+            assertEquals(17, pluginNames.size)
             assertTrue(
                 pluginNames.all { name ->
                     session.host.loader.fiber(name)?.state == FiberState.Active
@@ -201,7 +269,7 @@ class DesktopBundleTest {
             val loader = session.host.loader
             val context = session.host.runtime.context
             val dependentNames =
-                listOf("agent", "agent-loop", "session-api", "exec-process", "subagent-tools", "session-persistence", "llm-retry")
+                listOf("agent", "agent-loop", "session-api", "session-persistence", "llm-retry")
             val initialPersistence = checkNotNull(context.get(SessionPersistenceKey))
 
             withContext(Dispatchers.IO) { delay(75) }

@@ -13,7 +13,8 @@ import im.hikaru.harness.client.connection.BackgroundProcessLifecycle
 import im.hikaru.harness.client.connection.BackgroundProcessesResult
 import im.hikaru.harness.client.connection.SessionId as ClientSessionId
 import im.hikaru.harness.exec.jvm.ExecCommand
-import im.hikaru.harness.exec.jvm.ExecProcessPlugin
+import im.hikaru.harness.exec.jvm.SubprocessKey
+import im.hikaru.harness.exec.jvm.SubprocessPlugin
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.runtime.Runtime
@@ -101,7 +102,7 @@ class SessionBackgroundMutationsProcessTest {
                 runtime.install(AgentPlugin())
                 runtime.install(ToolsPlugin())
                 runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
-                runtime.install(ExecProcessPlugin())
+                runtime.install(SubprocessPlugin())
                 runtime.install(SessionApiPlugin())
                 val handle = runtime.context.agents.create(AgentId("owner"), AgentOptions(cwd = cwd.toString()))
                 val gateway = ApiGateway()
@@ -122,10 +123,13 @@ class SessionBackgroundMutationsProcessTest {
         suspend fun output(process: BackgroundProcessId) = assertIs<BackgroundOutputResult.Available>(connection.session.readBackgroundOutput(parent, process))
         suspend fun start(call: String): Pair<BackgroundProcess, Long> {
             val ready = cwd.resolve("$call.pid")
-            val tools = runtime.context.require(ToolsKey)
-            val request = ToolCallRequest(CallId(call), "exec", Json.encodeToString(ExecCommand(
-                javaCommand(ready), background = true, timeoutMillis = 10_000, stdin = true)), parent.value)
-            assertFalse(tools.execute(request, ToolExecutionContext(handle.agent.context, handle.agent.session)).isError)
+            val subprocess = runtime.context.require(SubprocessKey)
+            val result = subprocess.execute(
+                ExecCommand(javaCommand(ready), background = true, timeoutMillis = 10_000, stdin = true),
+                CallId(call),
+                ToolExecutionContext(handle.agent.context, handle.agent.session),
+            )
+            assertFalse(result.isError)
             val metadata = inventory().processes.single { it.callId == call }
             awaitCondition { Files.exists(ready) && output(metadata.process).buffer == "ready\n" }
             return metadata to Files.readString(ready).toLong()

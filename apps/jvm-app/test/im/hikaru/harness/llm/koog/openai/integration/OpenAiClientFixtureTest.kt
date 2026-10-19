@@ -154,38 +154,38 @@ class OpenAiClientFixtureTest {
     }
 
     @Test
-    fun defaultExecSchemaShouldReachChatRequestWithoutLosingConstraints() = runTest {
+    fun defaultBashAndSubagentSchemasShouldReachChatRequestWithoutLosingConstraints() = runTest {
         val fixture = fixture(flowOf(textDelta("ok"), finish("stop"), DONE))
-        val exec = im.hikaru.harness.exec.jvm.ExecProcessProducer.schema
-        val spawn = im.hikaru.harness.subagent.tools.SpawnAgentToolSchema
+        val bash = im.hikaru.harness.exec.jvm.BashToolSchema
+        val spawn = im.hikaru.harness.subagent.tools.SubagentToolSchema
         val chunks = try {
-            fixture.adapter.stream(textOptions(tools = listOf(exec, spawn))).toList()
+            fixture.adapter.stream(textOptions(tools = listOf(bash, spawn))).toList()
         } finally {
             fixture.executor.close()
         }
         assertEquals(FinishChunk(StopFinishReason), chunks.last())
         val body = Json.parseToJsonElement(fixture.http.requests.single().body).jsonObject
         val functions = body.array("tools").map { it.jsonObject.objectValue("function") }
-        assertEquals(listOf("exec", "spawn_agent"), functions.map { it.string("name") })
-        assertEquals(exec.parameters, functions[0].objectValue("parameters"))
+        assertEquals(listOf("bash", "subagent"), functions.map { it.string("name") })
+        assertEquals(bash.parameters, functions[0].objectValue("parameters"))
         assertEquals(spawn.parameters, functions[1].objectValue("parameters"))
     }
 
     @Test
-    fun defaultExecSchemaShouldReachResponsesRequestWithoutLosingConstraints() = runTest {
+    fun defaultBashSchemaShouldReachResponsesRequestWithoutLosingConstraints() = runTest {
         val fixture = responsesFixture(flowOf(
             responsesTextDelta("ok", sequenceNumber = 0),
             responsesCompleted(inputTokens = 1, outputTokens = 1, sequenceNumber = 1), DONE,
         ))
-        val exec = im.hikaru.harness.exec.jvm.ExecProcessProducer.schema
+        val bash = im.hikaru.harness.exec.jvm.BashToolSchema
         val chunks = try {
-            fixture.adapter.stream(responsesTextOptions(tools = listOf(exec))).toList()
+            fixture.adapter.stream(responsesTextOptions(tools = listOf(bash))).toList()
         } finally {
             fixture.executor.close()
         }
         assertEquals(FinishChunk(StopFinishReason), chunks.last())
         val body = Json.parseToJsonElement(fixture.http.requests.single().body).jsonObject
-        assertEquals(exec.parameters, body.array("tools").single().jsonObject.objectValue("parameters"))
+        assertEquals(bash.parameters, body.array("tools").single().jsonObject.objectValue("parameters"))
     }
 
     @Test

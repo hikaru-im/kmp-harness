@@ -24,7 +24,7 @@ class JvmSessionTerminalHostTest {
 
     @Test
     fun discoveryAndInventoryNeverStartShellAndCapacityIsBounded() = runBlocking {
-        withFixture(config = { ExecProcessConfig(maxTerminalBindings = 1,
+        withFixture(config = { SubprocessConfig(maxTerminalBindings = 1,
             terminalLimits = JvmPtyTerminalSessions.Limits(capacity = 1)) }) { f ->
             val available = f.discover()
             assertEquals(f.cwd.toRealPath().toString(), available.canonicalCwd)
@@ -63,7 +63,7 @@ class JvmSessionTerminalHostTest {
 
     @Test
     fun onlyExactLiveSessionCanDiscoverAndStart() = runBlocking {
-        withFixture(config = { ExecProcessConfig(allowedRoots = listOf(it)) }) { f ->
+        withFixture(config = { SubprocessConfig(allowedRoots = listOf(it)) }) { f ->
             val missing = SessionId("not-live")
             assertEquals(missing, assertIs<HostTerminalDiscoveryResult.Rejected>(f.api.terminalCapability(missing)).session)
             val outside = Files.createDirectory(f.temp.resolve("outside"))
@@ -104,7 +104,7 @@ class JvmSessionTerminalHostTest {
 
     @Test
     fun sameTextSessionReplacementRejectsOldOwnerAndRetainsCleanup() = runBlocking {
-        withFixture(config = { ExecProcessConfig(maxTerminalBindings = 1,
+        withFixture(config = { SubprocessConfig(maxTerminalBindings = 1,
             terminalLimits = JvmPtyTerminalSessions.Limits(shutdownWaitMillis = 250)) }) { f ->
             val owner = f.discover().owner
             val key = f.create(owner, "printf 'REPLACE_READY\n'; IFS= read -r token; " +
@@ -400,7 +400,7 @@ class JvmSessionTerminalHostTest {
     }
 
     private suspend fun withFixture(
-        config: (Path) -> ExecProcessConfig = { ExecProcessConfig() },
+        config: (Path) -> SubprocessConfig = { SubprocessConfig() },
         agentFactory: (AgentFactoryRequest) -> Agent = { ControlledAgent(it) },
         body: suspend (Fixture) -> Unit,
     ) {
@@ -413,7 +413,7 @@ class JvmSessionTerminalHostTest {
             runtime.install(AgentPlugin())
             runtime.install(ToolsPlugin())
             runtime.context.agents.registerFactory(AgentFactory { agentFactory(it) })
-            runtime.install(ExecProcessPlugin(config(cwd)))
+            runtime.install(SubprocessPlugin(config(cwd)))
             runtime.install(SessionApiPlugin())
             val handle = runtime.context.agents.create(AgentId("owner"), AgentOptions(cwd = cwd.toString()))
             val created = Fixture(runtime, temp, cwd, handle)

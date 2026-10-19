@@ -21,7 +21,7 @@
 
 | 层次 | 当前实现 | 下一步缺口 |
 | --- | --- | --- |
-| 后台执行 | 默认exec-process producer，真实ProcessBuilder argv/cwd、输出、waitFor+EOF、超时/取消/Host dispose | 既有13/13是前批结果，本轮未重跑；进程测试不证明终端视觉 |
+| 后台执行 | 默认 `subprocess` 本地 producer，由 `tool-bash`/`tool-pwsh` 以 `bash -c` / `pwsh -Command` 调用；真实 ProcessBuilder cwd、输出、waitFor+EOF、超时/取消/Host dispose | 既有13/13是前批结果，本轮未重跑；进程测试不证明终端视觉 |
 | 面板读取 | Session API/Gateway/LocalConnection读取真实inventory/output；包含owner和producer incarnation；共享picker可选择当前真实进程并保持精确key | 初次默认最新Running，其后刷新/关闭重开保持选择；单一输出视图，不提供多个逐进程页签 |
 | 输出组件 | 后台输出保留plain text阅读；交互终端另用真实typed ANSI screen/history、字符列映射、滚动跟随和选择复制 | 原版同状态像素、原生窗口与Remote待验收 |
 | 输入与生命周期控制 | 后台stdin/EOF/Cancel链保留；独立PTY Text/Paste/KeyPress、真实kernel resize、周期snapshot读取、退出保留和显式close已接生产页面 | PTY Remote、原生窗口/系统IME和其他平台launch待验收；后台管道阅读不混为PTY |

@@ -11,8 +11,12 @@ import im.hikaru.harness.client.connection.BackgroundProcessesResult
 import im.hikaru.harness.client.connection.SessionId as ClientSessionId
 import im.hikaru.harness.client.conversation.ConversationHostScope
 import im.hikaru.harness.client.panels.*
+import im.hikaru.harness.exec.jvm.BASH_TOOL_NAME
 import im.hikaru.harness.exec.jvm.ExecCommand
-import im.hikaru.harness.exec.jvm.ExecProcessPlugin
+import im.hikaru.harness.exec.jvm.SubprocessKey
+import im.hikaru.harness.exec.jvm.SubprocessPlugin
+import im.hikaru.harness.exec.jvm.ToolBashPlugin
+import im.hikaru.harness.exec.jvm.ToolPwshPlugin
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.runtime.Context
@@ -32,8 +36,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Comparator
 import kotlinx.coroutines.*
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.*
 
 /** Real local producer -> DefaultSessionApi -> Gateway -> LocalConnection -> panel reads. */
@@ -45,13 +49,15 @@ class SessionBackgroundProcessesConnectionTest {
             assertTrue(missing.reason.isNotBlank())
             assertIs<BackgroundOutputResult.Unavailable>(f.connection.session.readBackgroundOutput(f.parent, BackgroundProcessId("absent")))
             assertIs<PanelLoad.Unavailable>(f.repository.readTerminal(f.owner))
-            f.runtime.install(ExecProcessPlugin())
+            f.runtime.install(SubprocessPlugin())
+            f.runtime.install(ToolBashPlugin())
+            f.runtime.install(ToolPwshPlugin())
             repeat(3) {
                 val empty = assertIs<BackgroundProcessesResult.Available>(f.connection.session.backgroundProcesses(f.parent))
                 assertTrue(empty.processes.isEmpty())
                 assertIs<PanelLoad.Empty>(f.repository.readTerminal(f.owner))
             }
-            assertEquals(listOf("exec"), f.tools.schemas().map { it.name })
+            assertEquals(setOf("bash", "pwsh"), f.tools.schemas().map { it.name }.toSet())
         }
     }
 
@@ -223,8 +229,8 @@ class SessionBackgroundProcessesConnectionTest {
         withFixture { f ->
             coroutineScope {
                 val ready = f.cwd.resolve("cancel-ready")
-                val request = f.request("cancel", "wait", ready.toString(), f.cwd.resolve("never-release").toString())
-                val call = async { f.tools.execute(request, f.execution) }
+                val neverRelease = f.cwd.resolve("never-release")
+                val call = async { f.execute("cancel", "wait", ready.toString(), neverRelease.toString()) }
                 try {
                     awaitCondition { readPid(ready) != null && f.panel().buffer.contains("ready\n") }
                     val pid = readPid(ready) ?: error("Process fixture did not publish a numeric PID")
@@ -234,7 +240,9 @@ class SessionBackgroundProcessesConnectionTest {
                     val evidence = f.panel()
                     assertTrue(evidence.buffer.contains("ready\n"))
                     assertEquals(1, f.inventory().processes.size)
-                    assertFailsWith<IllegalStateException> { f.tools.execute(request, f.execution) }
+                    assertFailsWith<IllegalStateException> {
+                        f.execute("cancel", "wait", ready.toString(), neverRelease.toString())
+                    }
                     assertEquals(evidence.key, f.panel().key)
                 } finally { call.cancelAndJoin() }
             }
@@ -250,7 +258,11 @@ class SessionBackgroundProcessesConnectionTest {
                 runtime.install(AgentPlugin())
                 runtime.install(ToolsPlugin())
                 runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
-                if (installProducer) runtime.install(ExecProcessPlugin())
+                if (installProducer) {
+                    runtime.install(SubprocessPlugin())
+                    runtime.install(ToolBashPlugin())
+                    runtime.install(ToolPwshPlugin())
+                }
                 runtime.install(SessionApiPlugin())
                 val handle = runtime.context.agents.create(AgentId("owner"), AgentOptions(cwd = cwd.toString()))
                 val gateway = ApiGateway()
@@ -272,15 +284,26 @@ class SessionBackgroundProcessesConnectionTest {
         val owner = ThreadPanelsOwner(connection, ConversationHostScope(HostId("test-local"), 1, null), parent)
         val repository = ConnectionThreadPanelsRepository()
         val tools = runtime.context.require(ToolsKey)
+        val subprocess get() = runtime.context.require(SubprocessKey)
         val execution get() = ToolExecutionContext(handle.agent.context, handle.agent.session)
         suspend fun inventory() = assertIs<BackgroundProcessesResult.Available>(connection.session.backgroundProcesses(parent))
         suspend fun panel() = assertIs<PanelLoad.Ready<BackgroundTerminalOutput>>(repository.readTerminal(owner)).value
         fun request(call: String, mode: String, vararg args: String, background: Boolean = false) = ToolCallRequest(
-            CallId(call), "exec", Json.encodeToString(ExecCommand(javaCommand(mode, *args),
-                background = background, timeoutMillis = 10_000)), parent.value,
+            CallId(call),
+            BASH_TOOL_NAME,
+            buildJsonObject {
+                put("description", "Run the background read-chain fixture")
+                put("command", shellCommand(javaCommand(mode, *args)))
+                if (background) put("run_in_background", true)
+            }.toString(),
+            parent.value,
         )
         suspend fun execute(call: String, mode: String, vararg args: String, background: Boolean = false) =
-            tools.execute(request(call, mode, *args, background = background), execution)
+            subprocess.execute(
+                ExecCommand(javaCommand(mode, *args), background = background, timeoutMillis = 10_000),
+                CallId(call),
+                execution,
+            )
     }
 
     private class ControlledAgent(request: AgentFactoryRequest) : Agent {
@@ -303,6 +326,10 @@ class SessionBackgroundProcessesConnectionTest {
 
         private fun readPid(path: Path): Long? =
             runCatching { Files.readString(path).trim().takeIf { it.isNotEmpty() }?.toLong() }.getOrNull()
+
+        /** Single-quoted POSIX shell words for the test fixture argv. */
+        private fun shellCommand(argv: List<String>): String =
+            argv.joinToString(" ") { "'" + it.replace("'", "'\\''") + "'" }
 
         private fun javaCommand(mode: String, vararg args: String): List<String> {
             val paths = linkedSetOf<String>()
