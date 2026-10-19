@@ -7,6 +7,10 @@
         "serve",
         "--mcp"
       ]
+    },
+    "kaneo": {
+      "type": "http",
+      "url": "https://kanban.remote.hikaru.im/api/mcp"
     }
   }
 }
