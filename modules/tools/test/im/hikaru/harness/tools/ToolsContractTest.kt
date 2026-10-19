@@ -5,6 +5,9 @@ import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.ToolSchema
 import im.hikaru.harness.runtime.Runtime
 import im.hikaru.harness.runtime.effect.Disposable
+import im.hikaru.harness.system.prompt.SystemPromptConfig
+import im.hikaru.harness.system.prompt.SystemPromptPlugin
+import im.hikaru.harness.system.prompt.systemPrompt
 import im.hikaru.harness.tools.tools
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -47,6 +50,45 @@ class ToolsContractTest {
         tools.execute(ToolCallRequest(CallId("same"), "echo", "{}", scope = "session-b"))
         runtime.context.dispose()
     }
+
+    @Test
+    fun executionModeIsOptInAndDefaultsToExclusive() = runTest {
+        val runtime = Runtime()
+        runtime.install(ToolsPlugin())
+        val tools = checkNotNull(runtime.context.tools)
+        tools.register(schema("serial"), okHandler())
+        tools.register(schema("parallel"), okHandler(), ToolRegistrationOptions(concurrencySafe = true))
+
+        assertEquals(
+            ToolExecutionMode.Exclusive,
+            tools.executionMode(ToolCallRequest(CallId("a"), "serial", "{}")),
+        )
+        assertEquals(
+            ToolExecutionMode.Parallel,
+            tools.executionMode(ToolCallRequest(CallId("b"), "parallel", "{}")),
+        )
+        runtime.context.dispose()
+    }
+
+    @Test
+    fun toolsPluginFeedsTheSystemPromptToolProvider() = runTest {
+        val runtime = Runtime()
+        runtime.install(SystemPromptPlugin(SystemPromptConfig(includeHarnessIdentity = false)))
+        runtime.install(ToolsPlugin())
+        val tools = checkNotNull(runtime.context.tools)
+        tools.register(schema("echo"), okHandler())
+
+        assertEquals(
+            listOf("echo"),
+            checkNotNull(runtime.context.systemPrompt).assemble().tools.map { it.name },
+        )
+        runtime.context.dispose()
+    }
+
+    private fun schema(name: String): ToolSchema = ToolSchema(name, name, JsonObject(emptyMap()))
+
+    private fun okHandler(): ToolHandler =
+        ToolHandler { ToolExecutionResult(listOf(TextBlock("ok"))) }
 
     private class TestToolsService : ToolsService {
         private val handlers = mutableMapOf<String, ToolHandler>()

@@ -3,6 +3,8 @@ product: jvm/app
 dependencies:
   - ../../modules/bundle/desktop
   - ../../modules/agent
+  - ../../modules/agent-instructions
+  - ../../modules/system-prompt
   - ../../modules/llm
   - ../../modules/llm-koog
   - ../../modules/llm-koog-openai

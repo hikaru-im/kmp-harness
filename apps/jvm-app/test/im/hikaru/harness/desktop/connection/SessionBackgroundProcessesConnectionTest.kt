@@ -13,6 +13,7 @@ import im.hikaru.harness.client.conversation.ConversationHostScope
 import im.hikaru.harness.client.panels.*
 import im.hikaru.harness.exec.jvm.BASH_TOOL_NAME
 import im.hikaru.harness.exec.jvm.ExecCommand
+import im.hikaru.harness.exec.jvm.JobsPlugin
 import im.hikaru.harness.exec.jvm.SubprocessKey
 import im.hikaru.harness.exec.jvm.SubprocessPlugin
 import im.hikaru.harness.exec.jvm.ToolBashPlugin
@@ -50,6 +51,7 @@ class SessionBackgroundProcessesConnectionTest {
             assertIs<BackgroundOutputResult.Unavailable>(f.connection.session.readBackgroundOutput(f.parent, BackgroundProcessId("absent")))
             assertIs<PanelLoad.Unavailable>(f.repository.readTerminal(f.owner))
             f.runtime.install(SubprocessPlugin())
+            f.runtime.install(JobsPlugin())
             f.runtime.install(ToolBashPlugin())
             f.runtime.install(ToolPwshPlugin())
             repeat(3) {
@@ -260,6 +262,7 @@ class SessionBackgroundProcessesConnectionTest {
                 runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
                 if (installProducer) {
                     runtime.install(SubprocessPlugin())
+                    runtime.install(JobsPlugin())
                     runtime.install(ToolBashPlugin())
                     runtime.install(ToolPwshPlugin())
                 }

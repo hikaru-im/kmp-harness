@@ -1,10 +1,14 @@
 package im.hikaru.harness.agent.loop
 
-/** Scheduling defaults used by newly-created agents. Model selection belongs to AgentOptions. */
+/**
+ * Agent-loop scheduling defaults. Model selection belongs to AgentOptions, and
+ * prompt content belongs to the system-prompt service, matching DSH.
+ */
 data class AgentLoopConfig(
-    val system: String? = null,
+    /** Upper bound on tool calls executing at once within one step. */
+    val maxParallelToolCalls: Int = 10,
 ) {
     init {
-        require(system == null || system.isNotBlank()) { "Agent loop system must not be blank" }
+        require(maxParallelToolCalls > 0) { "Agent loop maxParallelToolCalls must be positive" }
     }
 }

@@ -2,13 +2,13 @@ package im.hikaru.harness.agent.loop
 
 import im.hikaru.harness.agent.Agent
 import im.hikaru.harness.agent.AgentEvents
-import im.hikaru.harness.agent.AgentInstructionsKey
-import im.hikaru.harness.agent.AgentInstructionsService
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.AgentPlugin
 import im.hikaru.harness.agent.AgentRequestErrorDecision
 import im.hikaru.harness.agent.AgentStatus
 import im.hikaru.harness.agent.agents
+import im.hikaru.harness.agent.instructions.AgentInstructionsPlugin
+import im.hikaru.harness.agent.instructions.AgentInstructionsService
 import im.hikaru.harness.llm.BlockStartChunk
 import im.hikaru.harness.llm.ErrorFinishReason
 import im.hikaru.harness.llm.FinishChunk
@@ -34,6 +34,8 @@ import im.hikaru.harness.session.SessionPlugin
 import im.hikaru.harness.session.TurnEndEvent
 import im.hikaru.harness.session.TurnEndReason
 import im.hikaru.harness.session.UserTurnAbortCause
+import im.hikaru.harness.system.prompt.SystemPromptConfig
+import im.hikaru.harness.system.prompt.SystemPromptPlugin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
@@ -112,7 +114,7 @@ class AgentInstructionsContractTest {
     }
 
     @Test
-    fun retryAndNextRequestReadFreshSnapshotsWithoutAccumulation() = runTest {
+    fun retryReusesStepAssemblyAndEachNextStepReadsFreshSnapshot() = runTest {
         var snapshot: String? = "Skill v1"
         val readers = mutableListOf<Agent>()
         withFixture(
@@ -150,9 +152,11 @@ class AgentInstructionsContractTest {
             snapshot = null
             fixture.request("disabled")
 
+            // DSH assembles the prompt once per step: the retry keeps Skill v1,
+            // while the next step observes Skill v3 and the disabled snapshot.
             val expected: List<String?> = listOf(
                 BASE_SYSTEM + "\n\nSkill v1",
-                BASE_SYSTEM + "\n\nSkill v2",
+                BASE_SYSTEM + "\n\nSkill v1",
                 BASE_SYSTEM + "\n\nSkill v3",
                 BASE_SYSTEM,
             )
@@ -165,7 +169,7 @@ class AgentInstructionsContractTest {
                 headers.map { it.header.reason },
             )
             assertEquals(listOf(1, 2, 1, 1), attempts)
-            assertEquals(4, readers.size)
+            assertEquals(3, readers.size)
             readers.forEach { assertSame(fixture.agent, it) }
             assertEquals(CompletedTurnEndReason, fixture.reason())
         }
@@ -227,7 +231,15 @@ class AgentInstructionsContractTest {
             runtime.install(SessionPlugin())
             runtime.install(LlmPlugin())
             runtime.install(AgentPlugin())
-            if (service != null) runtime.context.provide(AgentInstructionsKey, service)
+            runtime.install(
+                SystemPromptPlugin(
+                    SystemPromptConfig(
+                        includeHarnessIdentity = false,
+                        personaPrefix = base ?: "",
+                    ),
+                ),
+            )
+            if (service != null) runtime.install(AgentInstructionsPlugin(service))
             val requests = mutableListOf<GenerateOptions>()
             runtime.context.llm.registerAdapter(
                 providers = listOf("scripted"),
@@ -238,7 +250,7 @@ class AgentInstructionsContractTest {
                     }
                 },
             )
-            runtime.install(AgentLoopPlugin(AgentLoopConfig(system = base)))
+            runtime.install(AgentLoopPlugin())
             val handle = runtime.context.agents.create(options = AgentOptions(provider = "scripted", model = "test"))
             block(Fixture(handle.agent, requests))
         } finally {

@@ -9,3 +9,4 @@ dependencies:
   - ../loader
   - ../runtime
   - ../session
+  - ../system-prompt

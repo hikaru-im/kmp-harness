@@ -8,6 +8,7 @@ import im.hikaru.harness.runtime.effect.EffectScope
 import im.hikaru.harness.runtime.plugin.Plugin
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 
 public val AgentLoopPluginDefinition: PluginDefinition =
     pluginDefinition(
@@ -25,13 +26,15 @@ private object ConfiguredAgentLoopPlugin : Plugin<AgentLoopConfig> {
 }
 
 private fun decodeAgentLoopConfig(value: JsonObject): AgentLoopConfig {
-    val allowed = setOf("system")
+    val allowed = setOf("maxParallelToolCalls")
     require(value.keys.all(allowed::contains)) {
         "agent-loop config contains unknown fields: ${(value.keys - allowed).sorted().joinToString()}"
     }
-    val system = value["system"]?.let { element ->
-        (element as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content
-            ?: error("agent-loop system must be a string")
+    val maxParallelToolCalls = value["maxParallelToolCalls"]?.let { element ->
+        (element as? JsonPrimitive)?.takeUnless(JsonPrimitive::isString)?.intOrNull
+            ?: error("agent-loop maxParallelToolCalls must be an integer")
     }
-    return AgentLoopConfig(system = system)
+    return AgentLoopConfig(
+        maxParallelToolCalls = maxParallelToolCalls ?: AgentLoopConfig().maxParallelToolCalls,
+    )
 }

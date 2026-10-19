@@ -5,7 +5,6 @@ import im.hikaru.harness.agent.AgentAttemptResume
 import im.hikaru.harness.agent.AgentAttemptResumer
 import im.hikaru.harness.agent.AgentErrorCode
 import im.hikaru.harness.agent.AgentFactoryRequest
-import im.hikaru.harness.agent.AgentInstructionsKey
 import im.hikaru.harness.agent.AgentRequestErrorDecision
 import im.hikaru.harness.agent.AgentRequestErrorEvent
 import im.hikaru.harness.agent.AgentEvents
@@ -39,7 +38,9 @@ import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.ReasoningBlock
 import im.hikaru.harness.llm.ToolCallBlock
 import im.hikaru.harness.llm.ToolCallsFinishReason
+import im.hikaru.harness.llm.PluginMessageSource
 import im.hikaru.harness.llm.createToolResultMessage
+import im.hikaru.harness.llm.createUserMessage
 import im.hikaru.harness.llm.copyMessage
 import im.hikaru.harness.llm.normalizeLlmFailure
 import im.hikaru.harness.runtime.Context
@@ -65,11 +66,21 @@ import im.hikaru.harness.session.TurnEndReason
 import im.hikaru.harness.session.TurnStartEvent
 import im.hikaru.harness.session.UserMessageEvent
 import im.hikaru.harness.session.UserTurnAbortCause
+import im.hikaru.harness.system.prompt.PromptAssembly
+import im.hikaru.harness.system.prompt.SYSTEM_PROMPT_PLUGIN_NAME
+import im.hikaru.harness.system.prompt.SystemPromptContext
+import im.hikaru.harness.system.prompt.SystemPromptService
+import im.hikaru.harness.system.prompt.joinContextSections
+import im.hikaru.harness.system.prompt.renderContextSections
+import im.hikaru.harness.system.prompt.renderPrompt
 import im.hikaru.harness.tools.ToolCallRequest
 import im.hikaru.harness.tools.ToolExecutionContext
+import im.hikaru.harness.tools.ToolExecutionMode
+import im.hikaru.harness.tools.ToolExecutionResult
 import im.hikaru.harness.tools.ToolCallEvent
 import im.hikaru.harness.tools.ToolResultEvent
 import im.hikaru.harness.tools.ToolSessionEvents
+import im.hikaru.harness.tools.ToolsService
 import im.hikaru.harness.tools.tools
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -84,6 +95,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -94,6 +109,7 @@ internal class AgentLoopAgent(
     private val llm: LlmRuntime,
     private val config: AgentLoopConfig,
     private val callConfig: LlmCallConfig,
+    private val systemPrompt: SystemPromptService?,
 ) : Agent, AgentAttemptResumer {
     override val id: AgentId = request.id
     override val options: AgentOptions = request.options
@@ -118,6 +134,8 @@ internal class AgentLoopAgent(
     private var initialized = false
     private var initialization: CompletableDeferred<Unit>? = null
     private var currentStatus = AgentStatus.IDLE
+    private var retainedContextInitialized = false
+    private var retainedContextSnapshot: String? = null
 
     init {
         context.effect(Disposable { shutdown() })
@@ -405,10 +423,11 @@ internal class AgentLoopAgent(
                 ) { Unit }
                 session.append(SessionEventKeys.StepStart, StepStartEvent(turn, step))
                 stepStarted = true
+                val assembly = prepareStep(turn)
                 stepMessages.forEach { appendUser(turn, it) }
                 val extra = inbox.claim(InboxQueue.NEXT_STEP)
                 extra.forEach { appendUser(turn, it.message) }
-                when (val outcome = runStep(turn, step)) {
+                when (val outcome = runStep(turn, step, assembly)) {
                     is StepOutcome.Finished -> {
                         endReason = outcome.reason
                         break
@@ -451,22 +470,26 @@ internal class AgentLoopAgent(
         var endReason: TurnEndReason = CompletedTurnEndReason
         try {
             while (true) {
-                if (restoringCurrentStep) {
-                    resume.beforeAttempt()
-                    restoringCurrentStep = false
-                } else {
-                    context.waterfall(
-                        AgentEvents.PreStep,
-                        AgentPreStepEvent(this, turn, step),
-                    ) { Unit }
-                    session.append(SessionEventKeys.StepStart, StepStartEvent(turn, step))
-                    stepStarted = true
-                    stepMessages.forEach { appendUser(turn, it) }
-                    val extra = inbox.claim(InboxQueue.NEXT_STEP)
-                    extra.forEach { appendUser(turn, it.message) }
-                }
+                val assembly =
+                    if (restoringCurrentStep) {
+                        resume.beforeAttempt()
+                        restoringCurrentStep = false
+                        prepareStep(turn)
+                    } else {
+                        context.waterfall(
+                            AgentEvents.PreStep,
+                            AgentPreStepEvent(this, turn, step),
+                        ) { Unit }
+                        session.append(SessionEventKeys.StepStart, StepStartEvent(turn, step))
+                        stepStarted = true
+                        val prepared = prepareStep(turn)
+                        stepMessages.forEach { appendUser(turn, it) }
+                        val extra = inbox.claim(InboxQueue.NEXT_STEP)
+                        extra.forEach { appendUser(turn, it.message) }
+                        prepared
+                    }
 
-                when (val outcome = runStep(turn, step, initialAttempt)) {
+                when (val outcome = runStep(turn, step, assembly, initialAttempt)) {
                     is StepOutcome.Finished -> {
                         endReason = outcome.reason
                         break
@@ -507,6 +530,62 @@ internal class AgentLoopAgent(
         )
     }
 
+    /**
+     * Assemble the prompt once per step, matching DSH: retries inside the step
+     * reuse this assembly. The runtime-context snapshot is a durable user
+     * message committed only when it differs from the retained one.
+     */
+    private suspend fun prepareStep(turn: Long): PromptAssembly? {
+        val prompt = systemPrompt ?: return null
+        val assembly = prompt.assemble(SystemPromptContext(this))
+        commitContextSnapshot(turn, assembly)
+        return assembly
+    }
+
+    private suspend fun commitContextSnapshot(turn: Long, assembly: PromptAssembly) {
+        restoreRetainedContext()
+        val rendered = joinContextSections(renderContextSections(assembly))
+        val snapshot =
+            when {
+                rendered.isNotEmpty() -> rendered
+                retainedContextSnapshot == null -> return
+                else -> CLEARED_CONTEXT_SNAPSHOT
+            }
+        if (snapshot == retainedContextSnapshot) return
+        appendUser(
+            turn,
+            createUserMessage(
+                listOf(TextBlock(snapshot)),
+                PluginMessageSource(SYSTEM_PROMPT_PLUGIN_NAME),
+            ),
+        )
+        retainedContextSnapshot = snapshot
+    }
+
+    /** Resume durable projection state from the session so restarts stay quiet. */
+    private suspend fun restoreRetainedContext() {
+        if (retainedContextInitialized) return
+        retainedContextInitialized = true
+        val messages = session.events()
+        for (index in messages.indices.reversed()) {
+            val event = messages[index]
+            if (event.type != SessionEventNames.USER_MESSAGE) continue
+            val message =
+                try {
+                    Json.decodeFromJsonElement(UserMessageEvent.serializer(), event.data)
+                } catch (_: Throwable) {
+                    continue
+                }
+            if ((message.message.source as? PluginMessageSource)?.plugin != SYSTEM_PROMPT_PLUGIN_NAME) continue
+            retainedContextSnapshot =
+                message.message.content
+                    .filterIsInstance<TextBlock>()
+                    .joinToString("") { it.text }
+                    .takeIf { it.isNotEmpty() }
+            return
+        }
+    }
+
     private sealed interface StepOutcome {
         data class Finished(val reason: TurnEndReason) : StepOutcome
         data class Continue(val messages: List<im.hikaru.harness.llm.Message>) : StepOutcome
@@ -515,9 +594,12 @@ internal class AgentLoopAgent(
     private suspend fun runStep(
         turn: Long,
         step: Long,
+        assembly: PromptAssembly?,
         initialAttempt: Int = 1,
     ): StepOutcome {
         require(initialAttempt > 0) { "Initial attempt must be positive" }
+        val system = assembly?.let(::renderPrompt)?.takeIf { it.isNotEmpty() }
+        val assembledTools = assembly?.tools?.takeIf { it.isNotEmpty() }
         var attempt = initialAttempt - 1
         while (true) {
             attempt += 1
@@ -528,14 +610,8 @@ internal class AgentLoopAgent(
                     return StepOutcome.Finished(ErrorTurnEndReason(normalizeLlmFailure(error)))
                 }
             try {
-                val instructions = context.get(AgentInstructionsKey)?.readInstructions(this)?.takeIf { it.isNotBlank() }
-                val system = when {
-                    instructions == null -> config.system
-                    config.system == null -> instructions
-                    else -> "${config.system}\n\n$instructions"
-                }
                 val toolsService = context.tools
-                val toolSchemas = toolsService?.schemas()?.takeIf { it.isNotEmpty() }
+                val toolSchemas = assembledTools ?: toolsService?.schemas()?.takeIf { it.isNotEmpty() }
                 val request =
                     GenerateOptions(
                         provider = prepared.config.provider,
@@ -698,34 +774,177 @@ internal class AgentLoopAgent(
                 usage = assembler.usage,
             ),
         )
-        val results = mutableListOf<im.hikaru.harness.llm.Message>()
-        for (call in calls) {
-            val request = ToolCallRequest(call.id, call.name, call.arguments, scope = session.id.value)
-            session.append(ToolSessionEvents.Call, ToolCallEvent(session.id, turn, step, request))
-            val result =
-                try {
-                    toolsService.execute(request, ToolExecutionContext(context, session))
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    im.hikaru.harness.tools.ToolExecutionResult(
-                        content = listOf(TextBlock("TOOL_EXECUTION_ERROR")),
-                        isError = true,
-                    )
+        return StepOutcome.Continue(scheduleToolCalls(turn, step, calls, toolsService))
+    }
+
+    /**
+     * DSH scheduling: exclusive calls are barriers, parallel-safe calls use a
+     * bounded rolling pool, later calls are reclassified before start, and
+     * results commit in model order. Abort drains settled calls, then records
+     * synthetic results for every call without one so replay stays valid.
+     */
+    private suspend fun scheduleToolCalls(
+        turn: Long,
+        step: Long,
+        calls: List<ToolCallBlock>,
+        toolsService: ToolsService,
+    ): List<im.hikaru.harness.llm.Message> {
+        val requests = calls.map { ToolCallRequest(it.id, it.name, it.arguments, scope = session.id.value) }
+        val dispatched = BooleanArray(calls.size)
+        val outcomes = arrayOfNulls<ToolExecutionResult>(calls.size)
+        val committed = arrayOfNulls<ToolExecutionResult>(calls.size)
+        var next = 0
+        try {
+            while (next < requests.size) {
+                if (toolsService.executionMode(requests[next]) == ToolExecutionMode.Exclusive) {
+                    runToolCall(turn, step, next, requests[next], dispatched, outcomes, committed, toolsService)
+                    next += 1
+                } else {
+                    next += runParallelGroup(turn, step, requests, next, dispatched, outcomes, committed, toolsService)
                 }
-            session.append(ToolSessionEvents.Result, ToolResultEvent(session.id, turn, step, call.id, result))
-            val message = createToolResultMessage(call.id, result.content, result.isError)
-            results += message
+            }
+        } catch (error: Throwable) {
+            withContext(NonCancellable) {
+                for (index in requests.indices) {
+                    if (committed[index] != null) continue
+                    val settled = outcomes[index]
+                    if (settled != null) {
+                        commitToolResult(turn, step, index, requests[index], settled, committed)
+                    } else {
+                        appendAbortedResult(turn, step, index, requests[index], dispatched[index], committed)
+                    }
+                }
+            }
+            throw error
         }
-        return StepOutcome.Continue(results)
+        return calls.indices.map { index ->
+            val result = checkNotNull(committed[index])
+            createToolResultMessage(calls[index].id, result.content, result.isError)
+        }
+    }
+
+    private suspend fun runToolCall(
+        turn: Long,
+        step: Long,
+        index: Int,
+        request: ToolCallRequest,
+        dispatched: BooleanArray,
+        outcomes: Array<ToolExecutionResult?>,
+        committed: Array<ToolExecutionResult?>,
+        toolsService: ToolsService,
+    ) {
+        appendToolCall(turn, step, request)
+        dispatched[index] = true
+        val result = executeHandler(request, toolsService)
+        outcomes[index] = result
+        commitToolResult(turn, step, index, request, result, committed)
+    }
+
+    /** Runs a rolling pool; returns how many model-order calls this group consumed. */
+    private suspend fun runParallelGroup(
+        turn: Long,
+        step: Long,
+        requests: List<ToolCallRequest>,
+        start: Int,
+        dispatched: BooleanArray,
+        outcomes: Array<ToolExecutionResult?>,
+        committed: Array<ToolExecutionResult?>,
+        toolsService: ToolsService,
+    ): Int =
+        coroutineScope {
+            val semaphore = Semaphore(config.maxParallelToolCalls)
+            val jobs = mutableListOf<Job>()
+            var next = start
+            while (next < requests.size) {
+                if (next > start &&
+                    toolsService.executionMode(requests[next]) != ToolExecutionMode.Parallel
+                ) {
+                    break
+                }
+                semaphore.acquire()
+                val index = next
+                next += 1
+                appendToolCall(turn, step, requests[index])
+                dispatched[index] = true
+                jobs +=
+                    launch {
+                        try {
+                            outcomes[index] = executeHandler(requests[index], toolsService)
+                        } finally {
+                            semaphore.release()
+                        }
+                    }
+            }
+            jobs.joinAll()
+            for (index in start until next) {
+                outcomes[index]?.let { result ->
+                    commitToolResult(turn, step, index, requests[index], result, committed)
+                }
+            }
+            next - start
+        }
+
+    private suspend fun executeHandler(
+        request: ToolCallRequest,
+        toolsService: ToolsService,
+    ): ToolExecutionResult =
+        try {
+            toolsService.execute(request, ToolExecutionContext(context, session))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            ToolExecutionResult(
+                content = listOf(TextBlock(TOOL_EXECUTION_ERROR)),
+                isError = true,
+            )
+        }
+
+    private suspend fun appendToolCall(turn: Long, step: Long, request: ToolCallRequest) {
+        session.append(ToolSessionEvents.Call, ToolCallEvent(session.id, turn, step, request))
+    }
+
+    private suspend fun commitToolResult(
+        turn: Long,
+        step: Long,
+        index: Int,
+        request: ToolCallRequest,
+        result: ToolExecutionResult,
+        committed: Array<ToolExecutionResult?>,
+    ) {
+        session.append(ToolSessionEvents.Result, ToolResultEvent(session.id, turn, step, request.callId, result))
+        committed[index] = result
+    }
+
+    private suspend fun appendAbortedResult(
+        turn: Long,
+        step: Long,
+        index: Int,
+        request: ToolCallRequest,
+        wasDispatched: Boolean,
+        committed: Array<ToolExecutionResult?>,
+    ) {
+        if (!wasDispatched) appendToolCall(turn, step, request)
+        val result =
+            ToolExecutionResult(
+                content = listOf(TextBlock(if (wasDispatched) TOOL_ABORTED else TOOL_ABORTED_BEFORE_DISPATCH)),
+                isError = true,
+            )
+        commitToolResult(turn, step, index, request, result, committed)
     }
 
     private suspend fun updateStatus(next: AgentStatus) {
         val changed = mutex.withLock {
             if (currentStatus == next) false else true.also { currentStatus = next }
         }
-        if (changed) {
-            context.emitContained(AgentEvents.Status, AgentStatusNotice(this, next))
+        // A driver may finish while its child Context is being disposed; the
+        // notice has no audience then, so its delivery failure is not a driver
+        // failure.
+        if (changed && !context.isDisposed) {
+            try {
+                context.emitContained(AgentEvents.Status, AgentStatusNotice(this, next))
+            } catch (error: IllegalStateException) {
+                if (!context.isDisposed && error.message != "Context is disposed") throw error
+            }
         }
     }
 
@@ -744,3 +963,9 @@ internal class AgentLoopAgent(
             }
         }
 }
+
+private const val TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
+private const val TOOL_ABORTED = "Error: tool call aborted"
+private const val TOOL_ABORTED_BEFORE_DISPATCH = "Error: tool call aborted before dispatch"
+private const val CLEARED_CONTEXT_SNAPSHOT =
+    "Current runtime context: none. Earlier runtime-context snapshots no longer apply."

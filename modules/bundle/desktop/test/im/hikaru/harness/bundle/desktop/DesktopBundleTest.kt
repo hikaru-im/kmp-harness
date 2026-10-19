@@ -72,7 +72,8 @@ class DesktopBundleTest {
         assertEquals(
             listOf(
                 "logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent",
-                "tools", "subprocess", "jobs", desktopShellToolPluginName(isWindowsPlatform()), "tool-jobs",
+                "system-prompt", "tools", "agent-instructions",
+                "subprocess", "jobs", desktopShellToolPluginName(isWindowsPlatform()), "tool-jobs",
                 "terminal", "tool-terminal", "tool-subagent", "tool-subagent-control",
                 "tool-subagent-control/list-agents", "agent-loop", "session-api", "session-persistence",
                 "schedule", "tool-schedule", "llm-retry",
@@ -201,7 +202,7 @@ class DesktopBundleTest {
         try {
             val context = session.host.runtime.context
             val pluginNames = DesktopProfileBundle.patches.single().insert.orEmpty().map { it.id }
-            assertEquals(23, pluginNames.size)
+            assertEquals(25, pluginNames.size)
             assertTrue(
                 pluginNames.all { name ->
                     session.host.loader.fiber(name)?.state == FiberState.Active
@@ -232,10 +233,10 @@ class DesktopBundleTest {
         Files.writeString(
             HarnessHome.at(validHome).profilePatch,
             """
-            - id: tools
-              config: { maxConcurrentCalls: 2 }
             - id: agent-loop
-              config: { system: configured-system }
+              config: { maxParallelToolCalls: 4 }
+            - id: system-prompt
+              config: { includeHarnessIdentity: false, personaPrefix: configured-system }
             """.trimIndent() + "\n",
         )
         startDesktopProfile(harnessHome = validHome).close()
@@ -249,9 +250,12 @@ class DesktopBundleTest {
                 "- id: agent-loop\n  config: { provider: openai }\n",
                 "- id: agent-loop\n  config: { model: gpt-4o-mini }\n",
                 "- id: agent-loop\n  config: { agents: [] }\n",
-                "- id: tools\n  config: { maxConcurrentCalls: 0 }\n",
-                "- id: tools\n  config: { maxConcurrentCalls: \"2\" }\n",
+                "- id: agent-loop\n  config: { maxParallelToolCalls: 0 }\n",
+                "- id: agent-loop\n  config: { maxParallelToolCalls: \"4\" }\n",
+                "- id: tools\n  config: { maxConcurrentCalls: 2 }\n",
                 "- id: tools\n  config: { unknown: true }\n",
+                "- id: system-prompt\n  config: { unknown: true }\n",
+                "- id: system-prompt\n  config: { toolOrder: [tool-bash] }\n",
                 "- id: session-persistence\n  config: { path: other.db }\n",
             )
         invalidPatches.forEachIndexed { index, patch ->

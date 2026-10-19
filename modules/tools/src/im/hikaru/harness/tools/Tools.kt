@@ -5,13 +5,16 @@ import im.hikaru.harness.llm.ContentBlock
 import im.hikaru.harness.llm.ToolSchema
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.Disposable
+import im.hikaru.harness.runtime.plugin.InjectSpec
+import im.hikaru.harness.runtime.plugin.SimplePlugin
 import im.hikaru.harness.runtime.service.ServiceKey
 import im.hikaru.harness.session.SessionEventKey
 import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.Session
+import im.hikaru.harness.system.prompt.SystemPromptKey
+import im.hikaru.harness.system.prompt.ToolProviderResult
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
-import kotlinx.coroutines.sync.Semaphore
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -47,12 +50,30 @@ fun interface ContextualToolHandler : ToolHandler {
     suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult
 }
 
+/** Scheduling class of one registered tool; undeclared tools are exclusive. */
+enum class ToolExecutionMode {
+    Parallel,
+    Exclusive,
+}
+
+/** Registration metadata that never reaches the model-facing schema. */
+data class ToolRegistrationOptions(
+    /** True only for tools whose executions may overlap sibling calls. */
+    val concurrencySafe: Boolean = false,
+)
+
 interface ToolsService {
     suspend fun schemas(): List<ToolSchema>
     suspend fun execute(request: ToolCallRequest): ToolExecutionResult
     suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult =
         execute(request)
     fun register(schema: ToolSchema, handler: ToolHandler): Disposable
+    fun register(
+        schema: ToolSchema,
+        handler: ToolHandler,
+        options: ToolRegistrationOptions,
+    ): Disposable = register(schema, handler)
+    fun executionMode(request: ToolCallRequest): ToolExecutionMode = ToolExecutionMode.Exclusive
 }
 
 object ToolsKey : ServiceKey<ToolsService>("tools")
@@ -82,33 +103,38 @@ object ToolSessionEvents {
     val Result = SessionEventKey("tool/result", ToolResultEvent.serializer())
 }
 
-@Serializable
-data class ToolsConfig(
-    val maxConcurrentCalls: Int = 1,
-) {
-    init {
-        require(maxConcurrentCalls > 0) { "maxConcurrentCalls must be positive" }
-    }
-}
-
-class ToolsPlugin(
-    private val config: ToolsConfig = ToolsConfig(),
-) : im.hikaru.harness.runtime.plugin.SimplePlugin {
-    constructor(maxConcurrentCalls: Int) : this(ToolsConfig(maxConcurrentCalls))
+/**
+ * Registers the tool registry. Concurrency is owned by the Agent loop, matching
+ * DSH: this service never serializes calls itself.
+ */
+class ToolsPlugin : SimplePlugin {
+    override val inject: Set<InjectSpec> =
+        setOf(
+            InjectSpec.optional(SystemPromptKey),
+        )
 
     override suspend fun apply(
         context: Context,
         scope: im.hikaru.harness.runtime.effect.EffectScope,
     ) {
-        val service = DefaultToolsService(config.maxConcurrentCalls)
+        val service = DefaultToolsService()
         scope.add(context.provide(ToolsKey, service))
         scope.add(service)
+        context.get(SystemPromptKey)?.let { prompt ->
+            scope.add(
+                prompt.tools { ToolProviderResult(service.schemas()) },
+            )
+        }
     }
 }
 
 @OptIn(ExperimentalAtomicApi::class)
-private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Disposable {
-    private data class Entry(val schema: ToolSchema, val handler: ToolHandler)
+private class DefaultToolsService : ToolsService, Disposable {
+    private data class Entry(
+        val schema: ToolSchema,
+        val handler: ToolHandler,
+        val options: ToolRegistrationOptions,
+    )
 
     private data class State(
         val entries: Map<String, Entry> = emptyMap(),
@@ -118,7 +144,6 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
     )
 
     private val state = AtomicReference(State())
-    private val permits = Semaphore(maxConcurrentCalls)
 
     override suspend fun schemas(): List<ToolSchema> =
         state.load().let { current ->
@@ -126,9 +151,16 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
             current.entries.values.map { it.schema.copy(parameters = JsonObject(it.schema.parameters.toMap())) }
         }
 
-    override fun register(schema: ToolSchema, handler: ToolHandler): Disposable {
+    override fun register(schema: ToolSchema, handler: ToolHandler): Disposable =
+        register(schema, handler, ToolRegistrationOptions())
+
+    override fun register(
+        schema: ToolSchema,
+        handler: ToolHandler,
+        options: ToolRegistrationOptions,
+    ): Disposable {
         check(schema.name.isNotBlank()) { "Tool name must not be blank" }
-        val entry = Entry(schema, handler)
+        val entry = Entry(schema, handler, options)
         while (true) {
             val current = state.load()
             check(!current.disposed) { "Tools service is disposed" }
@@ -145,6 +177,13 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
             }
         }
     }
+
+    override fun executionMode(request: ToolCallRequest): ToolExecutionMode =
+        if (state.load().entries[request.name]?.options?.concurrencySafe == true) {
+            ToolExecutionMode.Parallel
+        } else {
+            ToolExecutionMode.Exclusive
+        }
 
     override suspend fun execute(request: ToolCallRequest): ToolExecutionResult = executeInternal(request, null)
 
@@ -166,10 +205,7 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
             if (state.compareAndSet(current, updated)) handler = selected
         }
         val selectedHandler = checkNotNull(handler)
-        var acquired = false
         return try {
-            permits.acquire()
-            acquired = true
             check(!state.load().disposed) { "Tools service is disposed" }
             val result = if (selectedHandler is ContextualToolHandler && execution != null) {
                 selectedHandler.execute(request, execution)
@@ -194,10 +230,6 @@ private class DefaultToolsService(maxConcurrentCalls: Int) : ToolsService, Dispo
                 if (state.compareAndSet(current, updated)) break
             }
             throw error
-        } finally {
-            if (acquired) {
-                permits.release()
-            }
         }
     }
 

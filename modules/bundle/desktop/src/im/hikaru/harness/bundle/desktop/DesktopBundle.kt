@@ -4,6 +4,8 @@ import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.agent.AgentPluginDefinition
+import im.hikaru.harness.agent.instructions.AGENT_INSTRUCTIONS_PLUGIN_NAME
+import im.hikaru.harness.agent.instructions.AgentInstructionsPlugin
 import im.hikaru.harness.agent.loop.AgentLoopPluginDefinition
 import im.hikaru.harness.credentials.local.CREDENTIALS_LOCAL_PLUGIN_NAME
 import im.hikaru.harness.credentials.local.credentialsLocalPluginDefinition
@@ -29,6 +31,8 @@ import im.hikaru.harness.llm.koog.openai.OpenAiKoogPluginDefinition
 import im.hikaru.harness.llm.retry.LlmRetryPluginDefinition
 import im.hikaru.harness.loader.Entry
 import im.hikaru.harness.loader.PluginCatalog
+import im.hikaru.harness.loader.PluginDefinition
+import im.hikaru.harness.loader.pluginDefinition
 import im.hikaru.harness.logger.LOGGER_PLUGIN_NAME
 import im.hikaru.harness.logger.LoggerPluginDefinition
 import im.hikaru.harness.profile.EntryPatch
@@ -55,6 +59,8 @@ import im.hikaru.harness.subagent.tools.TOOL_SUBAGENT_CONTROL_PLUGIN_NAME
 import im.hikaru.harness.subagent.tools.TOOL_SUBAGENT_PLUGIN_NAME
 import im.hikaru.harness.subagent.tools.ToolSubagentControlPluginDefinition
 import im.hikaru.harness.subagent.tools.ToolSubagentPluginDefinition
+import im.hikaru.harness.system.prompt.SYSTEM_PROMPT_PLUGIN_NAME
+import im.hikaru.harness.system.prompt.SystemPromptPluginDefinition
 import im.hikaru.harness.tools.ToolsPluginDefinition
 import java.nio.file.Path
 
@@ -74,7 +80,9 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             OpenAiKoogPluginDefinition,
             SessionPluginDefinition,
             AgentPluginDefinition,
+            SystemPromptPluginDefinition,
             ToolsPluginDefinition,
+            desktopAgentInstructionsPluginDefinition(defaultHarnessHome),
             SubprocessPluginDefinition,
             JobsPluginDefinition,
             ToolBashPluginDefinition,
@@ -98,6 +106,18 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             ToolSchedulePluginDefinition,
             LlmRetryPluginDefinition,
         )
+    )
+
+/** Publishes locally installed plugin skills through the `agent-instructions` prompt section. */
+private fun desktopAgentInstructionsPluginDefinition(defaultHarnessHome: HarnessHome): PluginDefinition =
+    pluginDefinition(
+        name = AGENT_INSTRUCTIONS_PLUGIN_NAME,
+        plugin =
+            AgentInstructionsPlugin(
+                DesktopUserPlugins(
+                    defaultHarnessHome.directory.resolve("client-plugins.json"),
+                ),
+            ),
     )
 
 /** DSH-style bundle patch applied over an empty profile root. */
@@ -125,7 +145,9 @@ internal fun desktopProfileBundle(isWindows: Boolean): ProfileBundle =
                             Entry(OPENAI_KOOG_PLUGIN_NAME, OPENAI_KOOG_PLUGIN_NAME),
                             Entry("session", "session"),
                             Entry("agent", "agent"),
+                            Entry(SYSTEM_PROMPT_PLUGIN_NAME, SYSTEM_PROMPT_PLUGIN_NAME),
                             Entry("tools", "tools"),
+                            Entry(AGENT_INSTRUCTIONS_PLUGIN_NAME, AGENT_INSTRUCTIONS_PLUGIN_NAME),
                             Entry(SUBPROCESS_PLUGIN_NAME, SUBPROCESS_PLUGIN_NAME),
                             Entry(JOBS_PLUGIN_NAME, JOBS_PLUGIN_NAME),
                             Entry(desktopShellToolPluginName(isWindows), desktopShellToolPluginName(isWindows)),

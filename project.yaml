@@ -16,6 +16,7 @@ modules:
   - contracts
   - contracts/harness-protocol
   - modules/agent
+  - modules/agent-instructions
   - modules/agent-loop
   - modules/api/gateway
   - modules/boot
@@ -41,6 +42,7 @@ modules:
   - modules/settings
   - modules/settings-file
   - modules/subagent-tools
+  - modules/system-prompt
   - modules/timer
   - modules/tools
   - modules/ui-foundation

@@ -1,5 +1,6 @@
-package im.hikaru.harness.agent
+package im.hikaru.harness.agent.instructions
 
+import im.hikaru.harness.agent.Agent
 import im.hikaru.harness.runtime.service.ServiceKey
 
 /**

@@ -6,6 +6,7 @@ dependencies:
   - ../../../contracts
   - ../../../contracts/harness-protocol
   - ../../agent
+  - ../../agent-instructions
   - ../../agent-loop
   - ../../boot
   - ../../credentials
@@ -28,4 +29,5 @@ dependencies:
   - ../../settings
   - ../../settings-file
   - ../../subagent-tools
+  - ../../system-prompt
   - ../../tools
