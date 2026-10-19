@@ -38,4 +38,4 @@ public interface SubprocessService {
     ): BackgroundProcess
 }
 
-public object SubprocessKey : ServiceKey<SubprocessService>("subprocess.local")
+public object SubprocessKey : ServiceKey<SubprocessService>("subprocess")

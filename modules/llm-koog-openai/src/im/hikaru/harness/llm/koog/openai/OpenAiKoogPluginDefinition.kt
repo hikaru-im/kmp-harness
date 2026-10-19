@@ -3,7 +3,7 @@ package im.hikaru.harness.llm.koog.openai
 import im.hikaru.harness.loader.PluginDefinition
 import im.hikaru.harness.loader.pluginDefinition
 
-public const val OPENAI_KOOG_PLUGIN_NAME: String = "llm-koog-openai"
+public const val OPENAI_KOOG_PLUGIN_NAME: String = "llm-openai"
 
 /** Provider deployment data remains in settings.yaml; this entry has no config. */
 public val OpenAiKoogPluginDefinition: PluginDefinition =

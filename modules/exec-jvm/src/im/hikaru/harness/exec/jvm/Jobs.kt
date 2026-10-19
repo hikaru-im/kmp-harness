@@ -177,7 +177,7 @@ public interface JobsService {
     public fun subscribe(listener: JobListener): Disposable
 }
 
-public object JobsKey : ServiceKey<JobsService>("jobs.local")
+public object JobsKey : ServiceKey<JobsService>("jobs")
 
 public data class JobsConfig(
     val maxOutputChars: Int = 256 * 1024,

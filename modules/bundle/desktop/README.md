@@ -1,6 +1,6 @@
 # Desktop Bundle
 
-The Desktop bundle is the production composition module. `DesktopProfileBundle` mounts 23 rows: logger, settings-file, credentials-local, llm, llm-koog-openai, session, agent, tools, subprocess, jobs, the platform shell tool (`tool-bash` on POSIX, `tool-pwsh` on Windows), tool-jobs, terminal, tool-terminal, tool-subagent, tool-subagent-control, tool-subagent-control/list-agents, agent-loop, session-api, session-persistence, schedule, tool-schedule and llm-retry.
+The Desktop bundle is the production composition module. `DesktopProfileBundle` mounts 25 rows: logger, settings-file, credentials-local, llm, llm-openai, session, agent, system-prompt, tools, agent-instructions, subprocess, jobs, the platform shell tool (`tool-bash` on POSIX, `tool-pwsh` on Windows), tool-jobs, terminal, tool-terminal, tool-subagent, tool-subagent-control, tool-subagent-control/list-agents, agent-loop, session-api, session-persistence, schedule, tool-schedule and llm-retry.
 
 `DesktopPluginCatalog` compiles both shell tools so the platform-selected row can be changed by a profile patch; the default profile mounts exactly one of them.
 

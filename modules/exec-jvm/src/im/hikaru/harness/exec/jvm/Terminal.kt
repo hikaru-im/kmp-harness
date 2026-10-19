@@ -107,7 +107,7 @@ public interface TerminalsService {
     public suspend fun list(execution: ToolExecutionContext): List<TerminalSummary>
 }
 
-public object TerminalsKey : ServiceKey<TerminalsService>("terminal.local")
+public object TerminalsKey : ServiceKey<TerminalsService>("terminals")
 
 public data class TerminalConfig(
     val pollMillis: Long = 25,

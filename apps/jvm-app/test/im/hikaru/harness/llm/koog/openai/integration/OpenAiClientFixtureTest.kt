@@ -963,7 +963,7 @@ class OpenAiClientFixtureTest {
         credentialName: String = "OPENAI_API_KEY",
     ): DesktopLlmProviderPlugin =
         DesktopLlmProviderPlugin(
-            id = "llm-koog-openai",
+            id = "llm-openai",
             plugin =
                 OpenAiKoogPlugin(
                     OpenAiKoogPluginConfig(

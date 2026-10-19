@@ -71,7 +71,7 @@ class DesktopBundleTest {
         assertEquals(entries.map { it.name }.toSet() + absentShellTool, DesktopPluginCatalog.names)
         assertEquals(
             listOf(
-                "logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent",
+                "logger", "settings-file", "credentials-local", "llm", "llm-openai", "session", "agent",
                 "system-prompt", "tools", "agent-instructions",
                 "subprocess", "jobs", desktopShellToolPluginName(isWindowsPlatform()), "tool-jobs",
                 "terminal", "tool-terminal", "tool-subagent", "tool-subagent-control",
@@ -137,13 +137,13 @@ class DesktopBundleTest {
         val harnessHome = HarnessHome.at(home)
         Files.writeString(
             harnessHome.profilePatch,
-            "- id: llm-koog-openai\n  disabled: true\n",
+            "- id: llm-openai\n  disabled: true\n",
         )
 
         val session = startDesktopProfile(harnessHome = home, pollMillis = 25)
         try {
-            assertTrue(session.host.loader.entry("llm-koog-openai")?.disabled == true)
-            assertFalse(session.host.loader.fiber("llm-koog-openai") != null)
+            assertTrue(session.host.loader.entry("llm-openai")?.disabled == true)
+            assertFalse(session.host.loader.fiber("llm-openai") != null)
         } finally {
             session.close()
         }
@@ -155,7 +155,7 @@ class DesktopBundleTest {
         val home = HarnessHome.at(directory)
         Files.writeString(
             home.profilePatch,
-            "- id: llm-koog-openai\n  disabled: true\n",
+            "- id: llm-openai\n  disabled: true\n",
         )
 
         val session = startDesktopProfile(harnessHome = directory, pollMillis = 25)
@@ -319,7 +319,7 @@ class DesktopBundleTest {
               config:
                 harnessHome: /tmp/not-the-host-home
                 path: /tmp/not-the-host-settings.yaml
-            - id: llm-koog-openai
+            - id: llm-openai
               disabled: true
             """.trimIndent() + "\n",
         )

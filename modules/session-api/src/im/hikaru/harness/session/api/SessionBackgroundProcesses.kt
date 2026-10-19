@@ -180,6 +180,10 @@ public interface BackgroundProcessesService {
         BackgroundControlResult.Unavailable(parent, process, "Background process control service is unavailable")
 }
 
-public object BackgroundProcessesKey : ServiceKey<BackgroundProcessesService>("session.background-processes")
+/**
+ * Producer output seam read by the session API. [im.hikaru.harness.exec.jvm.JobsKey]
+ * is the separate DSH-style `jobs` registry, so this key keeps its own name.
+ */
+public object BackgroundProcessesKey : ServiceKey<BackgroundProcessesService>("background-processes")
 public val Context.backgroundProcesses: BackgroundProcessesService?
     get() = get(BackgroundProcessesKey)

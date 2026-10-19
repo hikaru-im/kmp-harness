@@ -36,11 +36,11 @@ block-shape validation.
 ## Installation
 
 Desktop production installs this module through the compiled catalog in `modules/bundle/desktop`. The bundle inserts the
-stable loader row `llm-koog-openai`; user profile patches can disable that row without importing Provider code:
+stable loader row `llm-openai`; user profile patches can disable that row without importing Provider code:
 
 ```yaml
-- id: llm-koog-openai
-  name: llm-koog-openai
+- id: llm-openai
+  name: llm-openai
   disabled: true
 ```
 
