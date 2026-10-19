@@ -441,7 +441,8 @@ class SubprocessContractTest {
                 f.execution,
             )
             assertFalse(result.isError)
-            assertTrue(receipt(result).getValue("background").jsonPrimitive.boolean)
+            val started = (result.content.single() as TextBlock).text
+            assertTrue(started.startsWith("started background job bash-"), started)
             val process = f.inventory().single()
             assertEquals(subdir.toRealPath().toString(), process.cwd)
             val terminal = f.awaitTerminal(process.process)
@@ -517,6 +518,7 @@ class SubprocessContractTest {
                 runtime.install(ToolsPlugin())
                 runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
                 runtime.install(SubprocessPlugin(config))
+                runtime.install(JobsPlugin())
                 runtime.install(ToolBashPlugin())
                 runtime.install(ToolPwshPlugin())
                 val handle = runtime.context.agents.create(id = AgentId("owner"), options = AgentOptions(cwd = cwd.toString()))

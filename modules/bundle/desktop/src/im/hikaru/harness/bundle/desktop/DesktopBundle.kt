@@ -7,12 +7,20 @@ import im.hikaru.harness.agent.AgentPluginDefinition
 import im.hikaru.harness.agent.loop.AgentLoopPluginDefinition
 import im.hikaru.harness.credentials.local.CREDENTIALS_LOCAL_PLUGIN_NAME
 import im.hikaru.harness.credentials.local.credentialsLocalPluginDefinition
+import im.hikaru.harness.exec.jvm.JOBS_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.JobsPluginDefinition
 import im.hikaru.harness.exec.jvm.SUBPROCESS_PLUGIN_NAME
 import im.hikaru.harness.exec.jvm.SubprocessPluginDefinition
+import im.hikaru.harness.exec.jvm.TERMINAL_PLUGIN_NAME
 import im.hikaru.harness.exec.jvm.TOOL_BASH_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.TOOL_JOBS_PLUGIN_NAME
 import im.hikaru.harness.exec.jvm.TOOL_PWSH_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.TOOL_TERMINAL_PLUGIN_NAME
+import im.hikaru.harness.exec.jvm.TerminalPluginDefinition
 import im.hikaru.harness.exec.jvm.ToolBashPluginDefinition
+import im.hikaru.harness.exec.jvm.ToolJobsPluginDefinition
 import im.hikaru.harness.exec.jvm.ToolPwshPluginDefinition
+import im.hikaru.harness.exec.jvm.ToolTerminalPluginDefinition
 import im.hikaru.harness.home.HarnessHome
 import im.hikaru.harness.llm.LLM_PLUGIN_NAME
 import im.hikaru.harness.llm.LlmPluginDefinition
@@ -64,8 +72,12 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             AgentPluginDefinition,
             ToolsPluginDefinition,
             SubprocessPluginDefinition,
+            JobsPluginDefinition,
             ToolBashPluginDefinition,
             ToolPwshPluginDefinition,
+            ToolJobsPluginDefinition,
+            TerminalPluginDefinition,
+            ToolTerminalPluginDefinition,
             ToolSubagentPluginDefinition,
             ToolSubagentControlPluginDefinition,
             ListAgentsPluginDefinition,
@@ -107,7 +119,11 @@ internal fun desktopProfileBundle(isWindows: Boolean): ProfileBundle =
                             Entry("agent", "agent"),
                             Entry("tools", "tools"),
                             Entry(SUBPROCESS_PLUGIN_NAME, SUBPROCESS_PLUGIN_NAME),
+                            Entry(JOBS_PLUGIN_NAME, JOBS_PLUGIN_NAME),
                             Entry(desktopShellToolPluginName(isWindows), desktopShellToolPluginName(isWindows)),
+                            Entry(TOOL_JOBS_PLUGIN_NAME, TOOL_JOBS_PLUGIN_NAME),
+                            Entry(TERMINAL_PLUGIN_NAME, TERMINAL_PLUGIN_NAME),
+                            Entry(TOOL_TERMINAL_PLUGIN_NAME, TOOL_TERMINAL_PLUGIN_NAME),
                             Entry(TOOL_SUBAGENT_PLUGIN_NAME, TOOL_SUBAGENT_PLUGIN_NAME),
                             Entry(TOOL_SUBAGENT_CONTROL_PLUGIN_NAME, TOOL_SUBAGENT_CONTROL_PLUGIN_NAME),
                             Entry(LIST_AGENTS_PLUGIN_NAME, LIST_AGENTS_PLUGIN_NAME),

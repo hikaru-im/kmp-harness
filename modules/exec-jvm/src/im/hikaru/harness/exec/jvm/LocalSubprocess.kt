@@ -68,6 +68,54 @@ public class LocalSubprocess(
         callId: CallId,
         execution: ToolExecutionContext,
     ): ToolExecutionResult {
+        val entry = start(command, callId, execution)
+        if (command.background) {
+            // Tool result acknowledges a handle, not process completion.
+            return ToolExecutionResult(listOf(TextBlock(json.encodeToString(ExecReceipt(entry.metadataSnapshot(), true)))))
+        }
+        val timeout = entry.timeoutMillis
+        try {
+            val drained = withTimeoutOrNull(timeout + config.shutdownTimeoutMillis) { entry.worker.join(); true } == true
+            if (!drained) {
+                // An escaped descendant may retain a pipe beyond the command deadline.
+                // Bound this tool invocation while keeping cleanup owned by the Host.
+                entry.timedOut = true
+                entry.unknown()
+                withContext(NonCancellable + Dispatchers.IO) { terminate(entry); entry.worker.cancel() }
+            }
+            currentCoroutineContext().ensureActive()
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { terminate(entry); entry.worker.cancel() }
+            throw cancelled
+        }
+        val snapshot = entry.snapshot()
+        val lifecycle = snapshot.lifecycle
+        val failed = lifecycle !is BackgroundProcessLifecycle.Exited || lifecycle.exitCode != 0 || entry.timedOut
+        return ToolExecutionResult(
+            listOf(TextBlock(json.encodeToString(ExecReceipt(entry.metadataSnapshot(), false, snapshot.buffer, snapshot.truncated, entry.timedOut)))),
+            isError = failed,
+        )
+    }
+
+    /**
+     * Start one background process without waiting for completion. The caller
+     * owns the returned inventory identity and must collect it through
+     * [BackgroundProcessesService].
+     */
+    override suspend fun startBackground(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): BackgroundProcess {
+        require(command.background) { "startBackground requires a background command" }
+        return start(command, callId, execution).metadataSnapshot()
+    }
+
+    private suspend fun start(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): Entry {
         require(command.argv.isNotEmpty() && command.argv.first().isNotBlank()) { "argv must contain an executable" }
         require(command.argv.all { '\u0000' !in it }) { "argv contains NUL" }
         require(!command.stdin || command.background) { "stdin requires a background command" }
@@ -96,7 +144,7 @@ public class LocalSubprocess(
                             callId, json.encodeToString(command.argv), cwd.toString(),
                             System.currentTimeMillis(), incarnation, BackgroundProcessLifecycle.Running,
                             inputState = if (command.stdin) BackgroundInputState.Open else BackgroundInputState.Unsupported,
-                        ), process, agent, execution.session, config.maxOutputChars,
+                        ), process, agent, execution.session, config.maxOutputChars, timeout,
                     )
                     try {
                         if (!command.stdin) process.outputStream.close()
@@ -113,31 +161,7 @@ public class LocalSubprocess(
                 }
             }
         }
-        if (command.background) {
-            // Tool result acknowledges a handle, not process completion.
-            return ToolExecutionResult(listOf(TextBlock(json.encodeToString(ExecReceipt(entry.metadataSnapshot(), true)))))
-        }
-        try {
-            val drained = withTimeoutOrNull(timeout + config.shutdownTimeoutMillis) { entry.worker.join(); true } == true
-            if (!drained) {
-                // An escaped descendant may retain a pipe beyond the command deadline.
-                // Bound this tool invocation while keeping cleanup owned by the Host.
-                entry.timedOut = true
-                entry.unknown()
-                withContext(NonCancellable + Dispatchers.IO) { terminate(entry); entry.worker.cancel() }
-            }
-            currentCoroutineContext().ensureActive()
-        } catch (cancelled: CancellationException) {
-            withContext(NonCancellable + Dispatchers.IO) { terminate(entry); entry.worker.cancel() }
-            throw cancelled
-        }
-        val snapshot = entry.snapshot()
-        val lifecycle = snapshot.lifecycle
-        val failed = lifecycle !is BackgroundProcessLifecycle.Exited || lifecycle.exitCode != 0 || entry.timedOut
-        return ToolExecutionResult(
-            listOf(TextBlock(json.encodeToString(ExecReceipt(entry.metadataSnapshot(), false, snapshot.buffer, snapshot.truncated, entry.timedOut)))),
-            isError = failed,
-        )
+        return entry
     }
 
     private suspend fun requireOwner(execution: ToolExecutionContext): Agent {
@@ -410,11 +434,13 @@ public class LocalSubprocess(
         val agent: Agent,
         val session: Session,
         private val limit: Int,
+        val timeoutMillis: Long,
     ) {
         lateinit var worker: Job
         val descendants = ConcurrentHashMap<Long, ProcessHandle>()
         @Volatile var timedOut: Boolean = false
         private var buffer = ""
+        private var totalChars = 0L
         private var revision = 0L
         private var truncated = false
         private var lifecycle: BackgroundProcessLifecycle = BackgroundProcessLifecycle.Running
@@ -456,6 +482,7 @@ public class LocalSubprocess(
             var incoming = pendingHighSurrogate + String(chunk, 0, count)
             pendingHighSurrogate = if (incoming.lastOrNull()?.isHighSurrogate() == true) incoming.takeLast(1) else ""
             if (pendingHighSurrogate.isNotEmpty()) incoming = incoming.dropLast(1)
+            totalChars += incoming.length
             val combined = buffer + incoming
             var start = (combined.length - limit).coerceAtLeast(0)
             if (start > 0 && combined[start].isLowSurrogate() && combined[start - 1].isHighSurrogate()) start++
@@ -484,6 +511,7 @@ public class LocalSubprocess(
         )
         @Synchronized fun snapshot(): BackgroundOutputResult.Available = BackgroundOutputResult.Available(
             session.id, metadata.process, session.id, buffer, revision, truncated, lifecycle, inputState(),
+            totalChars, timedOut,
         )
     }
 }

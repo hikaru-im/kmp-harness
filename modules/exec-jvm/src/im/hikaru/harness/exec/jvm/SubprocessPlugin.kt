@@ -7,6 +7,7 @@ import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.EffectScope
 import im.hikaru.harness.runtime.plugin.InjectSpec
 import im.hikaru.harness.runtime.plugin.SimplePlugin
+import im.hikaru.harness.session.SessionEvents
 import im.hikaru.harness.session.SessionKey
 import im.hikaru.harness.session.api.BackgroundProcessesKey
 import im.hikaru.harness.session.api.SessionTerminalHostKey
@@ -62,6 +63,7 @@ public class SubprocessPlugin(private val config: SubprocessConfig = SubprocessC
         scope.add(context.provide(BackgroundProcessesKey, subprocess))
         val terminalHost = JvmSessionTerminalHost(context, config.maxTerminalBindings, config.terminalLimits, config.allowedRoots)
         scope.add(terminalHost)
+        scope.add(context.on(SessionEvents.Disposed) { notice -> terminalHost.ownerDisposed(notice.session.id) })
         scope.add(context.provide(SessionTerminalHostKey, terminalHost))
     }
 }

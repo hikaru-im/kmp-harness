@@ -72,9 +72,10 @@ class DesktopBundleTest {
         assertEquals(
             listOf(
                 "logger", "settings-file", "credentials-local", "llm", "llm-koog-openai", "session", "agent",
-                "tools", "subprocess", desktopShellToolPluginName(isWindowsPlatform()), "tool-subagent",
-                "tool-subagent-control", "tool-subagent-control/list-agents", "agent-loop", "session-api",
-                "session-persistence", "llm-retry",
+                "tools", "subprocess", "jobs", desktopShellToolPluginName(isWindowsPlatform()), "tool-jobs",
+                "terminal", "tool-terminal", "tool-subagent", "tool-subagent-control",
+                "tool-subagent-control/list-agents", "agent-loop", "session-api", "session-persistence",
+                "llm-retry",
             ),
             entries.map { it.id },
         )
@@ -200,7 +201,7 @@ class DesktopBundleTest {
         try {
             val context = session.host.runtime.context
             val pluginNames = DesktopProfileBundle.patches.single().insert.orEmpty().map { it.id }
-            assertEquals(17, pluginNames.size)
+            assertEquals(21, pluginNames.size)
             assertTrue(
                 pluginNames.all { name ->
                     session.host.loader.fiber(name)?.state == FiberState.Active

@@ -1,10 +1,18 @@
 package im.hikaru.harness.exec.jvm
 
+import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.ToolSchema
+import im.hikaru.harness.session.SessionId
+import im.hikaru.harness.session.api.BackgroundOutputResult
+import im.hikaru.harness.session.api.BackgroundProcess
+import im.hikaru.harness.session.api.BackgroundProcessLifecycle
+import im.hikaru.harness.session.api.BackgroundProcessesService
 import im.hikaru.harness.tools.ContextualToolHandler
 import im.hikaru.harness.tools.ToolCallRequest
 import im.hikaru.harness.tools.ToolExecutionContext
 import im.hikaru.harness.tools.ToolExecutionResult
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -23,8 +31,13 @@ public const val PWSH_TOOL_NAME: String = "pwsh"
  */
 internal class ShellToolHandler(
     private val toolName: String,
+    private val jobKind: String,
     private val argvFor: (String) -> List<String>,
     private val service: SubprocessService,
+    private val processes: BackgroundProcessesService,
+    private val jobs: JobsService,
+    private val pollMillis: Long = 50,
+    private val maxJobOutputChars: Int = 256 * 1024,
 ) : ContextualToolHandler {
     private data class Arguments(
         val command: String,
@@ -40,17 +53,32 @@ internal class ShellToolHandler(
             "Tool scope does not match the trusted Session"
         }
         val arguments = decode(request.arguments)
-        return service.execute(
-            ExecCommand(
-                argv = argvFor(arguments.command),
-                cwd = arguments.workdir,
-                background = arguments.runInBackground,
-                timeoutMillis = arguments.timeoutMillis,
-                stdin = false,
+        val command = ExecCommand(
+            argv = argvFor(arguments.command),
+            cwd = arguments.workdir,
+            background = arguments.runInBackground,
+            timeoutMillis = arguments.timeoutMillis,
+            stdin = false,
+        )
+        if (!arguments.runInBackground) return service.execute(command, request.callId, execution)
+        var started: BackgroundProcess? = null
+        val view = jobs.start(
+            JobSpec(
+                kind = jobKind,
+                label = arguments.command,
+                owner = execution.session.id,
+                outputLimitChars = maxJobOutputChars,
+                producer = JobProducer { handle ->
+                    val process = service.startBackground(command, request.callId, execution)
+                    started = process
+                    BackgroundJobHooks(processes, execution.session.id, process, handle, pollMillis)
+                },
             ),
-            request.callId,
             execution,
         )
+        checkNotNull(started) { "Background producer did not start a process" }
+        // A background call acknowledges the job handle, not process completion.
+        return ToolExecutionResult(listOf(TextBlock("started background job ${view.id.value}")))
     }
 
     private fun decode(value: String): Arguments {
@@ -97,6 +125,52 @@ internal class ShellToolHandler(
 
     private companion object {
         val ALLOWED_KEYS = setOf("command", "description", "timeoutMs", "workdir", "run_in_background")
+    }
+}
+
+/**
+ * Adapts one background process to the generic job contract. The process
+ * inventory owns capture and lifecycle; this adapter only forwards the delta
+ * since its cursor into the job ring and maps exit evidence to a job outcome.
+ */
+private class BackgroundJobHooks(
+    private val processes: BackgroundProcessesService,
+    private val session: SessionId,
+    private val process: BackgroundProcess,
+    private val handle: JobHandle,
+    private val pollMillis: Long,
+) : JobHooks {
+    private val cancelled = AtomicBoolean(false)
+
+    override suspend fun cancel(reason: String?) {
+        if (!cancelled.compareAndSet(false, true)) return
+        processes.cancel(session, process.process)
+    }
+
+    override suspend fun await(): JobOutcome {
+        var cursor = 0L
+        while (true) {
+            val output = processes.read(session, process.process)
+            if (output !is BackgroundOutputResult.Available) {
+                return JobOutcome(JobStatus.Failed, "process record disappeared")
+            }
+            val bufferStart = output.totalChars - output.buffer.length
+            if (output.totalChars > cursor) {
+                val offset = (cursor - bufferStart).coerceIn(0L, output.buffer.length.toLong()).toInt()
+                val delta = output.buffer.substring(offset)
+                if (delta.isNotEmpty()) handle.append(delta)
+                cursor = output.totalChars
+            }
+            when (val lifecycle = output.lifecycle) {
+                BackgroundProcessLifecycle.Running -> delay(pollMillis)
+                BackgroundProcessLifecycle.Unknown -> return JobOutcome(JobStatus.Failed, "process state is unknown")
+                is BackgroundProcessLifecycle.Exited -> {
+                    val status = if (lifecycle.exitCode == 0 && !output.timedOut) JobStatus.Completed else JobStatus.Failed
+                    val detail = if (output.timedOut) "timed out" else "exit code: ${lifecycle.exitCode}"
+                    return JobOutcome(status, detail)
+                }
+            }
+        }
     }
 }
 

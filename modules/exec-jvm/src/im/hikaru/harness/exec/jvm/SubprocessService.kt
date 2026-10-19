@@ -2,6 +2,7 @@ package im.hikaru.harness.exec.jvm
 
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.runtime.service.ServiceKey
+import im.hikaru.harness.session.api.BackgroundProcess
 import im.hikaru.harness.tools.ToolExecutionContext
 import im.hikaru.harness.tools.ToolExecutionResult
 
@@ -24,6 +25,17 @@ public interface SubprocessService {
         callId: CallId,
         execution: ToolExecutionContext,
     ): ToolExecutionResult
+
+    /**
+     * Start a background command and return the inventory identity a job
+     * producer collects through [im.hikaru.harness.session.api.BackgroundProcessesService].
+     * The command's [ExecCommand.background] flag must be set.
+     */
+    public suspend fun startBackground(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): BackgroundProcess
 }
 
 public object SubprocessKey : ServiceKey<SubprocessService>("subprocess.local")
