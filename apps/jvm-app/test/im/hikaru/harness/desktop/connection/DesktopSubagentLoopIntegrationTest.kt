@@ -22,6 +22,7 @@ import im.hikaru.harness.runtime.plugin.FiberState
 import im.hikaru.harness.session.*
 import im.hikaru.harness.session.persistence.persistence
 import im.hikaru.harness.session.persistence.sessionPersistencePluginForTest
+import im.hikaru.harness.subagent.tools.TOOL_SUBAGENT_PLUGIN_NAME
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Comparator
@@ -48,11 +49,17 @@ class DesktopSubagentLoopIntegrationTest {
 
                 fixture.adapter.turns[0].release.complete(Unit)
                 withTimeout(10_000) { spawned.child.awaitIdle() }
+                awaitParentCall(fixture, 3)
+                withTimeout(10_000) { spawned.parent.awaitIdle() }
                 assertCompletedTurn(spawned.parent.session, spawned.parentInput, PARENT_ANSWER)
                 assertCompletedTurn(spawned.child.session, spawned.input, FIRST_ANSWER)
                 assertHistory(fixture, spawned, listOf(spawned.input), listOf(CHILD_PROMPT, FIRST_ANSWER))
-                assertEquals(2, fixture.adapter.parentCalls.get())
+                assertEquals(3, fixture.adapter.parentCalls.get(), "Spawn receipt, answer, settlement")
                 assertEquals(1, fixture.adapter.childCalls.get())
+                assertTrue(spawned.parent.session.deriveMessages().any { message ->
+                    message.source == PluginMessageSource(TOOL_SUBAGENT_PLUGIN_NAME) &&
+                        message.content.any { it is TextBlock && it.text.startsWith("Background subagent ") }
+                }, "The child's settlement reaches the parent transcript")
 
                 val snapshots = flush(fixture, spawned.parent.session, spawned.child.session)
                 // Fully close the first Room owner before constructing the reader Runtime.
@@ -101,7 +108,13 @@ class DesktopSubagentLoopIntegrationTest {
                 assertEquals(2, fixture.profile.host.runtime.context.agents.list().size,
                     "Followup uses the same child, not a replacement producer")
                 assertEquals(2, fixture.adapter.childCalls.get())
-                assertEquals(2, fixture.adapter.parentCalls.get())
+                // A followup delivered before the first settlement is folded into the
+                // child's next turn, so one or two notices are both valid.
+                awaitParentCall(fixture, 3)
+                delay(500) // Allow a notice for the first turn to be delivered too.
+                withTimeout(10_000) { spawned.parent.awaitIdle() }
+                assertTrue(fixture.adapter.parentCalls.get() in 3..4,
+                    "The parent receives at least the final settlement")
                 assertCompletedTurn(spawned.parent.session, spawned.parentInput, PARENT_ANSWER)
 
                 val snapshots = flush(fixture, spawned.parent.session, spawned.child.session)
@@ -134,7 +147,12 @@ class DesktopSubagentLoopIntegrationTest {
         assertEquals(MODEL, request.model)
         val actualInput = request.messages.single { it.id.value == childInput }
         assertEquals(UserMessageSource, actualInput.source)
-        assertEquals(listOf(TextBlock(CHILD_PROMPT)), actualInput.content)
+        assertEquals(2, actualInput.content.size)
+        assertEquals(CHILD_PROMPT, (actualInput.content[0] as TextBlock).text)
+        assertTrue(
+            (actualInput.content[1] as TextBlock).text
+                .startsWith("Your parent agent id is \"${parent.id.value}\"."),
+        )
         withTimeout(10_000) { prompt.awaitIdle() }
         val parentAgent = assertNotNull(context.agents.get(AgentId(parent.id.value)))
         val child = assertNotNull(context.agents.get(AgentId(childId.value)))
@@ -188,7 +206,13 @@ class DesktopSubagentLoopIntegrationTest {
         val actual = spawned.child.session.deriveMessages()
         assertEquals(actual.map(::toClientMessage), history.messages)
         assertEquals(inputs, actual.filter { it.source == UserMessageSource }.map { it.id.value })
-        assertEquals(text, actual.map { (it.content.single() as TextBlock).text })
+        val initialTask = actual.first { it.source == UserMessageSource }
+        assertEquals(2, initialTask.content.size, "The delegated task carries its parent-return guidance")
+        assertTrue(
+            (initialTask.content[1] as TextBlock).text
+                .startsWith("Your parent agent id is \"${spawned.owner.parentSessionId.value}\"."),
+        )
+        assertEquals(text, actual.map { (it.content.first() as TextBlock).text })
         val key = ChildAgentKey(spawned.owner.scope, spawned.childId)
         val detail = assertIs<PanelLoad.Ready<ChildAgentDetail>>(fixture.panels.readDetail(spawned.owner, key))
         assertEquals(spawned.owner.scope, detail.scope)
@@ -196,7 +220,8 @@ class DesktopSubagentLoopIntegrationTest {
         assertFalse(detail.value.canInteract)
         assertEquals(actual.map { ChildTranscriptEntry(it.id.value,
             if (it.role == MessageRole.USER) ChildTranscriptRole.User else ChildTranscriptRole.Assistant,
-            (it.content.single() as TextBlock).text) }, detail.value.entries)
+            it.content.filterIsInstance<TextBlock>().joinToString("\n") { block -> block.text }) },
+            detail.value.entries)
         return detail.value.entries
     }
 
@@ -249,8 +274,15 @@ class DesktopSubagentLoopIntegrationTest {
         }
     }
 
+    private suspend fun awaitParentCall(fixture: Fixture, count: Int) {
+        withTimeout(10_000) {
+            while (fixture.adapter.parentCalls.get() < count) delay(10)
+        }
+    }
+
     private suspend fun fixture(childTurns: Int, block: suspend (Fixture) -> Unit) {
-        val home = Files.createTempDirectory("desktop-subagent-loop-")
+        // Resolve macOS' /var symlink: the profile's plugin inventory rejects symlinked ancestors.
+        val home = Files.createTempDirectory("desktop-subagent-loop-").toRealPath()
         var fixture: Fixture? = null
         try {
             val profile = startDesktopProfile(harnessHome = home, pollMillis = 60_000)
@@ -329,7 +361,14 @@ class DesktopSubagentLoopIntegrationTest {
                         emit(TextDeltaChunk(0, PARENT_ANSWER))
                         emit(FinishChunk(StopFinishReason))
                     }
-                    else -> error("Unexpected extra parent call")
+                    else -> {
+                        val notice = options.messages.last().content.filterIsInstance<TextBlock>()
+                            .singleOrNull { it.text.startsWith("Background subagent ") }
+                        check(notice != null) { "Extra parent call without a subagent settlement notice" }
+                        emit(BlockStartChunk(0, "text"))
+                        emit(TextDeltaChunk(0, SETTLEMENT_ANSWER))
+                        emit(FinishChunk(StopFinishReason))
+                    }
                 }
                 CHILD_PROVIDER -> {
                     val index = childCalls.getAndIncrement()
@@ -359,6 +398,7 @@ class DesktopSubagentLoopIntegrationTest {
         const val CHILD_PROMPT = "Execute the first child turn"
         const val SECOND_PROMPT = "Execute another turn in the same child"
         const val PARENT_ANSWER = "Real spawn result received"
+        const val SETTLEMENT_ANSWER = "Settlement received"
         const val FIRST_ANSWER = "First child loop answer"
         const val SECOND_ANSWER = "Second child loop answer"
     }

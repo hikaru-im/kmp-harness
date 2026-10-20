@@ -5,6 +5,7 @@ import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.TextBlock
+import im.hikaru.harness.llm.createAssistantMessage
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.Runtime
 import im.hikaru.harness.runtime.effect.EffectScope
@@ -13,8 +14,13 @@ import im.hikaru.harness.session.api.*
 import im.hikaru.harness.tools.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.test.*
@@ -40,7 +46,16 @@ class SubagentToolsContractTest {
             assertEquals(result.receiptId, inbox.id)
             assertEquals(result.inputMessageId, inbox.message.id.value)
             assertNotEquals(result.receiptId, result.inputMessageId)
-            assertEquals("actual task", (inbox.message.content.single() as TextBlock).text)
+            assertEquals(2, inbox.message.content.size)
+            assertEquals("actual task", (inbox.message.content[0] as TextBlock).text)
+            assertEquals(
+                "Your parent agent id is \"parent\". Before you finish, send your result to that agent with " +
+                    "send_message({ agent_id: \"parent\", message: \"<self-contained result>\" }). The parent " +
+                    "shares your workspace but does not automatically receive your transcript, tool output, or " +
+                    "reasoning. Send earlier messages as well when a finding changes what the parent should do " +
+                    "next; sending a message does not end your turn.",
+                (inbox.message.content[1] as TextBlock).text,
+            )
             assertEquals(AgentSendTarget.NEXT_TURN, inbox.target)
             assertEquals(AgentWakeup.IF_IDLE, inbox.wakeup)
             assertEquals(0, (child as ControlledAgent).awaitIdleCalls)
@@ -119,7 +134,8 @@ class SubagentToolsContractTest {
 
     @Test
     fun nestedSpawnIsReadableButOrdinaryBranchIsNotAnAgentDescendant() = runTest {
-        val fixture = fixture()
+        // DSH's default maxDepth is 1; this test intentionally allows one more level.
+        val fixture = fixture(maxDepth = 2)
         try {
             val root = fixture.create("root")
             val branch = fixture.create("branch", parent = "root", origin = null)
@@ -127,6 +143,9 @@ class SubagentToolsContractTest {
             val child = assertNotNull(fixture.registry.get(AgentId(assertNotNull(first.childSessionId))))
             val second = decode(fixture.tools.execute(request("nested", child.session.id.value), execution(child)))
             val nested = assertNotNull(second.childSessionId)
+            val nestedAgent = assertNotNull(fixture.registry.get(AgentId(nested)))
+            assertEquals(2L, nestedAgent.session.header.delegationDepth)
+            assertEquals(1L, child.session.header.delegationDepth)
             val listed = assertIs<SessionDescendantsResult.Available>(fixture.api.descendants(root.agent.session.id))
             assertEquals(setOf(first.childSessionId, nested), listed.children.map { it.child.value }.toSet())
             assertFalse(listed.children.any { it.child == branch.agent.session.id })
@@ -607,7 +626,124 @@ class SubagentToolsContractTest {
         }
     }
 
-    private suspend fun fixture(): Fixture {
+    @Test
+    fun spawnStampsDelegationDepthAndRejectsRecursionBeyondMaxDepth() = runTest {
+        val fixture = fixture()
+        try {
+            val parent = fixture.create("parent")
+            val first = decode(fixture.execute(parent))
+            assertEquals(SubagentOutcome.ACCEPTED, first.outcome, first.error)
+            val child = assertNotNull(fixture.registry.get(AgentId(assertNotNull(first.childSessionId))))
+            assertEquals(1L, child.session.header.delegationDepth)
+
+            val nested = decode(
+                fixture.tools.execute(request("nested", child.session.id.value), execution(child)),
+            )
+            assertEquals(SubagentOutcome.REJECTED, nested.outcome)
+            assertContains(assertNotNull(nested.error), "exceeds maxDepth 1")
+            assertNull(nested.childSessionId)
+            assertEquals(2, fixture.created.size)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun maxActiveSubagentsLimitsFanOutUntilAChildSettles() = runTest {
+        val fixture = fixture(maxActiveSubagents = 1)
+        try {
+            val parent = fixture.create("parent")
+            val first = decode(fixture.execute(parent, "first"))
+            assertEquals(SubagentOutcome.ACCEPTED, first.outcome, first.error)
+            val child = assertNotNull(fixture.registry.get(AgentId(assertNotNull(first.childSessionId))))
+
+            val limited = decode(fixture.execute(parent, "second"))
+            assertEquals(SubagentOutcome.REJECTED, limited.outcome)
+            assertContains(assertNotNull(limited.error), "active child limit: 1")
+            assertEquals(2, fixture.created.size)
+
+            // The queued prompt is what keeps the child active; claiming it frees the slot.
+            child.inbox.claim(InboxQueue.NEXT_TURN)
+            val retried = decode(fixture.execute(parent, "third"))
+            assertEquals(SubagentOutcome.ACCEPTED, retried.outcome, retried.error)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun settlementDeliversClosingOutputAndDefersWhileTheChildHasQueuedInput() = runTest {
+        val fixture = fixture()
+        try {
+            val parent = fixture.create("parent")
+            val controlledParent = parent.agent as ControlledAgent
+
+            val settled = decode(fixture.execute(parent, "settled"))
+            val settledChild = assertNotNull(
+                fixture.registry.get(AgentId(assertNotNull(settled.childSessionId))),
+            )
+            settledChild.inbox.claim(InboxQueue.NEXT_TURN)
+            settledChild.finishTurn(1, "all done")
+
+            val deferred = decode(fixture.execute(parent, "deferred"))
+            val deferredChild = assertNotNull(
+                fixture.registry.get(AgentId(assertNotNull(deferred.childSessionId))),
+            )
+            deferredChild.finishTurn(1, "must not be reported yet")
+
+            val notice = realAwait(10_000) { controlledParent.deliveries.receive() }
+            assertEquals(
+                listOf(
+                    TextBlock(
+                        "Background subagent ${settledChild.id.value} finished and will do no further " +
+                            "work unless you send it more.",
+                    ),
+                    TextBlock("Its closing message:"),
+                    TextBlock("all done"),
+                ),
+                notice.content,
+            )
+            assertEquals(AgentSendTarget.NEXT_TURN, controlledParent.targets.single())
+            withContext(Dispatchers.Default) {
+                delay(300)
+                assertTrue(controlledParent.deliveries.tryReceive().isFailure)
+            }
+
+            deferredChild.inbox.claim(InboxQueue.NEXT_TURN)
+            deferredChild.finishTurn(2, "later")
+            val second = realAwait(10_000) { controlledParent.deliveries.receive() }
+            assertEquals(TextBlock("Background subagent ${deferredChild.id.value} finished and will do no " +
+                "further work unless you send it more."), second.content.first())
+        } finally {
+            fixture.close()
+        }
+    }
+
+    private suspend fun Agent.finishTurn(
+        turn: Long,
+        text: String?,
+        reason: TurnEndReason = CompletedTurnEndReason,
+    ) {
+        if (text != null) {
+            session.append(
+                SessionEventKeys.AssistantMessage,
+                AssistantMessageEvent(
+                    turn = turn,
+                    step = 1,
+                    message = createAssistantMessage(listOf(TextBlock(text)), "test-provider", "test-model"),
+                ),
+            )
+        }
+        session.append(SessionEventKeys.TurnEnd, TurnEndEvent(turn, reason))
+    }
+
+    private suspend fun <T> realAwait(timeoutMillis: Long, block: suspend () -> T): T =
+        withContext(Dispatchers.Default) { withTimeout(timeoutMillis) { block() } }
+
+    private suspend fun fixture(
+        maxDepth: Long = DEFAULT_SUBAGENT_MAX_DEPTH,
+        maxActiveSubagents: Int = DEFAULT_MAX_ACTIVE_SUBAGENTS,
+    ): Fixture {
         val runtime = Runtime()
         runtime.install(SessionPlugin())
         runtime.install(AgentPlugin())
@@ -618,7 +754,8 @@ class SubagentToolsContractTest {
             fixture.beforeCreate(request)
             ControlledAgent(request, fixture).also { fixture.created += it }
         })
-        ToolSubagentPlugin().apply(runtime.context, fixture.scope)
+        ToolSubagentPlugin(maxDepth = maxDepth, maxActiveSubagents = maxActiveSubagents)
+            .apply(runtime.context, fixture.scope)
         ToolSubagentControlPlugin().apply(runtime.context, fixture.scope)
         ListAgentsPlugin().apply(runtime.context, fixture.scope)
         runtime.context.effect { fixture.scope.dispose() }
@@ -692,6 +829,7 @@ class SubagentToolsContractTest {
         val targets = mutableListOf<AgentSendTarget>()
         val wakeups = mutableListOf<AgentWakeup>()
         val receipts = mutableListOf<String>()
+        val deliveries = Channel<Message>(Channel.UNLIMITED)
         var failCancel = fixture.cancelFailure
         override suspend fun awaitIdle() { awaitIdleCalls++ }
         override suspend fun cancel(cause: Throwable?, keepInbox: Boolean) {
@@ -707,6 +845,7 @@ class SubagentToolsContractTest {
             fixture.beforeSend(this, message)
             val receipt = inbox.insert(message, target, wakeup)
             receipts += receipt
+            deliveries.trySend(message)
             fixture.afterSend(this, receipt)
             return receipt
         }

@@ -6,6 +6,7 @@ import im.hikaru.harness.agent.AgentId
 import im.hikaru.harness.agent.AgentKey
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.AgentRegistry
+import im.hikaru.harness.agent.AgentStatus
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.TextBlock
@@ -14,6 +15,7 @@ import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.session.CreateSessionOptions
 import im.hikaru.harness.session.Session
+import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.SessionKey
 import im.hikaru.harness.session.SessionOrigin
 import im.hikaru.harness.session.SessionStore
@@ -36,6 +38,9 @@ internal class SubagentToolHandler(
     private val hostContext: Context,
     private val registry: AgentRegistry,
     private val store: SessionStore,
+    private val settlement: SubagentSettlement,
+    private val maxDepth: Long = DEFAULT_SUBAGENT_MAX_DEPTH,
+    private val maxActiveSubagents: Int = DEFAULT_MAX_ACTIVE_SUBAGENTS,
 ) : ContextualToolHandler, Disposable {
     private data class CallKey(val parent: Session, val call: CallId)
     private data class Arguments(
@@ -51,6 +56,11 @@ internal class SubagentToolHandler(
     private val resultJson = Json { encodeDefaults = true }
     private var disposed = false
     private val owned = mutableSetOf<AgentHandle>()
+    // Lineage root of every child this handler created. Capacity is shared by all
+    // subagents of one uninterrupted parent link, as in DSH's ActivationPool.
+    private val lineageRoots = mutableMapOf<SessionId, SessionId>()
+    // Spawns admitted but not yet registered in `owned`; they consume capacity too.
+    private val pendingSpawns = mutableMapOf<SessionId, Int>()
     // A cancelled delivery can already have committed an Inbox insert. Keep its ID
     // under this call key so a repeated invocation cannot create a second child.
     private val calls = mutableMapOf<CallKey, SubagentResult?>()
@@ -72,6 +82,10 @@ internal class SubagentToolHandler(
         }
 
         val key = CallKey(execution.session, request.callId)
+        // DSH resolves the child depth from the persisted parent header and caps
+        // every new activation at the configured depth and lineage capacity.
+        val lineageRoot = ancestry.last().session.id
+        val childDepth = (execution.session.header.delegationDepth ?: 0L) + 1
         mutex.withLock {
             if (disposed) return result(SubagentResult(SubagentOutcome.REJECTED, error = "Subagent tool disposed"))
             if (calls.containsKey(key)) {
@@ -80,7 +94,21 @@ internal class SubagentToolHandler(
                     error = "This subagent call is already in flight; do not retry with a new call ID",
                 ))
             }
+            if (childDepth > maxDepth) {
+                return result(SubagentResult(
+                    SubagentOutcome.REJECTED, parentSessionId = execution.session.id.value,
+                    error = "subagent depth $childDepth exceeds maxDepth $maxDepth",
+                ))
+            }
+            if (activeChildrenLocked(lineageRoot) >= maxActiveSubagents) {
+                return result(SubagentResult(
+                    SubagentOutcome.REJECTED, parentSessionId = execution.session.id.value,
+                    error = "subagent limit reached (active child limit: $maxActiveSubagents); " +
+                        "wait for an existing child to finish or complete this work with the current agents",
+                ))
+            }
             calls[key] = null
+            pendingSpawns[lineageRoot] = (pendingSpawns[lineageRoot] ?: 0) + 1
         }
 
         var child: AgentHandle? = null
@@ -100,16 +128,27 @@ internal class SubagentToolHandler(
                 ),
                 sessionOptions = CreateSessionOptions(
                     cwd = cwd, parentSession = execution.session.id, origin = SessionOrigin.SUBAGENT,
+                    delegationDepth = childDepth,
                 ),
             )
             child = created
             state = state.copy(childSessionId = created.agent.session.id.value)
             // Register before any cancellable operation after create returns.
-            withContext(NonCancellable) { mutex.withLock { owned += created } }
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    owned += created
+                    lineageRoots[created.agent.session.id] = lineageRoot
+                }
+            }
             validateSnapshot(execution, ancestry)
             validateChild(created.agent, execution.session)
             currentCoroutineContext().ensureActive()
-            val message = createUserMessage(listOf(TextBlock(arguments.prompt)))
+            val message = createUserMessage(
+                listOf(
+                    TextBlock(arguments.prompt),
+                    TextBlock(returnGuidance(execution.session.id.value)),
+                ),
+            )
             state = state.copy(
                 inputMessageId = message.id.value, delivery = SubagentDelivery.UNKNOWN,
                 outcome = SubagentOutcome.CREATED_DELIVERY_UNKNOWN,
@@ -150,7 +189,10 @@ internal class SubagentToolHandler(
                         state = rollback(handle, state)
                     }
                 }
-                mutex.withLock { calls[key] = state }
+                mutex.withLock {
+                    calls[key] = state
+                    releasePendingLocked(lineageRoot)
+                }
             }
             throw error
         } catch (error: Exception) {
@@ -158,8 +200,46 @@ internal class SubagentToolHandler(
             val handle = child
             if (handle != null) state = rollback(handle, state)
         }
-        withContext(NonCancellable) { mutex.withLock { calls[key] = state } }
+        withContext(NonCancellable) {
+            mutex.withLock {
+                calls[key] = state
+                releasePendingLocked(lineageRoot)
+            }
+        }
+        if (state.outcome == SubagentOutcome.ACCEPTED) {
+            child?.let { settlement.watch(ancestry.first(), it.agent) }
+        }
         return result(state)
+    }
+
+    private suspend fun activeChildrenLocked(root: SessionId): Int {
+        var active = pendingSpawns[root] ?: 0
+        for (handle in owned) {
+            if (lineageRoots[handle.agent.session.id] != root) continue
+            if (isActive(handle.agent)) active++
+        }
+        return active
+    }
+
+    private suspend fun isActive(agent: Agent): Boolean {
+        if (agent.status == AgentStatus.RUNNING) return true
+        val inbox = agent.inbox.snapshot()
+        return inbox.nextTurn.isNotEmpty() || inbox.nextStep.isNotEmpty()
+    }
+
+    private fun releasePendingLocked(root: SessionId) {
+        val remaining = (pendingSpawns[root] ?: return) - 1
+        if (remaining > 0) pendingSpawns[root] = remaining else pendingSpawns.remove(root)
+    }
+
+    /** DSH's `withContinuableReturnGuidance`: the parent id is part of the task. */
+    private fun returnGuidance(parentId: String): String {
+        val encoded = JsonPrimitive(parentId).toString()
+        return "Your parent agent id is $encoded. Before you finish, send your result to that agent with " +
+            "send_message({ agent_id: $encoded, message: \"<self-contained result>\" }). The parent shares " +
+            "your workspace but does not automatically receive your transcript, tool output, or reasoning. Send " +
+            "earlier messages as well when a finding changes what the parent should do next; sending a message " +
+            "does not end your turn."
     }
 
     private suspend fun captureAncestry(execution: ToolExecutionContext): List<Agent> {
@@ -225,8 +305,12 @@ internal class SubagentToolHandler(
         withContext(NonCancellable) {
             try {
                 // Never find by ID and dispose: this handle owns only this registration.
+                val sessionId = handle.agent.session.id
                 handle.dispose()
-                mutex.withLock { owned.remove(handle) }
+                mutex.withLock {
+                    owned.remove(handle)
+                    lineageRoots.remove(sessionId)
+                }
                 state.copy(outcome = SubagentOutcome.ROLLED_BACK)
             } catch (error: Exception) {
                 state.copy(outcome = SubagentOutcome.ROLLBACK_FAILED, rollbackError = error.message ?: "Child cleanup failed")
@@ -236,7 +320,11 @@ internal class SubagentToolHandler(
     override suspend fun dispose(): Unit = withContext(NonCancellable) {
         val handles = mutex.withLock {
             disposed = true
-            owned.toList().asReversed().also { owned.clear() }
+            owned.toList().asReversed().also {
+                owned.clear()
+                lineageRoots.clear()
+                pendingSpawns.clear()
+            }
         }
         var failure: Throwable? = null
         for (handle in handles) {

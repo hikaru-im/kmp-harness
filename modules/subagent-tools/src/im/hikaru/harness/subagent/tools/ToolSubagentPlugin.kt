@@ -17,6 +17,8 @@ import kotlinx.serialization.json.jsonObject
 
 const val TOOL_SUBAGENT_PLUGIN_NAME: String = "tool-subagent"
 const val SUBAGENT_TOOL_NAME: String = "subagent"
+const val DEFAULT_SUBAGENT_MAX_DEPTH: Long = 1L
+const val DEFAULT_MAX_ACTIVE_SUBAGENTS: Int = 8
 
 /** Delegation entry point. Argument names and defaults follow DSH tool-subagent. */
 val SubagentToolSchema: ToolSchema = ToolSchema(
@@ -31,13 +33,32 @@ val SubagentToolSchema: ToolSchema = ToolSchema(
     ).jsonObject,
 )
 
-class ToolSubagentPlugin : SimplePlugin {
+/** Delegation limits mirror DSH's `maxDepth` / `maxActiveSubagents` service config. */
+class ToolSubagentPlugin(
+    private val maxDepth: Long = DEFAULT_SUBAGENT_MAX_DEPTH,
+    private val maxActiveSubagents: Int = DEFAULT_MAX_ACTIVE_SUBAGENTS,
+) : SimplePlugin {
+    init {
+        require(maxDepth >= 0L) { "maxDepth must not be negative" }
+        require(maxActiveSubagents >= 1) { "maxActiveSubagents must be positive" }
+    }
+
     override val inject: Set<InjectSpec> = setOf(
         InjectSpec.required(AgentKey), InjectSpec.required(SessionKey), InjectSpec.required(ToolsKey),
     )
 
     override suspend fun apply(context: Context, scope: EffectScope) {
-        val handler = SubagentToolHandler(context, context.agents, context.sessions)
+        val settlement = SubagentSettlement(context, context.agents)
+        // Handlers release their children first; the settlement watchers stop last.
+        scope.add(settlement)
+        val handler = SubagentToolHandler(
+            hostContext = context,
+            registry = context.agents,
+            store = context.sessions,
+            settlement = settlement,
+            maxDepth = maxDepth,
+            maxActiveSubagents = maxActiveSubagents,
+        )
         // Stop admissions and release owned handles after unregistering the tool.
         scope.add(handler)
         scope.add(context.require(ToolsKey).register(SubagentToolSchema, handler))
