@@ -141,16 +141,20 @@ private class BackgroundJobHooks(
     private val pollMillis: Long,
 ) : JobHooks {
     private val cancelled = AtomicBoolean(false)
+    // A job outlives its owning Session: settlement runs after the owner is
+    // removed, which the public gateway contract rejects on purpose.
+    private val owned = processes as? OwnedBackgroundProcesses
 
     override suspend fun cancel(reason: String?) {
         if (!cancelled.compareAndSet(false, true)) return
-        processes.cancel(session, process.process)
+        if (owned != null) owned.cancelOwned(session, process.process)
+        else processes.cancel(session, process.process)
     }
 
     override suspend fun await(): JobOutcome {
         var cursor = 0L
         while (true) {
-            val output = processes.read(session, process.process)
+            val output = owned?.readOwned(session, process.process) ?: processes.read(session, process.process)
             if (output !is BackgroundOutputResult.Available) {
                 return JobOutcome(JobStatus.Failed, "process record disappeared")
             }
@@ -194,7 +198,7 @@ private fun shellParameters(commandDescription: String): String = """
         },
         "run_in_background": {
           "type": "boolean",
-          "description": "Run in the background and return an owned process handle immediately; read its output through the background process panel."
+          "description": "Run in the background and return an owned process handle immediately. No timeout applies; read its output with job_output and stop it with job_kill."
         }
       }
     }

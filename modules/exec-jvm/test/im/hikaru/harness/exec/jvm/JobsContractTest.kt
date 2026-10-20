@@ -124,8 +124,16 @@ class JobsContractTest {
             val events = mutableListOf<JobSettlementEvent>()
             val subscription = f.jobs.subscribe(JobListener { events += it })
             try {
-                val jobId = f.bash("session-dispose", "sleep 30", background = true).startedJob()
+                val pidFile = Path.of(checkNotNull(f.session.header.cwd)).resolve("session-dispose.pid")
+                val jobId = f.bash(
+                    "session-dispose",
+                    "printf '%s' \$\$ > session-dispose.pid; sleep 30",
+                    background = true,
+                ).startedJob()
                 assertEquals(JobStatus.Running, f.jobs.get(JobId(jobId), f.execution).status)
+                awaitCondition { Files.exists(pidFile) }
+                val pid = Files.readString(pidFile).trim().toLong()
+                assertTrue(ProcessHandle.of(pid).orElseThrow().isAlive)
 
                 withTimeout(5_000) { f.handle.dispose() }
                 awaitCondition { events.any { it.job.id.value == jobId } }
@@ -133,6 +141,7 @@ class JobsContractTest {
                 assertEquals(JobStatus.Killed, settlement.job.status)
                 assertEquals(JobSettlementCause.TEARDOWN, settlement.cause)
                 assertTrue(settlement.job.detail.orEmpty().contains("session disposed"), settlement.job.detail)
+                awaitCondition { !ProcessHandle.of(pid).map { it.isAlive }.orElse(false) }
             } finally {
                 subscription.dispose()
             }

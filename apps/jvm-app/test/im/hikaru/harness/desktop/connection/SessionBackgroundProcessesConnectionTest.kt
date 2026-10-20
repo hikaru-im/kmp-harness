@@ -20,6 +20,7 @@ import im.hikaru.harness.exec.jvm.ToolBashPlugin
 import im.hikaru.harness.exec.jvm.ToolPwshPlugin
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.Message
+import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.Runtime
 import im.hikaru.harness.session.*
@@ -118,9 +119,12 @@ class SessionBackgroundProcessesConnectionTest {
     }
 
     @Test
-    fun nonzeroExitIsARealToolFailureWithReadableOutputRatherThanSuccessfulEmpty() = runBlocking {
+    fun nonzeroExitIsReportedWithItsOutputRatherThanErroredOrEmpty() = runBlocking {
         withFixture { f ->
-            assertTrue(f.execute("nonzero", "nonzero").isError)
+            val result = f.execute("nonzero", "nonzero")
+            // DSH reports a command outcome; a non-zero exit is not an infrastructure error.
+            assertFalse(result.isError)
+            assertTrue(result.text().endsWith("[exit code: 7]"), "Missing exit marker in: ${result.text()}")
             val panel = f.panel()
             assertEquals(BackgroundProcessLifecycle.Exited(7), panel.lifecycle)
             assertEquals("stdout\nstderr\n", panel.buffer)
@@ -323,6 +327,9 @@ class SessionBackgroundProcessesConnectionTest {
     }
 
     companion object {
+        private fun ToolExecutionResult.text(): String =
+            content.filterIsInstance<TextBlock>().joinToString("\n") { it.text }
+
         private suspend fun awaitCondition(predicate: suspend () -> Boolean) {
             withTimeout(10_000) { while (!predicate()) delay(5) }
         }

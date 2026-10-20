@@ -43,14 +43,14 @@ class SubprocessContractTest {
     }
 
     @Test
-    fun nonzeroExitAndMergedStderrRemainRealToolFailure() = runBlocking {
+    fun nonzeroExitIsReportedNotErrored() = runBlocking {
         withFixture { f ->
             val result = f.execute("failure", "nonzero")
-            assertTrue(result.isError)
+            assertFalse(result.isError)
+            assertEquals("stdout\nstderr\n[exit code: 7]", result.text())
             val output = f.output(f.inventory().single().process)
             assertEquals(BackgroundProcessLifecycle.Exited(7), output.lifecycle)
             assertEquals("stdout\nstderr\n", output.buffer)
-            assertEquals("7", receipt(result).getValue("process").jsonObject.getValue("lifecycle").jsonObject.getValue("exitCode").toString())
         }
     }
 
@@ -221,8 +221,8 @@ class SubprocessContractTest {
             val ready = f.cwd.resolve("ready-timeout")
             val release = f.cwd.resolve("never-release")
             val result = f.execute("timeout", "wait", ready.toString(), release.toString(), timeoutMillis = 500)
-            assertTrue(result.isError)
-            assertTrue(receipt(result).getValue("timedOut").jsonPrimitive.boolean)
+            assertFalse(result.isError)
+            assertTrue("[timed out after 500ms]" in result.text(), result.text())
             assertNotEquals(BackgroundProcessLifecycle.Running, f.output(f.inventory().single().process).lifecycle)
 
             val backgroundReady = f.cwd.resolve("ready-dispose")
@@ -388,6 +388,38 @@ class SubprocessContractTest {
             assertIs<BackgroundControlResult.Applied>(withTimeout(2_000) { f.service.cancel(f.owner.session.id, process) })
             assertIs<BackgroundProcessLifecycle.Exited>(f.awaitTerminal(process).lifecycle)
         }
+    }
+
+    @Test
+    fun backgroundCommandsIgnoreForegroundTimeouts() = runBlocking {
+        withFixture(SubprocessConfig(defaultTimeoutMillis = 200)) { f ->
+            val ready = f.cwd.resolve("background-no-timeout-ready")
+            val release = f.cwd.resolve("background-no-timeout-release")
+            f.execute("background-no-timeout", "wait", ready.toString(), release.toString(), background = true)
+            val process = f.inventory().single().process
+            awaitCondition { Files.exists(ready) }
+            delay(700)
+            assertEquals(BackgroundProcessLifecycle.Running, f.output(process).lifecycle)
+            Files.writeString(release, "release")
+            assertEquals(BackgroundProcessLifecycle.Exited(0), f.awaitTerminal(process).lifecycle)
+        }
+    }
+
+    @Test
+    fun childEnvironmentScrubsCredentialsAndDshVariables() {
+        val scrubbed = scrubbedEnvironment(
+            mapOf(
+                "PATH" to "/bin",
+                "HOME" to "/home/test",
+                "OPENAI_API_KEY" to "secret",
+                "db_password" to "secret",
+                "github_token" to "secret",
+                "SIGNING_SECRET" to "secret",
+                "DSH_HOME" to "/dsh",
+                "DSH_SESSION_ID" to "session",
+            ),
+        )
+        assertEquals(mapOf("PATH" to "/bin", "HOME" to "/home/test"), scrubbed)
     }
 
     @Test
@@ -577,6 +609,8 @@ class SubprocessContractTest {
         }
         private fun receipt(result: ToolExecutionResult) =
             Json.parseToJsonElement((result.content.single() as TextBlock).text).jsonObject
+
+        private fun ToolExecutionResult.text(): String = (content.single() as TextBlock).text
 
         internal fun javaCommand(mode: String, vararg args: String): List<String> {
             // Test workers may use a URL classloader rather than the process classpath.
