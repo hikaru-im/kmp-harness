@@ -892,9 +892,11 @@ internal class AgentLoopAgent(
             toolsService.execute(request, ToolExecutionContext(context, session))
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            // The model and the transcript need the actual cause; a bare marker made every failure
+            // (missing cwd, denied service, bad argument) indistinguishable.
             ToolExecutionResult(
-                content = listOf(TextBlock(TOOL_EXECUTION_ERROR)),
+                content = listOf(TextBlock(toolExecutionFailure(error))),
                 isError = true,
             )
         }
@@ -964,7 +966,13 @@ internal class AgentLoopAgent(
         }
 }
 
-private const val TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
+/** Bound a tool failure's visible reason without hiding which layer rejected the call. */
+private fun toolExecutionFailure(error: Throwable): String {
+    val message = error.message?.takeIf { it.isNotBlank() } ?: "(no message)"
+    return "TOOL_EXECUTION_ERROR: ${error::class.simpleName ?: "Throwable"}: ${message.take(MAX_TOOL_FAILURE_CHARS)}"
+}
+
+private const val MAX_TOOL_FAILURE_CHARS = 2_000
 private const val TOOL_ABORTED = "Error: tool call aborted"
 private const val TOOL_ABORTED_BEFORE_DISPATCH = "Error: tool call aborted before dispatch"
 private const val CLEARED_CONTEXT_SNAPSHOT =

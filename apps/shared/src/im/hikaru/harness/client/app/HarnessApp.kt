@@ -1057,6 +1057,7 @@ public fun HarnessApp(
             onDraftChange = { if (stillBound()) paneController.updateDraft(it) },
             onSubmit = { if (bound && stillBound()) paneController.submit(agentOptions = AgentOptions()) },
             onCancel = { if (stillBound()) paneController.cancel() },
+            onCancelEdit = { if (stillBound()) paneController.cancelEdit() },
             models = modelChoices,
             selectedModel = if (bound) composerModel(paneState, modelChoices, preferences) else null,
             onModelSelect = {}, // Existing sessions expose their configuration read-only.
@@ -1235,6 +1236,7 @@ public fun HarnessApp(
                 is PageId.Thread -> LiveThreadSurface(
                     state = paneConversationState,
                     onRetry = { paneConversation.refresh() },
+                    onEditMessage = { message -> paneConversation.beginEdit(message.id) },
                 )
 
 

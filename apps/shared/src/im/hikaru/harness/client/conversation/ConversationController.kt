@@ -35,8 +35,18 @@ public enum class CompletionCapability { LocalIdle, DeliveryAcknowledgedOnly }
 public enum class ConversationDataPhase { Unbound, Loading, Ready, Empty, Disconnected, Failed }
 public enum class ConversationAction { Idle, Creating, Associating, Sending, WaitingForLocalIdle, RunningUnknown }
 public enum class ConversationRunState { Unknown, Running, Idle }
-public enum class ConversationErrorKind { List, History, Create, Association, Prompt, Completion, Cancel, Stream }
+public enum class ConversationErrorKind { List, History, Create, Association, Prompt, Completion, Cancel, Fork, Stream }
 public enum class ConversationRetry { Refresh, History, SubmitExplicitly, Cancel }
+
+/**
+ * Editing a sent user message forks the conversation before it and resends the edited text (DSH
+ * `fork({ sessionId, atSeq })`). The original conversation is never rewritten.
+ */
+public data class ConversationEdit(
+    val messageId: String,
+    val text: String,
+    val previousDraft: String,
+)
 
 public data class ConversationError(
     val kind: ConversationErrorKind,
@@ -63,14 +73,19 @@ public data class ConversationState(
     val errors: Map<ConversationErrorKind, ConversationError> = emptyMap(),
     val managingSessionId: SessionId? = null,
     val managementError: String? = null,
+    val editing: ConversationEdit? = null,
 ) {
     public val canSubmit: Boolean get() = connected && host != null && draft.isNotBlank() &&
         action == ConversationAction.Idle && !cancelling && sessions.firstOrNull { it.id == selectedSessionId }?.archived != true
-    // Stop may be available for a selected real session whose run status is unknown.
+    // Stop follows the Host's authoritative `running`, never a guess: an unknown status offers nothing.
     public val canCancel: Boolean get() = connected && selectedSessionId != null && !cancelling &&
-        sessions.firstOrNull { it.id == selectedSessionId }?.let { it.live && !it.archived } != false &&
+        sessions.firstOrNull { it.id == selectedSessionId }?.archived != true &&
         action != ConversationAction.Creating && action != ConversationAction.Sending &&
-        (action == ConversationAction.Associating || runState != ConversationRunState.Idle)
+        (action == ConversationAction.Associating || runState == ConversationRunState.Running)
+    // Editing a settled message forks a new conversation, so it needs an idle, settled session.
+    public val canEdit: Boolean get() = connected && selectedSessionId != null && !cancelling &&
+        action == ConversationAction.Idle && runState == ConversationRunState.Idle &&
+        sessions.firstOrNull { it.id == selectedSessionId }?.archived != true
     public val lastAcceptedMessageId: String? get() = lastAcceptedReceipt?.messageId
 }
 
@@ -83,7 +98,11 @@ public interface ConversationOperations {
     public suspend fun create(connection: Connection, options: CreateSessionOptions, agentOptions: AgentOptions): SessionSummary
     public suspend fun history(connection: Connection, id: SessionId): List<Message>
     public suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt
-    public suspend fun cancel(connection: Connection, id: SessionId)
+    /** DSH Stop keeps the queued inbox; only the running turn is aborted. */
+    public suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean = true) =
+        connection.session.cancel(id, keepInbox = keepInbox)
+    public suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
+        connection.session.fork(parent, beforeMessageId)
 }
 
 public object RealConversationOperations : ConversationOperations {
@@ -92,7 +111,9 @@ public object RealConversationOperations : ConversationOperations {
         connection.session.create(options = options, agentOptions = agentOptions)
     override suspend fun history(connection: Connection, id: SessionId): List<Message> = connection.session.history(id)
     override suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt = connection.session.prompt(id, message)
-    override suspend fun cancel(connection: Connection, id: SessionId) = connection.session.cancel(id)
+    override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) = connection.session.cancel(id, keepInbox = keepInbox)
+    override suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
+        connection.session.fork(parent, beforeMessageId)
 }
 
 /** Flows and callbacks belong to the captured connection, never an owner.currentConnection getter. */
@@ -202,8 +223,10 @@ public class ConversationController(
         mutableState.value = state.value.copy(
             selectedSessionId = id, history = emptyList(), historyReadSeq = -1, historyPhase = ConversationDataPhase.Unbound,
             draft = drafts[id].orEmpty(), draftRevision = old.draftRevision + 1,
-            action = ConversationAction.Idle, runState = ConversationRunState.Unknown, cancelling = false,
-            lastAcceptedReceipt = null, errors = emptyMap(),
+            action = ConversationAction.Idle, runState = state.value.sessions
+                .firstOrNull { it.id == id }?.let { if (it.running) ConversationRunState.Running else ConversationRunState.Idle }
+                ?: ConversationRunState.Unknown,
+            cancelling = false, lastAcceptedReceipt = null, errors = emptyMap(), editing = null,
         )
         replaceStream()
         if (wasLoadingList) refreshSessions()
@@ -214,6 +237,36 @@ public class ConversationController(
         check(!closed)
         drafts[state.value.selectedSessionId] = text
         mutableState.value = state.value.copy(draft = text, draftRevision = state.value.draftRevision + 1)
+    }
+
+    /**
+     * Loads a settled user message into the composer. Submitting forks the conversation before that
+     * message and sends the edited text into the child; the original conversation stays untouched.
+     */
+    public fun beginEdit(messageId: String) {
+        check(!closed)
+        val current = state.value
+        if (!current.canEdit) return
+        val message = current.history.firstOrNull { it.id == messageId } ?: return
+        if (message.role != MessageRole.USER || message.source != UserMessageSource) return
+        val text = message.content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
+        if (text.isBlank()) return
+        val session = current.selectedSessionId
+        drafts[session] = text
+        mutableState.value = current.copy(
+            draft = text, draftRevision = current.draftRevision + 1,
+            editing = ConversationEdit(messageId, text, current.draft),
+            errors = current.errors - ConversationErrorKind.Fork - ConversationErrorKind.Prompt,
+        )
+    }
+
+    /** Leaves the edit without sending and restores the draft the composer held before it. */
+    public fun cancelEdit() {
+        check(!closed)
+        val editing = state.value.editing ?: return
+        drafts[state.value.selectedSessionId] = editing.previousDraft
+        mutableState.value = state.value.copy(draft = editing.previousDraft,
+            draftRevision = state.value.draftRevision + 1, editing = null)
     }
 
     /** A management command never sends a prompt and is never automatically retried. */
@@ -337,34 +390,70 @@ public class ConversationController(
         refreshSessions()
     }
 
-    public fun refreshSessions(): Job? {
+    public fun refreshSessions(): Job? = refreshSessions(quiet = false)
+
+    /**
+     * [quiet] keeps the visible list phase untouched while the stream refreshes the authoritative
+     * run state. Without it, every streamed event would flash the list back to Loading.
+     */
+    private fun refreshSessions(quiet: Boolean): Job? {
         val fence = capture() ?: return null
+        if (quiet) {
+            // A list already in flight publishes the same authoritative state; replacing it would
+            // strand its Loading phase.
+            listJob?.takeIf { it.isActive }?.let { return it }
+        } else {
+            listJob?.cancel()
+        }
         val request = ++listRequest
-        listJob?.cancel()
-        mutableState.value = state.value.copy(listPhase = ConversationDataPhase.Loading, errors = without(ConversationErrorKind.List))
+        if (!quiet) {
+            mutableState.value = state.value.copy(listPhase = ConversationDataPhase.Loading, errors = without(ConversationErrorKind.List))
+        }
         return start({ listJob = it }) {
             try {
                 val result = operations.list(fence.connection).toList()
                 currentCoroutineContext().ensureActive()
                 if (valid(fence) && request == listRequest) {
+                    val settledPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready
+                    val runState = syncedRunState(result)
                     mutableState.value = state.value.copy(
-                        sessions = result, listPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
+                        sessions = result,
+                        listPhase = if (!quiet || state.value.listPhase == ConversationDataPhase.Loading) settledPhase
+                            else state.value.listPhase,
                         errors = without(ConversationErrorKind.List),
+                        action = settledAction(runState),
+                        runState = runState,
                     )
                     if (historyNeedsCatchup()) refreshHistory()
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
-                if (valid(fence) && request == listRequest) {
+                if (!quiet && valid(fence) && request == listRequest) {
                     mutableState.value = state.value.copy(listPhase = ConversationDataPhase.Failed)
                     fail(ConversationErrorKind.List, ConversationRetry.Refresh)
                 }
             } finally {
-                if (valid(fence) && request == listRequest && state.value.listPhase == ConversationDataPhase.Loading)
+                if (!quiet && valid(fence) && request == listRequest && state.value.listPhase == ConversationDataPhase.Loading)
                     mutableState.value = state.value.copy(listPhase = ConversationDataPhase.Unbound)
             }
         }
     }
+
+    /**
+     * `running` is the only authority for Stop. A delivery-only turn settles to Idle once the Host
+     * reports it, which re-enables the composer; a locally tracked command keeps its own state.
+     */
+    private fun syncedRunState(sessions: List<SessionSummary>): ConversationRunState {
+        if (state.value.action !in listOf(ConversationAction.Idle, ConversationAction.RunningUnknown))
+            return state.value.runState
+        return sessions.firstOrNull { it.id == state.value.selectedSessionId }
+            ?.let { if (it.running) ConversationRunState.Running else ConversationRunState.Idle }
+            ?: ConversationRunState.Unknown
+    }
+
+    private fun settledAction(runState: ConversationRunState): ConversationAction =
+        if (runState == ConversationRunState.Idle && state.value.action == ConversationAction.RunningUnknown)
+            ConversationAction.Idle else state.value.action
 
     public fun refreshHistory(): Job? {
         val fence = capture() ?: return null
@@ -381,8 +470,6 @@ public class ConversationController(
                     mutableState.value = state.value.copy(
                         history = result, historyReadSeq = readableThrough,
                         historyPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
-                        runState = if (state.value.action == ConversationAction.Idle &&
-                            state.value.sessions.firstOrNull { it.id == id }?.live == false) ConversationRunState.Idle else state.value.runState,
                         errors = without(ConversationErrorKind.History),
                     )
                     if (historyNeedsCatchup()) refreshHistory()
@@ -416,9 +503,11 @@ public class ConversationController(
         val draft = state.value.draft
         val revision = state.value.draftRevision
         val capability = state.value.completionCapability
+        val edit = state.value.editing?.takeIf { initial.selected != null }
         mutableState.value = state.value.copy(
             action = if (initial.selected == null) ConversationAction.Creating else ConversationAction.Sending,
-            errors = without(ConversationErrorKind.Create, ConversationErrorKind.Association, ConversationErrorKind.Prompt, ConversationErrorKind.Completion),
+            errors = without(ConversationErrorKind.Create, ConversationErrorKind.Association, ConversationErrorKind.Prompt,
+                ConversationErrorKind.Completion, ConversationErrorKind.Fork),
         )
         return start({ sendJob = it }) {
             var fence = initial
@@ -460,6 +549,31 @@ public class ConversationController(
                     mutableState.value = state.value.copy(action = ConversationAction.Sending)
                     phase = ConversationErrorKind.Prompt
                 }
+                if (edit != null) {
+                    // DSH edits by forking: the child carries the history before this message and the
+                    // edited text becomes its next prompt. The original conversation is untouched.
+                    val parent = requireNotNull(fence.selected)
+                    phase = ConversationErrorKind.Fork
+                    val forked = operations.fork(fence.connection, parent, edit.messageId)
+                    currentCoroutineContext().ensureActive()
+                    if (!valid(fence) || request != sendRequest) return@start
+                    selection++
+                    listRequest++
+                    historyRequest++
+                    listJob?.cancel()
+                    historyJob?.cancel()
+                    drafts.remove(parent)
+                    drafts[forked.id] = state.value.draft
+                    mutableState.value = state.value.copy(
+                        selectedSessionId = forked.id, sessions = (state.value.sessions + forked).distinctBy { it.id },
+                        listPhase = ConversationDataPhase.Ready, history = emptyList(), historyPhase = ConversationDataPhase.Unbound,
+                        lastAcceptedReceipt = null, action = ConversationAction.Sending,
+                        runState = ConversationRunState.Unknown,
+                    )
+                    fence = capture() ?: return@start
+                    replaceStream()
+                    phase = ConversationErrorKind.Prompt
+                }
                 val id = requireNotNull(fence.selected)
                 val prompt = operations.prompt(fence.connection, id, userMessage(draft))
                 currentCoroutineContext().ensureActive()
@@ -470,7 +584,7 @@ public class ConversationController(
                 mutableState.value = current.copy(
                     draft = if (clear) "" else current.draft,
                     draftRevision = if (clear) revision + 1 else current.draftRevision,
-                    lastAcceptedReceipt = prompt.receipt,
+                    lastAcceptedReceipt = prompt.receipt, editing = null,
                     action = if (capability == CompletionCapability.LocalIdle) ConversationAction.WaitingForLocalIdle else ConversationAction.RunningUnknown,
                     runState = if (capability == CompletionCapability.LocalIdle) ConversationRunState.Running else ConversationRunState.Unknown,
                 )
@@ -535,14 +649,16 @@ public class ConversationController(
                         mutableState.value = state.value.copy(action = ConversationAction.Idle, runState = ConversationRunState.Unknown)
                     return@start
                 }
-                operations.cancel(fence.connection, id)
+                // DSH Stop aborts the running turn but keeps the queued inbox.
+                operations.cancel(fence.connection, id, keepInbox = true)
                 currentCoroutineContext().ensureActive()
                 if (!valid(fence) || request != cancelRequest) return@start
                 sendRequest++
                 sendJob?.cancel()
-                // Stop acknowledgement also does not prove remote idle.
+                // Stop acknowledgement also does not prove remote idle; ask the Host for the truth.
                 mutableState.value = state.value.copy(action = ConversationAction.Idle, runState = ConversationRunState.Unknown)
                 refreshHistory()
+                refreshSessions(quiet = true)
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
                 if (valid(fence) && request == cancelRequest) fail(ConversationErrorKind.Cancel, ConversationRetry.Cancel)
@@ -582,7 +698,8 @@ public class ConversationController(
                     recoveries = source.recoveries,
                     subscribe = source.subscribe,
                     unsubscribe = { selected -> withTimeout(cleanupTimeoutMillis) { source.unsubscribe(selected) } },
-                    refresh = { if (valid(fence)) refreshHistory() },
+                    // Transcript updates and the Host's authoritative run state arrive together.
+                    refresh = { if (valid(fence)) { refreshHistory(); refreshSessions(quiet = true) } },
                 ).run(id)
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
@@ -621,6 +738,7 @@ public class ConversationController(
             ConversationErrorKind.Prompt -> "发送结果未能确认。请刷新会话并确认后再重试。"
             ConversationErrorKind.Completion -> "消息已接收，但完成状态未能确认。"
             ConversationErrorKind.Cancel -> "停止结果未能确认，请重试。"
+            ConversationErrorKind.Fork -> "未能创建编辑分支，请重试。"
             ConversationErrorKind.Stream -> "实时更新不可用，请刷新会话。"
         }
         mutableState.value = state.value.copy(errors = state.value.errors + (kind to ConversationError(kind, message, retry)))

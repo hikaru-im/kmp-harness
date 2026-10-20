@@ -9,6 +9,10 @@ const val SESSION_FORMAT_VERSION: Long = 0L
 enum class SessionOrigin {
     @SerialName("subagent")
     SUBAGENT,
+
+    /** A new conversation seeded from an earlier one's prefix (editing a user message). */
+    @SerialName("fork")
+    FORK,
 }
 
 @Serializable

@@ -50,10 +50,15 @@ class AgentRegistry internal constructor(
     suspend fun replaceFactory(factory: AgentFactory): AgentFactoryHandle =
         registerFactory(factory, replace = true)
 
+    /**
+     * Creates and publishes an Agent. [seedEvents] restores an inherited prefix (a DSH fork) before
+     * the Session becomes live, so the new Agent's own events continue the copied sequence.
+     */
     suspend fun create(
         id: AgentId? = null,
         options: AgentOptions = AgentOptions(),
         sessionOptions: CreateSessionOptions = CreateSessionOptions(),
+        seedEvents: List<im.hikaru.harness.session.SessionEventEnvelope> = emptyList(),
     ): AgentHandle {
         val store = context.sessions
         val permit = store.admission.acquireCatalog()
@@ -87,6 +92,9 @@ class AgentRegistry internal constructor(
                         agentPreset = sessionOptions.agentPreset ?: options.preset,
                     ),
                 )
+            // A fork starts from the parent's prefix; restore only validates and copies it, and the
+            // Session is still PREPARED so nothing observes a half-attached history.
+            if (seedEvents.isNotEmpty()) createdSession.restore(seedEvents)
             val sessionHandle = store.enter(createdSession)
             uninstalledHandle = sessionHandle
             createdContext.effect(sessionHandle)

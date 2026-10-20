@@ -153,6 +153,8 @@ public data class SessionSummary(
     val managementAvailable: Boolean = false,
     val archiveAvailable: Boolean = false,
     val live: Boolean = true,
+    /** Authoritative execution state reported by the Host; Stop is offered only while this is true. */
+    val running: Boolean = false,
     val customTitle: String? = null,
     val lastReadSeq: Long = -1,
 )
@@ -236,4 +238,8 @@ public interface SessionApi {
     public suspend fun history(id: SessionId): List<Message>
     public suspend fun prompt(id: SessionId, message: Message): SessionPrompt
     public suspend fun cancel(id: SessionId, keepInbox: Boolean = false)
+
+    /** Creates a child conversation holding this one's history before [beforeMessageId]. */
+    public suspend fun fork(parent: SessionId, beforeMessageId: String): SessionSummary =
+        error("Session forking is unavailable")
 }

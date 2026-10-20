@@ -255,9 +255,10 @@ internal class SubagentToolHandler(
             path += agent
             val header = session.header
             when (header.origin) {
-                null -> Unit // Ordinary branches can delegate; their own branch edge is not SUBAGENT.
+                // Ordinary branches and forks both carry a parent edge but are not SUBAGENT, so the
+                // edge itself does not reclassify their parent as an agent ancestor.
+                null, SessionOrigin.FORK -> Unit
                 SessionOrigin.SUBAGENT -> check(header.parentSession != null) { "SUBAGENT has no parent" }
-                else -> error("Unsupported ancestry origin")
             }
             session = header.parentSession?.let { store.get(it) ?: error("Parent ancestor is missing") }
         }

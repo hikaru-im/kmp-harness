@@ -73,7 +73,7 @@ internal object ConversationAppearance {
     val ringStrong: Color @Composable get() = if (dark) Color.White.copy(alpha = 0.157f) else Color(0xFF1A1C1F).copy(alpha = 0.12f)
 }
 
-internal enum class ConversationGlyph { Plus, Permissions, Microphone, Voice, Copy, Speaker, Feedback, Branch, Down, Up, Stop, Chevron, ActivityChevron, Code, Expand, Hand, ShieldCheck, ShieldAlert, SendArrow, ModelChevron, ChevronRightSmall, Check, Reset, Folder, Monitor, Search, Gear, PlusLarge, CrossLarge, CheckSmall, CircleX }
+internal enum class ConversationGlyph { Plus, Permissions, Microphone, Voice, Copy, Speaker, Feedback, Branch, Edit, Down, Up, Stop, Chevron, ActivityChevron, Code, Expand, Hand, ShieldCheck, ShieldAlert, SendArrow, ModelChevron, ChevronRightSmall, Check, Reset, Folder, Monitor, Search, Gear, PlusLarge, CrossLarge, CheckSmall, CircleX }
 
 @Composable
 internal fun ConversationActionButton(
@@ -159,4 +159,5 @@ internal val conversationArtwork: Map<ConversationGlyph, Pair<Float, List<String
     ConversationGlyph.CrossLarge to (21f to listOf("M14.6549 5.57307C14.9283 5.2997 15.3718 5.2997 15.6451 5.57307C15.9185 5.84643 15.9185 6.28993 15.6451 6.5633L11.3903 10.8182L15.6451 15.0731L15.735 15.1834C15.9141 15.4551 15.8842 15.8242 15.6451 16.0633C15.4061 16.3024 15.0369 16.3322 14.7653 16.1531L14.6549 16.0633L10.4 11.8084L6.14515 16.0633C5.87178 16.3367 5.42828 16.3367 5.15492 16.0633C4.88155 15.7899 4.88155 15.3464 5.15492 15.0731L9.4098 10.8182L5.15492 6.5633L5.06507 6.45295C4.88597 6.18128 4.91584 5.81214 5.15492 5.57307C5.39399 5.33399 5.76313 5.30413 6.0348 5.48322L6.14515 5.57307L10.4 9.82795L14.6549 5.57307Z")),
     ConversationGlyph.CheckSmall to (16f to listOf("M11.5624 4.0338C11.7255 3.79403 12.0522 3.73111 12.2919 3.89415C12.5314 4.05717 12.5933 4.38398 12.4306 4.62364L7.539 11.818C7.30083 12.1681 6.80219 12.215 6.50286 11.9156L3.62786 9.03478C3.4231 8.82953 3.42363 8.4964 3.62884 8.29161C3.8341 8.08683 4.16722 8.08733 4.372 8.29259L6.92474 10.8512L11.5624 4.0338Z")),
     ConversationGlyph.CircleX to (16f to listOf("M8 1.47461C11.6037 1.47461 14.5254 4.39634 14.5254 8C14.5254 11.6037 11.6037 14.5254 8 14.5254C4.39634 14.5254 1.47461 11.6037 1.47461 8C1.47461 4.39634 4.39634 1.47461 8 1.47461ZM10.375 5.625C10.17 5.42002 9.83687 5.4201 9.63184 5.625L8 7.25586L6.36816 5.625C6.16313 5.4201 5.82998 5.42002 5.625 5.625C5.42014 5.82999 5.42014 6.16317 5.625 6.36816L7.25586 7.99902L5.62402 9.63184C5.41926 9.83688 5.42006 10.1701 5.625 10.375C5.82995 10.5798 6.16218 10.5797 6.36719 10.375L8 8.74219L9.63281 10.375C9.83782 10.5797 10.1701 10.5798 10.375 10.375C10.5799 10.1701 10.5807 9.83688 10.376 9.63184L8.74316 7.99902L10.375 6.36816C10.5799 6.16317 10.5799 5.82999 10.375 5.625Z")),
+    ConversationGlyph.Edit to (16f to listOf("M9.9 1.4a1.1 1.1 0 0 1 1.56 0l1.14 1.14a1.1 1.1 0 0 1 0 1.56l-.7.7-2.7-2.7.7-.7Z", "M8.8 2.5l2.7 2.7-6.9 6.9-3.4.7.7-3.4 6.9-6.9Z")),
 )

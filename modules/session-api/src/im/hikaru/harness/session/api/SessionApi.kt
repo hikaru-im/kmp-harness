@@ -2,6 +2,7 @@ package im.hikaru.harness.session.api
 
 import im.hikaru.harness.agent.AgentId
 import im.hikaru.harness.agent.AgentOptions
+import im.hikaru.harness.agent.AgentStatus
 import im.hikaru.harness.agent.agents
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.runtime.Context
@@ -9,6 +10,7 @@ import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.session.CreateSessionOptions
 import im.hikaru.harness.session.Session
 import im.hikaru.harness.session.SessionId
+import im.hikaru.harness.session.SessionOrigin
 import im.hikaru.harness.session.sessions
 import im.hikaru.harness.session.SessionEventNames
 import im.hikaru.harness.session.UserMessageEvent
@@ -20,6 +22,7 @@ import im.hikaru.harness.session.persistence.*
 import im.hikaru.harness.session.SessionArchiveKey
 import im.hikaru.harness.session.deriveMessages
 import im.hikaru.harness.session.foldRequestContext
+import im.hikaru.harness.session.foldRequestHeader
 import im.hikaru.harness.agent.AgentQuiescentRestore
 import im.hikaru.harness.agent.AgentArchiveBegin
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +46,8 @@ data class SessionSummary(
     val managementAvailable: Boolean = false,
     val archiveAvailable: Boolean = false,
     val live: Boolean = true,
+    /** Authoritative execution state of a live Agent; only a running Agent may be stopped. */
+    val running: Boolean = false,
     val customTitle: String? = null,
     val lastReadSeq: Long = -1,
 )
@@ -126,6 +131,15 @@ interface SessionApi {
         id: SessionId,
         keepInbox: Boolean = false,
     )
+
+    /**
+     * Creates a new conversation whose history is [SessionId]'s events before [beforeMessageId],
+     * leaving the original untouched (DSH `fork`). The caller prompts the edited text into the child.
+     */
+    suspend fun fork(
+        parent: SessionId,
+        beforeMessageId: String,
+    ): SessionSummary = error("Session forking is unavailable")
 }
 
 /** A prompt completion handle that does not expose Agent internals. */
@@ -205,7 +219,9 @@ internal class DefaultSessionApi(
     override suspend fun list(): List<SessionSummary> = conversationSummaries()
 
     private suspend fun conversationSummaries(id: SessionId? = null, includeSubagents: Boolean = false): List<SessionSummary> {
-        val live = context.agents.list().map { it.session }.filter { id == null || it.id == id }.associateBy { it.id }
+        val agents = context.agents.list()
+        val live = agents.map { it.session }.filter { id == null || it.id == id }.associateBy { it.id }
+        val running = agents.filter { it.status == AgentStatus.RUNNING }.mapTo(mutableSetOf()) { it.session.id }
         val persistence = context.get(SessionPersistenceKey)
         val catalog = persistence?.conversationCatalog(id)?.associateBy { it.header.id }
         val durableHeaders = catalog?.mapValues { it.value.header }
@@ -229,7 +245,8 @@ internal class DefaultSessionApi(
                 pinned = metadata?.pinned ?: false, unread = lastSeq > (metadata?.lastReadSeq ?: -1),
                 archived = gate?.isArchived(header) ?: false, revision = metadata?.revision ?: 0, lastEventSeq = lastSeq,
                 managementAvailable = persistence?.supportsConversationMetadata == true, archiveAvailable = gate?.supportsManagement == true,
-                live = header.id in live, customTitle = metadata?.title, lastReadSeq = metadata?.lastReadSeq ?: -1)
+                live = header.id in live, running = header.id in running,
+                customTitle = metadata?.title, lastReadSeq = metadata?.lastReadSeq ?: -1)
         }
     }
 
@@ -293,7 +310,10 @@ internal class DefaultSessionApi(
         if (id != null) check(context.get(SessionPersistenceKey)?.listHeaders()?.none { it.id == id } != false) {
             "Session already exists in durable storage"
         }
-        val handle = context.agents.create(id?.let { AgentId(it.value) }, agentOptions, options)
+        // DSH resolves `workspace?.path ?? request.cwd ?? defaultCwd`; the Host's own directory is the
+        // last resort, so a chat started without a project still has a real working directory.
+        val resolved = options.copy(cwd = options.cwd ?: context.get(SessionDefaultCwdKey))
+        val handle = context.agents.create(id?.let { AgentId(it.value) }, agentOptions, resolved)
         checkpoint(handle.agent.session)
         return conversationSummaries(handle.agent.session.id, includeSubagents = true).single()
     }
@@ -340,6 +360,45 @@ internal class DefaultSessionApi(
     override suspend fun cancel(id: SessionId, keepInbox: Boolean) {
         requireAgent(id).cancel(keepInbox = keepInbox)
         context.sessions.get(id)?.let { checkpoint(it) }
+    }
+
+    override suspend fun fork(parent: SessionId, beforeMessageId: String): SessionSummary {
+        check(context.get(SessionPersistenceKey)?.metadata(parent)?.deleted != true) { "Conversation was deleted" }
+        val parentSession = context.sessions.get(parent)
+        // A turn in flight has not settled its events; copying that prefix would inherit a partial
+        // turn. DSH forks a settled conversation, which is also the only state the edit entry offers.
+        require(context.agents.get(AgentId(parent.value))?.status != AgentStatus.RUNNING) {
+            "Session is running; stop it before editing a message"
+        }
+        val events = parentSession?.events()
+            ?: context.get(SessionPersistenceKey)?.readEvents(parent)
+            ?: error("Session history is unavailable")
+        val header = parentSession?.header
+            ?: context.get(SessionPersistenceKey)?.listHeaders()?.firstOrNull { it.id == parent }
+            ?: error("Session is not available")
+        val cut = events.indexOfFirst { envelope ->
+            envelope.type == SessionEventNames.USER_MESSAGE &&
+                Json.decodeFromJsonElement(UserMessageEvent.serializer(), envelope.data).message.id.value == beforeMessageId
+        }
+        require(cut >= 0) { "Message '$beforeMessageId' is not a user message of this Session" }
+        val config = foldRequestHeader(events)?.config
+        val handle = context.agents.create(
+            options = AgentOptions(
+                cwd = header.cwd, preset = header.agentPreset,
+                provider = config?.provider, model = config?.model,
+                reasoningEffort = config?.reasoningEffort, maxTokens = config?.maxTokens,
+            ),
+            sessionOptions = CreateSessionOptions(
+                cwd = header.cwd ?: context.get(SessionDefaultCwdKey),
+                parentSession = parent,
+                seedLength = cut.toLong(),
+                origin = SessionOrigin.FORK,
+                agentPreset = header.agentPreset,
+            ),
+            seedEvents = events.take(cut),
+        )
+        checkpoint(handle.agent.session)
+        return conversationSummaries(handle.agent.session.id, includeSubagents = true).single()
     }
 
     /** The durability hook already commits every event; explicit snapshots serve manual-save hosts. */

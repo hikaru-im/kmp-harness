@@ -133,6 +133,10 @@ public class HostRelayConnection private constructor(
                     val input = json.decodeFromJsonElement(SessionCancelRequest.serializer(), request.payload ?: error("missing payload"))
                     encode(gateway.invoke(SessionCancelEndpoint, input))
                 }
+                SessionForkEndpoint.method -> {
+                    val input = json.decodeFromJsonElement(SessionForkRequest.serializer(), request.payload ?: error("missing payload"))
+                    encode(gateway.invoke(SessionForkEndpoint, input))
+                }
                 SUBSCRIBE_METHOD -> {
                     val stream = (request.payload as? JsonPrimitive)?.contentOrNull
                     if (stream.isNullOrBlank()) {

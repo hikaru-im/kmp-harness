@@ -12,6 +12,7 @@ import im.hikaru.harness.loader.provideLoaderFactory
 import im.hikaru.harness.loader.typedConfig
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.Runtime
+import im.hikaru.harness.session.api.SessionDefaultCwdKey
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -71,7 +72,11 @@ public class HarnessHost private constructor(
          *
          * 任意注册或 Loader 协调失败都会反向释放已经创建的资源。
          */
-        public suspend fun start(profile: DesktopProfile): HarnessHost {
+        public suspend fun start(
+            profile: DesktopProfile,
+            /** The Host process's own directory, used when a new Session names no cwd (DSH `process.cwd()`). */
+            defaultCwd: String? = null,
+        ): HarnessHost {
             val runtime = Runtime()
             val registry = Registry()
             val loader = Loader(runtime, registry)
@@ -81,6 +86,9 @@ public class HarnessHost private constructor(
                 gateway.registerHostApi(runtime.context)
                 gateway.registerSessionApi(runtime.context)
                 runtime.provideLoaderFactory(registry)
+                if (defaultCwd != null) {
+                    runtime.context.effect(runtime.context.provide(SessionDefaultCwdKey, defaultCwd))
+                }
 
                 runtime.context.effect(
                     registry.register(

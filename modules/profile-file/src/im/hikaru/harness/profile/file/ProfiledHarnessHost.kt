@@ -123,6 +123,7 @@ public class ProfiledHarnessHost private constructor(
             hostDescription: HostDescription,
             pollMillis: Long = 250,
             onReloadFailure: (ProfileReloadFailure) -> Unit = {},
+            defaultCwd: String? = null,
         ): ProfiledHarnessHost {
             val loaded = profileLoader.load(request)
             val host =
@@ -131,7 +132,8 @@ public class ProfiledHarnessHost private constructor(
                         hostDescription = hostDescription,
                         catalog = catalog,
                         entries = loaded.entries,
-                    )
+                    ),
+                    defaultCwd = defaultCwd,
                 )
             return try {
                 ProfiledHarnessHost(

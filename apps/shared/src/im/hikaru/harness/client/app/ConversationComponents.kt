@@ -42,6 +42,8 @@ internal fun ConversationViewport(
     modifier: Modifier = Modifier,
     error: String? = null,
     onRetry: () -> Unit = {},
+    /** Offered only while the session is settled; editing forks before the message and resends. */
+    onEditMessage: ((Message) -> Unit)? = null,
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -87,6 +89,8 @@ internal fun ConversationViewport(
                         toolCalls = toolCalls,
                         toolResults = toolResults,
                         showActions = message.id in lastTextMessage,
+                        onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
+                            ?.let { edit -> { edit(message) } },
                     )
                 }
             }
@@ -112,6 +116,7 @@ internal fun MessageCard(
     toolCalls: Map<String, ToolCallContent> = emptyMap(),
     toolResults: Map<String, ToolResultEntry> = emptyMap(),
     showActions: Boolean = true,
+    onEdit: (() -> Unit)? = null,
 ) {
     val isHuman = message.role == MessageRole.USER && message.source == UserMessageSource
     val clipboard = LocalClipboardManager.current
@@ -137,6 +142,7 @@ internal fun MessageCard(
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp))
                     }
                     ConversationActionButton(ConversationGlyph.Copy, "复制消息", { clipboard.setText(AnnotatedString(text)) })
+                    if (onEdit != null) ConversationActionButton(ConversationGlyph.Edit, "编辑消息", onEdit)
                 }
             } else if (showActions && text.isNotBlank()) {
                 Row(Modifier.padding(top = 6.dp).offset(x = (-4).dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {

@@ -191,6 +191,9 @@ public suspend fun startDesktopProfile(
         hostDescription = desktopHostDescription(),
         pollMillis = pollMillis,
         onReloadFailure = onReloadFailure,
+        // A chat without a project keeps the directory the Host was launched from, like DSH's
+        // `process.cwd()` fallback.
+        defaultCwd = System.getProperty("user.dir")?.takeIf { it.isNotBlank() },
     )
 }
 

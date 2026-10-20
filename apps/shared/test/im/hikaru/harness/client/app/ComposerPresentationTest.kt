@@ -16,8 +16,8 @@ class ComposerPresentationTest {
         assertEquals(ComposerPrimaryAction.Stop, running.composerPrimaryAction())
         assertEquals(ComposerPrimaryAction.Stopping, running.copy(cancelling = true).composerPrimaryAction())
         assertEquals(ComposerPrimaryAction.Busy, running.copy(connected = false).composerPrimaryAction())
-        // A failed/unknown run can still be stopped; don't offer another send merely because action is Idle.
-        assertEquals(ComposerPrimaryAction.Stop, idle.copy(runState = ConversationRunState.Unknown).composerPrimaryAction())
+        // Stop follows the Host's authoritative running flag; an unknown status never offers Stop.
+        assertEquals(ComposerPrimaryAction.Send, idle.copy(runState = ConversationRunState.Unknown).composerPrimaryAction())
     }
 
     @Test
