@@ -287,10 +287,13 @@ class ConnectionsInteractionTest {
     fun captureLocalSettingsAndHostsInLightAndDarkAt420600And1440() = withLocalHost { description, connection ->
         captureCases { suffix, mode, size ->
             runSkikoComposeUiTest(size = size) {
-                setContent { HarnessApp(connection, initialDestination = HarnessDestination.Settings, themeMode = mode) }
+                setContent {
+                    HarnessApp(connection, initialDestination = HarnessDestination.Settings, themeMode = mode,
+                        shortcutsRepository = remember { loadedMacShortcuts() })
+                }
                 onNodeWithTag("settings-row-connections").performClick()
                 if (onAllNodesWithTag("navigator-overlay").fetchSemanticsNodes().isNotEmpty()) {
-                    onNodeWithContentDescription("Toggle sidebar").performClick()
+                    toggleSidebarByShortcut()
                 }
                 // The Settings content column is shifted 8px left of the 728px page box to match
                 // Settings > General, so the page contents are measured against the wider main surface.
@@ -312,7 +315,7 @@ class ConnectionsInteractionTest {
                 capture(onRoot().captureToImage(), "local-settings-adapters-$suffix.png")
                 // Already on Settings > Connections; nothing to navigate to for the hosts capture.
                 if (onAllNodesWithTag("navigator-overlay").fetchSemanticsNodes().isNotEmpty()) {
-                    onNodeWithContentDescription("Toggle sidebar").performClick()
+                    toggleSidebarByShortcut()
                 }
                 onNodeWithTag("settings-connections-title").performScrollTo().assertFits(page)
                 onNodeWithTag(hostTag(description)).assertExists()

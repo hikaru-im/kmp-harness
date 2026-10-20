@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -136,14 +137,14 @@ class ScheduledCronPageIntegrationTest {
         val task = createPaused(f)
         val executor = f.executor
         val accepted = runFromPage(f)
-        mouse("bottom-home")
+        mouse("rail-home")
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("scheduled-page", true).fetchSemanticsNodes().isEmpty() }
         assertSame(executor, f.executor)
         assertFalse(f.execution.owner.state.value.invalidated)
         assertTrue(f.executor.state.value.accepting)
         assertEquals(accepted.id, f.snapshot().runs.single().id)
         assertEquals(1, f.adapter.streams.get())
-        mouse("bottom-more")
+        // The rail is always mounted, including at this viewport, so 定时任务 is one click away.
         mouse("rail-scheduled")
         selectSavedTask(task)
         assertSame(executor, f.executor)
@@ -232,16 +233,22 @@ private fun cronUi(width: Int = 600, height: Int = 800, theme: HarnessThemeMode 
 }
 
 @Composable private fun CronApp(f: CronHarness, theme: HarnessThemeMode) {
+    // The titlebar toggle is window chrome this bare app does not mount; the fixtures dismiss the
+    // floating navigator with ⇧⌘S, so the app needs the macOS chord bindings.
+    val shortcuts = remember { loadedMacShortcuts() }
     CompositionLocalProvider(LocalDensity provides Density(1f)) {
         Box(Modifier.fillMaxSize().semantics { testTag = "cron-capture-viewport" }) {
-            HarnessApp(
-                connection = f.visibleConnection.value, connectionTransport = ConnectionTransport.Local,
-                sessionEvents = f.hostEvents.events, uiSnapshot = f.clientHost.snapshot,
-                initialDestination = HarnessDestination.ScheduledTasks, themeMode = theme,
-                modelSettingsRepository = f.models, scheduledStore = f.execution.store,
-                scheduleCalendar = f.execution.calendar, scheduledExecutorConnection = f.execution.connection,
-                scheduledExecutorOwner = f.execution.owner, scheduledExecutionRecoveryEnabled = f.execution.recoveryEnabled,
-            )
+            WithWindowNavigatorToggle {
+                HarnessApp(
+                    connection = f.visibleConnection.value, connectionTransport = ConnectionTransport.Local,
+                    sessionEvents = f.hostEvents.events, uiSnapshot = f.clientHost.snapshot,
+                    initialDestination = HarnessDestination.ScheduledTasks, themeMode = theme,
+                    modelSettingsRepository = f.models, scheduledStore = f.execution.store,
+                    scheduleCalendar = f.execution.calendar, scheduledExecutorConnection = f.execution.connection,
+                    scheduledExecutorOwner = f.execution.owner, scheduledExecutionRecoveryEnabled = f.execution.recoveryEnabled,
+                    shortcutsRepository = shortcuts,
+                )
+            }
         }
     }
 }
@@ -367,14 +374,19 @@ private fun ComposeUiTest.openRealThread(f: CronHarness, run: ScheduledRun) {
     val answerIndex = answer.content.indexOfFirst { it is TextContent && it.text == CronHarness.answer }
     val answerTag = "message:${answer.id}:content:$answerIndex"
     revealThreadAnswer(answerTag)
-    onNodeWithTag(answerTag, true).assertTextEquals(CronHarness.answer).assertIsDisplayed()
+    // The tag sits on the markdown selection container, so the rendered text is its descendant
+    // rather than the tagged node's own property.
+    onNode(hasText(CronHarness.answer) and hasAnyAncestor(hasTestTag(answerTag)), true)
+        .assertExists().assertIsDisplayed()
     onNodeWithTag("composer-column", true).assertExists()
     onNodeWithTag("scheduled-page", true).assertDoesNotExist()
 }
 
 private fun ComposeUiTest.toggleNavigator() {
-    // The rail is always mounted, so the titlebar toggle is the only navigator affordance.
-    mouseNode(onNodeWithContentDescription("Toggle sidebar", true))
+    // The drawer is opened and dismissed from the window's navigator toggle. The ⇧⌘S chord would do
+    // the same, but desktop routes key input to a focused form field, and this flow types into the
+    // scheduler fields before it needs the drawer again.
+    mouse("fixture-navigator-toggle")
 }
 
 /** Lazy history may not mount the answer until real wheel input exposes the next message. */

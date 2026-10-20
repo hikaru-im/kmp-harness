@@ -73,6 +73,12 @@ class LocalProjectsInteractionTest {
                 assertTrue(fixture.prompts.isEmpty())
                 onNodeWithTag("local-project-row-${project.id.value}").assertExists()
 
+                // Saving moved the shell to 项目, which owns no workspace navigator; return to the
+                // home workspace before using its new-task entry.
+                onNodeWithTag("rail-home").performClick()
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
                 onNodeWithTag("new-task").performClick()
                 // Exercise both picker paths, rather than relying on create auto-selection.
                 onNodeWithTag("local-project-picker-open").performClick()
@@ -136,6 +142,10 @@ class LocalProjectsInteractionTest {
                 val registered = fixture.snapshot()
                 val project = registered.projects.single()
                 val beforeAttach = Files.readAllBytes(fixture.storeFile)
+                onNodeWithTag("rail-home").performClick()
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
                 onNodeWithTag("new-task").performClick()
                 onNodeWithTag("local-project-picker-open").assertTextEquals(project.name)
                 chooseProjectInteractionModel()
@@ -297,6 +307,10 @@ class LocalProjectsInteractionTest {
                 onNodeWithTag("local-project-editor-save").performClick()
                 waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-project-editor-save").fetchSemanticsNodes().isEmpty() }
                 val before = Files.readAllBytes(fixture.storeFile)
+                onNodeWithTag("rail-home").performClick()
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
                 onNodeWithTag("new-task").performClick()
                 onNodeWithTag("local-project-picker-open").assertTextEquals("Removed root")
                 chooseProjectInteractionModel()

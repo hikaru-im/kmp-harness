@@ -204,10 +204,11 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
         runOnIdle { owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
         onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
-        // Read-only still opens the list for a model with no effort stops, but choosing is inert.
+        // A selected session still opens the catalogue: the next turn may use another model, so the
+        // choice is live rather than inert.
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
         onNodeWithTag(menuTag(FIRST)).performClick()
-        runOnIdle { assertEquals(listOf(SECOND), owner.selected) }
+        runOnIdle { assertEquals(listOf(SECOND, FIRST), owner.selected) }
     }
 
     @Test
@@ -235,10 +236,12 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-thread-loading").assertExists()
         onNodeWithText("Actual user question").assertExists()
         onNodeWithText("Actual assistant text").assertExists()
-        onNodeWithText("Reasoning · 展开").performClick()
+        onNodeWithText("已完成思考").performClick()
         onNodeWithText("Actual typed reasoning").assertExists()
-        onNodeWithText("test_tool").performClick()
-        onNodeWithText("{\"actual\":true}").assertExists()
+        // The result carries the call's label, so both rows read 加载了工具; the output lives in the
+        // result row (content index 3), not the call row.
+        onAllNodesWithText("加载了工具 · test_tool").assertCountEquals(2)
+        onNodeWithTag("message:assistant:content:3:header").performClick()
         onNodeWithText("Actual tool output").performScrollTo().assertExists()
         runOnIdle { state = state.copy(historyPhase = ConversationDataPhase.Failed, errors = mapOf(
             ConversationErrorKind.History to ConversationError(ConversationErrorKind.History, "历史读取失败。", ConversationRetry.History),
@@ -322,7 +325,7 @@ class LiveConversationInteractionTest {
             LiveThreadSurface(readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
                 onRetry = { error("No retry expected") })
         } }
-        onNodeWithTag("live-thread-timeline").performScrollToIndex(24)
+        onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(24)
         val last = onNodeWithText("Actual message 24 ", substring = true).assertExists().getUnclippedBoundsInRoot()
         val root = onNodeWithTag("live-thread").getUnclippedBoundsInRoot()
         assertTrue(last.left >= root.left && last.right <= root.right)
@@ -333,13 +336,13 @@ class LiveConversationInteractionTest {
         val owner = ComposerOwner()
         owner.chosen = FIRST.copy(reasoningEfforts = listOf("low", "high"))
         setContent { HarnessTheme { owner.Content() } }
-        onNodeWithText("描述你想构建的内容…").assertExists()
+        onNodeWithText("随心输入").assertExists()
         onNodeWithTag("live-composer-model").performClick()
         onNodeWithTag("live-composer-effort-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(2f) }
         runOnIdle { assertEquals("high", owner.effort) }
         onNodeWithTag("live-composer-effort-slider").performKeyInput { pressKey(Key.Escape) }
         runOnIdle { owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
-        onNodeWithText("继续提问，或补充任务细节…").assertExists()
+        onNodeWithText("与 Codex 协作").assertExists()
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
         onNodeWithTag("live-composer-model-unavailable").assertDoesNotExist()
         runOnIdle { owner.state = owner.state.copy(selectedSessionId = null); owner.chosen = FIRST }

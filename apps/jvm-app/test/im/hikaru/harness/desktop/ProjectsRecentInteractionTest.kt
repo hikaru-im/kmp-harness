@@ -59,8 +59,7 @@ class ProjectsRecentInteractionTest {
                     if (onAllNodesWithTag("navigator-overlay", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) {
                         // A compact window floats the navigator; the titlebar toggle dismisses it.
                         assertEquals(600, width, "Unexpected floating navigator")
-                        onNodeWithContentDescription("Toggle sidebar", useUnmergedTree = true)
-                            .assertIsDisplayed().assertIsEnabled().projectsRecentPointerClick()
+                        toggleSidebarByShortcut()
                         waitUntil(timeoutMillis = 10_000) {
                             onAllNodesWithTag("navigator-overlay", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
                         }
@@ -90,7 +89,8 @@ class ProjectsRecentInteractionTest {
                     CompositionLocalProvider(LocalDensity provides Density(1f)) {
                         Box(Modifier.fillMaxSize().testTag(viewportTag)) {
                             HarnessApp(f.connection, connectionTransport = ConnectionTransport.Local,
-                                localProjectRepository = f.repository, modelSettingsRepository = f.models, themeMode = theme)
+                                localProjectRepository = f.repository, modelSettingsRepository = f.models, themeMode = theme,
+                                shortcutsRepository = remember { loadedMacShortcuts() })
                         }
                     }
                 }
@@ -144,8 +144,10 @@ class ProjectsRecentInteractionTest {
                 dismissNavigatorIfOpen()
                 onNodeWithTag("library-unavailable").assertIsDisplayed()
                 capture("library-placeholder", "sessions=${f.sessions.size}; memberships=${f.snapshot().memberships.size}")
+                // 主页 is the new-chat page, not "back to the last thread"; the created session
+                // stays in the navigator's recent list instead of staying open.
                 pointer("rail-home")
-                waitUntil(timeoutMillis = 10_000) { projectsRecentHasTag("live-thread") }
+                waitUntil(timeoutMillis = 10_000) { projectsRecentHasTag("live-home") }
                 assertEquals(1, f.creates.size)
                 assertEquals(1, f.prompts.size)
             }

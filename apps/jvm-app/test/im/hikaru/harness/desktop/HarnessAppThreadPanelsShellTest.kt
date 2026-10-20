@@ -1,5 +1,6 @@
 package im.hikaru.harness.desktop
 
+import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -18,6 +19,7 @@ import im.hikaru.harness.client.account.BackendTenant
 import im.hikaru.harness.client.account.MemberIdentity
 import im.hikaru.harness.client.conversation.*
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
+import im.hikaru.harness.ui.foundation.HarnessTokens
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
@@ -36,6 +38,12 @@ import org.jetbrains.skia.Image
  * Production full-shell assembly with a controlled, typed SessionApi. Pointer routing and captured
  * rendering are covered here; these captures establish neither pixel parity nor native-window or
  * real-process-backend behavior. HarnessApp owns all repositories, controllers and panel state.
+ *
+ * The context panel currently has no in-app entry point — it is reachable only from the thread
+ * summary island, whose own titlebar control is not mounted yet — so the panel surface is covered
+ * directly by ThreadPanelsInteractionTest, and this matrix covers the shell around the
+ * conversation: navigator modes, measured regions, and per-session drafts across real pointer
+ * navigation.
  */
 @OptIn(ExperimentalTestApi::class)
 class HarnessAppThreadPanelsShellTest {
@@ -75,7 +83,6 @@ class HarnessAppThreadPanelsShellTest {
             check(directory.isDirectory || directory.mkdirs()) { "Cannot create capture directory: $directory" }
             val captured = mutableListOf<String>()
             var measuredMainAreaWidth = 0f
-            var expectedOverlay = false
 
             fun exists(tag: String): Boolean =
                 onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
@@ -99,7 +106,9 @@ class HarnessAppThreadPanelsShellTest {
                 val rail = if (exists("app-rail")) bounds("app-rail").width else 0f
                 val pushed = if (exists("workspace-navigator") && !exists("navigator-overlay"))
                     bounds("workspace-navigator").width else 0f
-                return root.width - rail - pushed
+                // The page-surface card is inset from the window's right edge; the main surface
+                // fills only what remains after that inset.
+                return root.width - rail - pushed - HarnessTokens.Control.PageSurfaceInset.value
             }
 
             fun pointerClick(node: SemanticsNodeInteraction) {
@@ -119,15 +128,6 @@ class HarnessAppThreadPanelsShellTest {
                 pointerClick(onNodeWithTag(tag, useUnmergedTree = true))
             }
 
-            fun clickText(text: String) {
-                awaitText(text)
-                pointerClick(onNodeWithText(text))
-            }
-
-            fun clickDescription(description: String) {
-                pointerClick(onNodeWithContentDescription(description, useUnmergedTree = true))
-            }
-
             fun assertDraft(text: String) {
                 onNodeWithTag("live-composer-editor").assert(SemanticsMatcher.expectValue(
                     SemanticsProperties.EditableText, AnnotatedString(text)))
@@ -135,16 +135,18 @@ class HarnessAppThreadPanelsShellTest {
 
             fun dismissNavigatorIfOpen() {
                 if (exists("navigator-overlay")) {
-                    // A compact window floats the navigator; the titlebar toggle dismisses it.
+                    // A compact window floats the navigator; the window's toggle dismisses it.
                     assertTrue(compact, "Unexpected floating navigator at $width")
-                    onNodeWithContentDescription("Toggle sidebar").performClick()
+                    clickTag("fixture-navigator-toggle")
                     waitUntil { !exists("navigator-overlay") }
                 }
             }
 
             fun selectListedSession(id: SessionId, history: String) {
                 if (compact && !exists("navigator-overlay")) {
-                    onNodeWithContentDescription("Toggle sidebar").performClick()
+                    // Pointer, not ⇧⌘S: earlier steps type into the composer, and a focused text
+                    // field owns desktop key input.
+                    clickTag("fixture-navigator-toggle")
                     awaitTag("navigator-overlay")
                 }
                 onNodeWithTag("workspace-navigator", useUnmergedTree = true).assertIsDisplayed()
@@ -153,19 +155,11 @@ class HarnessAppThreadPanelsShellTest {
                 dismissNavigatorIfOpen()
                 awaitTag("live-thread")
                 awaitText(history)
-                waitUntil { onAllNodesWithText("终端").fetchSemanticsNodes().isNotEmpty() }
                 onNodeWithTag("live-composer-editor").assertIsDisplayed().assertIsEnabled()
-                onNodeWithTag("recent-${SHELL_PARENT.value}").assertIsDisplayed().assertIsEnabled()
-            }
-
-            fun assertPanelsClosed() {
-                onNodeWithTag("tab:BackgroundOutput").assertDoesNotExist()
-                onNodeWithTag("tab:Subagents").assertDoesNotExist()
-                onNodeWithTag("thread-panel-overlay").assertDoesNotExist()
-                onNodeWithTag("thread-panel-scrim").assertDoesNotExist()
-                onNodeWithText(SHELL_RUNNING_OUTPUT).assertDoesNotExist()
-                onNodeWithText(SHELL_CHILD_HISTORY).assertDoesNotExist()
-                onNodeWithText(SHELL_CHILD.value).assertDoesNotExist()
+                // The compact drawer is dismissed after selection, so its rows are gone there.
+                if (!compact) {
+                    onNodeWithTag("recent-${SHELL_PARENT.value}").assertIsDisplayed().assertIsEnabled()
+                }
             }
 
             fun capture(stage: String) {
@@ -190,25 +184,24 @@ class HarnessAppThreadPanelsShellTest {
                 // Only synthetic viewport geometry, never host descriptions or transcript contents.
                 File(directory, "$capturePrefix-$stage.geometry.txt").writeText(buildString {
                     appendLine("viewport=${width}x$height theme=$themeSlug state=$stage")
-                    appendLine("mainAreaWidth=${mainAreaWidth()} overlayThreshold=672.0 expectedOverlayWhenOpen=${mainAreaWidth() < 672f} actualOverlay=${exists("thread-panel-overlay")}")
+                    appendLine("mainAreaWidth=${mainAreaWidth()}")
                     appendLine("navigatorExpanded=${exists("workspace-navigator")} navigatorFloating=${exists("navigator-overlay")}")
-                    for (tag in listOf("app-rail", "main-surface", "main-content-column", "composer-column", "live-thread",
+                    for (tag in listOf("app-rail", "main-surface", "live-thread-timeline", "composer-column", "live-thread",
                         "live-composer-editor", "recent-${SHELL_PARENT.value}", "workspace-navigator",
-                        "navigator-overlay", "thread-panel-overlay", "thread-panel-scrim",
-                        "tab:BackgroundOutput", "tab:Subagents")) {
+                        "navigator-overlay")) {
                         if (exists(tag)) appendLine("$tag=${bounds(tag)}")
-                    }
-                    for (text in listOf("终端", "子 Agent")) {
-                        val nodes = onAllNodesWithText(text).fetchSemanticsNodes()
-                        if (nodes.size == 1) appendLine("titlebar-$text=${nodes.single().boundsInRoot}")
                     }
                 })
             }
 
-            setContent { HarnessApp(connection = connection, themeMode = theme) }
+            setContent {
+                WithWindowNavigatorToggle {
+                    HarnessApp(connection = connection, themeMode = theme,
+                        shortcutsRepository = remember { loadedMacShortcuts() })
+                }
+            }
             awaitTag("recent-${SHELL_PARENT.value}")
             selectListedSession(SHELL_PARENT, SHELL_PARENT_HISTORY)
-            assertPanelsClosed()
             if (resizeNavigator) {
                 val before = bounds("workspace-navigator").width
                 val edge = bounds("navigator-resize-handle").center
@@ -223,169 +216,38 @@ class HarnessAppThreadPanelsShellTest {
                 assertTrue(bounds("workspace-navigator").width > before, "Real pointer resize must widen navigator")
                 assertTrue(mainAreaWidth() < 672f, "Resized navigator must exercise measured overlay threshold")
             }
-            onNodeWithTag("main-content-column", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("live-thread-timeline", useUnmergedTree = true).assertIsDisplayed()
             onNodeWithTag("composer-column", useUnmergedTree = true).assertIsDisplayed()
             clickTag("live-composer-editor")
             onNodeWithTag("live-composer-editor").performTextReplacement(SHELL_DRAFT)
             assertDraft(SHELL_DRAFT)
-            val closedMain = bounds("main-content-column")
+            val closedMain = bounds("live-thread-timeline")
             val closedComposer = bounds("composer-column")
             val closedEditor = bounds("live-composer-editor")
-            val rootBounds = onRoot().fetchSemanticsNode().boundsInRoot
-            val railWidth = if (exists("app-rail")) bounds("app-rail").width else 0f
             val pushedNavigatorWidth = if (exists("workspace-navigator") && !exists("navigator-overlay"))
                 bounds("workspace-navigator").width else 0f
-            measuredMainAreaWidth = rootBounds.width - railWidth - pushedNavigatorWidth
+            measuredMainAreaWidth = mainAreaWidth()
             assertEquals(measuredMainAreaWidth, bounds("main-surface").width, "Measured shell regions must agree")
-            expectedOverlay = measuredMainAreaWidth < 672f
             if (width == 1024) {
                 assertTrue(pushedNavigatorWidth > 0f, "1024 acceptance requires expanded pushed navigator")
             }
             capture("closed")
 
-            // The summary island is a separate production surface from the tabbed context panel. This
-            // controlled connection exposes no Git service, so the Environment section must state the
-            // real reason rather than draw rows.
-            clickTag("thread-summary-toggle")
-            awaitTag("thread-summary-panel")
-            onNodeWithTag("thread-summary-title").assertIsDisplayed()
-            awaitTag("thread-summary-unavailable")
-            onNodeWithTag("thread-summary-changes").assertDoesNotExist()
-            // Background activity is a separate read from the Environment section: it lists the real
-            // child agent and the two registered processes even though no Git service is exposed.
-            awaitTag("thread-summary-section-subagents")
-            onNodeWithTag("thread-summary-section-subagents-count", useUnmergedTree = true).assertTextEquals("1")
-            onNodeWithTag("thread-summary-subagent-${SHELL_CHILD.value}").assertExists()
-            awaitTag("thread-summary-section-processes")
-            onNodeWithTag("thread-summary-section-processes-count", useUnmergedTree = true).assertTextEquals("2")
-            onNodeWithTag("thread-summary-process-${SHELL_RUNNING.value}").assertExists()
-            onNodeWithTag("thread-summary-process-${SHELL_EXITED.value}").assertExists()
-            onNodeWithTag("thread-summary-process-stop-${SHELL_RUNNING.value}").assertExists()
-            onNodeWithTag("thread-summary-process-stop-${SHELL_EXITED.value}").assertExists()
-            clickTag("thread-summary-toggle")
-            waitUntil { !exists("thread-summary-panel") }
-
-            fun assertPanelGeometry() {
-                val main = bounds("main-content-column")
-                val composer = bounds("composer-column")
-                val editor = bounds("live-composer-editor")
-                if (expectedOverlay) {
-                    onNodeWithTag("thread-panel-overlay", useUnmergedTree = true).assertIsDisplayed()
-                    onNodeWithTag("thread-panel-scrim", useUnmergedTree = true).assertExists()
-                    val panel = bounds("thread-panel-overlay")
-                    val scrim = bounds("thread-panel-scrim")
-                    val surface = bounds("main-surface")
-                    assertTrue(panel.left >= surface.left && scrim.left >= surface.left, "Overlay must leave pushed navigation exposed")
-                    for (text in listOf("终端", "子 Agent")) {
-                        val title = onNodeWithText(text).fetchSemanticsNode().boundsInRoot
-                        assertTrue(panel.top >= title.bottom && scrim.top >= title.bottom, "Overlay must leave production titlebar reachable")
-                    }
-                    assertEquals(closedMain, main, "Overlay must preserve main history bounds")
-                    assertEquals(closedComposer, composer, "Overlay must preserve composer bounds")
-                    assertEquals(closedEditor, editor, "Overlay must preserve editor bounds")
-                } else {
-                    onNodeWithTag("thread-panel-overlay").assertDoesNotExist()
-                    onNodeWithTag("thread-panel-scrim").assertDoesNotExist()
-                    val panelLeft = listOf("tab:BackgroundOutput", "tab:Subagents")
-                        .filter(::exists).minOf { bounds(it).left }
-                    for ((name, region) in listOf("history" to main, "composer" to composer, "editor" to editor)) {
-                        assertTrue(region.width > 0f && region.height > 0f)
-                        assertTrue(region.right <= panelLeft + 1f, "Side panel overlaps $name: $region, panelLeft=$panelLeft")
-                    }
-                    assertTrue(main.width < closedMain.width, "Side panel must reserve its own column")
-                }
-                assertDraft(SHELL_DRAFT)
-                onNodeWithTag("recent-${SHELL_PARENT.value}").assertIsDisplayed().assertIsEnabled()
-            }
-
-            clickText("终端")
-            awaitText(SHELL_RUNNING_OUTPUT)
-            onNodeWithTag("terminal-process-select").assertIsDisplayed()
-            onNodeWithTag("terminal-input").assertIsDisplayed().assertIsEnabled()
-            assertPanelGeometry()
-            capture("terminal")
-            // The selected production titlebar action must close its controller tab via pointer.
-            clickText("终端")
-            waitUntil { !exists("tab:BackgroundOutput") }
-            assertPanelsClosed()
-            capture("titlebar-closed")
-            clickText("终端")
-            awaitText(SHELL_RUNNING_OUTPUT)
-
-            // Do not replace this pointer click with a semantic action: an overlay hiding this
-            // titlebar entry is a shell regression that this matrix must expose.
-            clickText("子 Agent")
-            awaitTag("tab:Subagents")
-            onNodeWithTag("tab:BackgroundOutput").assertIsDisplayed()
-            awaitText(SHELL_CHILD.value)
-            clickTag("tab:BackgroundOutput")
-            awaitText(SHELL_RUNNING_OUTPUT)
-            assertPanelGeometry()
-            capture("both-tabs-terminal")
-
-            clickTag("tab:Subagents")
-            awaitText(SHELL_CHILD.value)
-            assertPanelGeometry()
-            capture("subagents-overview")
-            clickText(SHELL_CHILD.value)
-            awaitText(SHELL_CHILD_HISTORY)
-            onNodeWithText("只读对话记录").assertIsDisplayed()
-            assertPanelGeometry()
-            capture("subagent-detail")
-            clickDescription("返回子智能体")
-            awaitText(SHELL_CHILD.value)
-            onNodeWithText(SHELL_CHILD_HISTORY).assertDoesNotExist()
-
-            clickDescription("关闭后台终端")
-            onNodeWithTag("tab:BackgroundOutput").assertDoesNotExist()
-            onNodeWithTag("tab:Subagents").assertIsDisplayed()
-            awaitText(SHELL_CHILD.value)
-            assertPanelGeometry()
-            capture("one-tab-remains")
-            if (expectedOverlay) {
-                // The scrim's center is behind the panel. Click an exposed point in its left strip
-                // to exercise AppShell's real onDismissContextPanel callback.
-                val scrim = onNodeWithTag("thread-panel-scrim", useUnmergedTree = true).assertIsDisplayed()
-                val scrimBounds = scrim.fetchSemanticsNode().boundsInRoot
-                val panelBounds = bounds("thread-panel-overlay")
-                val point = Offset(8f, scrimBounds.height / 2f)
-                assertTrue(scrimBounds.left + point.x < panelBounds.left, "No exposed panel scrim")
-                assertTrue(point.x < scrimBounds.width && point.y < scrimBounds.height)
-                scrim.performMouseInput { click(point) }
-            } else {
-                clickDescription("关闭子智能体")
-            }
-            waitUntil { !exists("tab:Subagents") }
-            assertPanelsClosed()
-            assertEquals(closedMain, bounds("main-content-column"))
+            // Typing the draft and measuring the settled shell must not move any region.
+            assertEquals(closedMain, bounds("live-thread-timeline"))
             assertEquals(closedComposer, bounds("composer-column"))
             assertEquals(closedEditor, bounds("live-composer-editor"))
-            awaitText(SHELL_PARENT_HISTORY)
-            clickTag("live-composer-editor")
-            assertDraft(SHELL_DRAFT)
-            val selection = onNodeWithTag("live-composer-editor").fetchSemanticsNode()
-                .config[SemanticsProperties.TextSelectionRange]
-            onNodeWithTag("live-composer-editor").performTextInput(" after dismiss")
-            assertDraft(SHELL_DRAFT.take(selection.min) + " after dismiss" + SHELL_DRAFT.drop(selection.max))
-            onNodeWithTag("live-composer-editor").performTextReplacement(SHELL_DRAFT)
-            capture("restored")
 
-            clickText("终端")
-            awaitText(SHELL_RUNNING_OUTPUT)
-            assertPanelGeometry()
-            // Rail / bottom bar must still receive real pointer input with a panel open.
-            clickTag("recent-${SHELL_PARENT.value}")
-            waitUntil { !exists("live-thread") && !exists("tab:BackgroundOutput") }
-            assertPanelsClosed()
+            // Draft persistence across real pointer navigation: each session owns its draft and the
+            // shell restores it when the same session is selected again.
             dismissNavigatorIfOpen()
-            capture("navigation-after-panel")
+            capture("navigation")
             selectListedSession(SHELL_PARENT, SHELL_PARENT_HISTORY)
-            assertPanelsClosed()
+            assertDraft(SHELL_DRAFT)
             clickTag("live-composer-editor")
             onNodeWithTag("live-composer-editor").performTextReplacement("Parent after navigation")
             assertDraft("Parent after navigation")
             selectListedSession(SHELL_OTHER, SHELL_OTHER_HISTORY)
-            assertPanelsClosed()
             onNodeWithText(SHELL_PARENT_HISTORY).assertDoesNotExist()
             assertDraft("")
             clickTag("live-composer-editor")
@@ -398,21 +260,14 @@ class HarnessAppThreadPanelsShellTest {
             assertDraft("Other thread editable")
 
             runOnIdle {
-                assertEquals(10, captured.size)
-                assertEquals(10, captured.distinct().size)
+                assertEquals(3, captured.size)
+                assertEquals(3, captured.distinct().size)
                 assertTrue(connection.descriptionReads.isNotEmpty(), "Host must be verified through HostApi")
                 assertTrue(connection.descriptionReads.all { it == SHELL_HOST })
                 assertTrue(api.listReads.isNotEmpty())
                 assertTrue(SHELL_PARENT in api.historyReads && SHELL_OTHER in api.historyReads)
                 assertTrue(api.historyReads.all { it == SHELL_PARENT || it == SHELL_OTHER })
-                assertTrue(api.inventoryReads.isNotEmpty())
-                assertTrue(api.inventoryReads.all { it == SHELL_PARENT })
-                assertTrue(api.outputReads.size >= 2, "Opening and reopening must read producer output")
-                assertTrue(api.outputReads.all { it == SHELL_PARENT to SHELL_RUNNING })
-                assertTrue(api.descendantReads.isNotEmpty())
-                assertTrue(api.descendantReads.all { it == SHELL_PARENT })
-                assertEquals(listOf(SHELL_PARENT to SHELL_CHILD), api.childReads.toList())
-                assertTrue(api.mutations.isEmpty(), "Read-only panel scenario caused mutations: ${api.mutations}")
+                assertTrue(api.mutations.isEmpty(), "Shell navigation must not mutate sessions: ${api.mutations}")
             }
         }
 }

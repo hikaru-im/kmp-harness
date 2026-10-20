@@ -180,15 +180,17 @@ class HarnessTabsInteractionTest {
 
     private fun ComposeUiTest.openPanel(state: HarnessTabStripState) {
         runOnIdle { assertTrue(state.tabsHidden, "the panel starts closed, as the reference opens") }
-        onNodeWithTag("harness-tab-new").performMouseInput { click() }
+        // With fixture tabs already registered, the closed strip shows the count badge, not the
+        // empty-panel 新标签页 control.
+        onNodeWithTag("harness-tab-show").performMouseInput { click() }
         runOnIdle { assertFalse(state.tabsHidden) }
     }
 
     @Test fun panelOpensWithATabSelectsKeepsHistoryAndCloses() = runSkikoComposeUiTest(size = Size(1200f, 600f)) {
         val state = state(); val drag = HarnessTabDragState()
         setContent { Fixture(state, drag) }
-        // Closed, the strip is the conversation alone and carries the one control that opens the panel.
-        onNodeWithTag("harness-tab-new").assertIsDisplayed()
+        // Closed, the strip is the conversation alone and carries the count badge that opens the panel.
+        onNodeWithTag("harness-tab-show").assertIsDisplayed()
         onNodeWithTag("harness-tab-new-tab").assertDoesNotExist()
         onNodeWithTag("harness-tab-changes").assertDoesNotExist()
         onNodeWithTag("content-conversation").assertIsDisplayed()
@@ -295,10 +297,11 @@ class HarnessTabsInteractionTest {
                     HarnessTokens.Control.TabStripInsetStart.value * scale - 0.5f,
                 "the pane's content must start past the leading cluster, not under it",
             )
-            // The strip is in the side panel's segment, which starts at the seam.
+            // The strip is in the side panel's segment, which starts at the seam. 新标签页 is the
+            // fixture's first tab, so its chip is the one the inset puts at the segment's start.
             val secondary = bounds("harness-tab-pane-secondary")
             assertEquals(
-                bounds("harness-tab-changes").left,
+                bounds("harness-tab-new-tab").left,
                 secondary.left + HarnessTokens.Control.TabStripInsetStart.value * scale,
                 1f,
             )
@@ -564,6 +567,10 @@ class HarnessTabsInteractionTest {
         val state = state(); val drag = HarnessTabDragState()
         setContent { Fixture(state, drag) }
         runOnIdle { state.toggleTabsHidden() }
+        // The clock is paused for the hover capture, so the panel's first frame has to be produced
+        // explicitly before its tabs exist in the semantics tree.
+        mainClock.advanceTimeByFrame()
+        waitForIdle()
         onNodeWithTag("harness-tab-changes").performMouseInput { moveTo(center) }
         advance(16)
         onNodeWithTag("harness-tab-close-changes").assertIsDisplayed()
@@ -659,11 +666,12 @@ class HarnessTabsInteractionTest {
         assertEquals(start + 1, state.selectionEpoch, "re-selecting the active tab counts")
         state.select("changes")
         assertEquals(start + 2, state.selectionEpoch)
+        // A drop re-activates its tab through the same focus path as any other move.
         state.moveToHalf("changes", right = true)
-        assertEquals(start + 2, state.selectionEpoch, "a drop into a half is not a selection")
+        assertEquals(start + 3, state.selectionEpoch, "a drop into a half counts as a selection")
         assertEquals(HarnessPaneSide.Right, state.sidePanelSide)
         state.selectConversation(PageId.Home)
-        assertEquals(start + 3, state.selectionEpoch, "re-choosing 新对话页 counts too")
+        assertEquals(start + 4, state.selectionEpoch, "re-choosing 新对话页 counts too")
     }
 
     /**
@@ -743,9 +751,14 @@ class HarnessTabsInteractionTest {
         openPanel(state)
         fun chipLeft() = onNodeWithTag("harness-tab-changes").fetchSemanticsNode().boundsInRoot.left
         fun secondaryLeft() = onNodeWithTag("harness-tab-pane-secondary").fetchSemanticsNode().boundsInRoot.left
-        // There is one strip, so a tab id resolves to exactly one node whatever the layout.
+        // There is one strip, so a tab id resolves to exactly one node whatever the layout. Opening
+        // the panel restores the default split, so the conversation's segment sits beside it.
         onAllNodesWithTag("harness-tab-changes").assertCountEquals(1)
-        onNodeWithTag("harness-tab-pane-secondary").assertDoesNotExist()
+        onNodeWithTag("harness-tab-pane-secondary").assertIsDisplayed()
+        assertTrue(
+            chipLeft() >= secondaryLeft(),
+            "the strip draws its tab row in the side panel's segment, not in the conversation's",
+        )
 
         runOnIdle { state.moveToHalf("changes", right = true) }
         assertEquals(HarnessPaneSide.Right, state.sidePanelSide, "the side panel starts on the right")

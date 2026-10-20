@@ -160,8 +160,9 @@ private fun BrowserToolbar() {
                         size = Size(size.width, thickness),
                     )
                 }
-                .padding(HarnessTokens.Spacing.Two)
-                .semantics { testTag = "new-tab-toolbar" },
+                // Tag the band itself, not the padded content area it lays its controls in.
+                .semantics { testTag = "new-tab-toolbar" }
+                .padding(HarnessTokens.Spacing.Two),
         horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Control.BrowserToolbarGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
