@@ -15,10 +15,14 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -38,6 +42,7 @@ public class JvmSessionTerminalHost(
     private val allowedRoots = allowedRoots.toList()
     private val scope = TerminalScope(UUID.randomUUID().toString())
     private val gate = Mutex()
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stopped = AtomicBoolean(false)
     private val bindings = linkedMapOf<TerminalOwner, Binding>()
     private val supported = System.getProperty("os.name") == "Mac OS X" &&
@@ -225,6 +230,18 @@ public class JvmSessionTerminalHost(
         return null
     }
 
+    /** Session disposal is synchronous; PTY shutdown continues on the Host's own scope. */
+    internal fun ownerDisposed(session: SessionId) {
+        if (stopped.get()) return
+        cleanupScope.launch {
+            gate.withLock {
+                bindings.values.toList()
+                    .filter { it.session.id == session && !it.retired }
+                    .forEach { retire(it) }
+            }
+        }
+    }
+
     private suspend fun reap() {
         for (binding in bindings.values.toList()) if (binding.retired || !current(binding)) retire(binding)
     }
@@ -252,6 +269,7 @@ public class JvmSessionTerminalHost(
                 }
             }
         }
+        cleanupScope.cancel()
     }
 }
 

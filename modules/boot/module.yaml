@@ -8,5 +8,6 @@ dependencies:
   - ../api/gateway
   - ../loader
   - ../runtime
+  - ../session-api
   - ../../contracts
   - ../../contracts/harness-protocol

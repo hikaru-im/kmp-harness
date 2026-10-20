@@ -6,7 +6,6 @@ import im.hikaru.harness.agent.AgentKey
 import im.hikaru.harness.agent.AgentRegistry
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.TextBlock
-import im.hikaru.harness.llm.ToolSchema
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.Disposable
 import im.hikaru.harness.session.Session
@@ -14,8 +13,6 @@ import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.SessionKey
 import im.hikaru.harness.session.SessionStore
 import im.hikaru.harness.session.api.*
-import im.hikaru.harness.tools.ContextualToolHandler
-import im.hikaru.harness.tools.ToolCallRequest
 import im.hikaru.harness.tools.ToolExecutionContext
 import im.hikaru.harness.tools.ToolExecutionResult
 import java.io.InputStreamReader
@@ -23,6 +20,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.regex.Pattern
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.*
@@ -31,7 +29,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 
 @Serializable
 public data class ExecCommand(
@@ -52,11 +49,35 @@ private data class ExecReceipt(
     val timedOut: Boolean = false,
 )
 
+private val SENSITIVE_ENV = Pattern.compile("KEY|PASSWORD|SECRET|TOKEN", Pattern.CASE_INSENSITIVE)
+
+/**
+ * DSH never passes its own control variables or anything that looks like a
+ * credential to a child. Names are matched case-insensitively, so `apiKey`,
+ * `API_KEY` and `ApiToken` are all removed.
+ */
+internal fun scrubbedEnvironment(environment: Map<String, String>): Map<String, String> =
+    environment.filterKeys { key ->
+        !SENSITIVE_ENV.matcher(key).find() && !key.startsWith("DSH_")
+    }
+
+/**
+ * Monitor and teardown view of a background record that outlives its owner
+ * Session. The public [BackgroundProcessesService] contract rejects reads once
+ * the owner is gone, but a job monitor must still observe and kill the process
+ * it started. This is module-internal and reachable only through the captured
+ * session/process pair, never through the gateway.
+ */
+internal interface OwnedBackgroundProcesses {
+    suspend fun readOwned(parent: SessionId, process: BackgroundProcessId): BackgroundOutputResult
+    suspend fun cancelOwned(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult
+}
+
 /** All authority is in-process. A matching textual scope alone never grants execution. */
-public class ExecProcessProducer(
+public class LocalSubprocess(
     private val context: Context,
-    private val config: ExecProcessConfig = ExecProcessConfig(),
-) : ContextualToolHandler, BackgroundProcessesService, Disposable {
+    private val config: SubprocessConfig = SubprocessConfig(),
+) : SubprocessService, BackgroundProcessesService, OwnedBackgroundProcesses, Disposable {
     private val store: SessionStore = context.require(SessionKey)
     private val agents: AgentRegistry = context.require(AgentKey)
     private val incarnation = UUID.randomUUID().toString()
@@ -67,59 +88,17 @@ public class ExecProcessProducer(
     private val claimed = mutableSetOf<Pair<Session, CallId>>()
     private val disposed = AtomicBoolean(false)
 
-    override suspend fun execute(request: ToolCallRequest, execution: ToolExecutionContext): ToolExecutionResult {
-        require(request.name == "exec") { "Unsupported tool" }
-        require(request.scope == execution.session.id.value) { "Tool scope does not match the trusted Session" }
-        val command = json.decodeFromString<ExecCommand>(request.arguments)
-        require(command.argv.isNotEmpty() && command.argv.first().isNotBlank()) { "argv must contain an executable" }
-        require(command.argv.all { '\u0000' !in it }) { "argv contains NUL" }
-        require(!command.stdin || command.background) { "stdin requires a background command" }
-        val timeout = command.timeoutMillis ?: config.defaultTimeoutMillis
-        require(timeout in 1L..config.maxTimeoutMillis) { "timeoutMillis is outside the configured limit" }
-        val entry = withContext(Dispatchers.IO) {
-            gate.withLock {
-                check(!disposed.get()) { "Exec producer is disposed" }
-                val agent = requireOwner(execution)
-                val cwd = resolveCwd(execution.session, command.cwd)
-                requireCurrent(agent, execution.session)
-                currentCoroutineContext().ensureActive()
-                check(!disposed.get()) { "Exec producer is disposed" }
-                check((execution.session to request.callId) !in claimed) { "Exec call already created a process" }
-                makeRoom()
-                // Start + registry publication cannot be cancelled midway. Dispose shares
-                // this gate; cancellation after publication leaves a Host-owned record.
-                withContext(NonCancellable) {
-                    val process = ProcessBuilder(command.argv).directory(cwd.toFile()).redirectErrorStream(true).start()
-                    // Once start succeeds a retry may never spawn this call again,
-                    // including failure during the subsequent ownership recheck.
-                    claimed += execution.session to request.callId
-                    val created = Entry(
-                        BackgroundProcess(
-                            BackgroundProcessId("$incarnation:${UUID.randomUUID()}"), execution.session.id,
-                            request.callId, json.encodeToString(command.argv), cwd.toString(),
-                            System.currentTimeMillis(), incarnation, BackgroundProcessLifecycle.Running,
-                            inputState = if (command.stdin) BackgroundInputState.Open else BackgroundInputState.Unsupported,
-                        ), process, agent, execution.session, config.maxOutputChars,
-                    )
-                    try {
-                        if (!command.stdin) process.outputStream.close()
-                        requireCurrent(agent, execution.session)
-                        check(!disposed.get()) { "Exec producer stopped during process creation" }
-                        entries[created.metadata.process] = created
-                        created.worker = scope.launch { monitor(created, timeout) }
-                        created
-                    } catch (error: Throwable) {
-                        terminate(created)
-                        closePipes(created)
-                        throw error
-                    }
-                }
-            }
-        }
+    override suspend fun execute(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): ToolExecutionResult {
+        val entry = start(command, callId, execution)
         if (command.background) {
             // Tool result acknowledges a handle, not process completion.
             return ToolExecutionResult(listOf(TextBlock(json.encodeToString(ExecReceipt(entry.metadataSnapshot(), true)))))
         }
+        val timeout = requireNotNull(entry.timeoutMillis) { "Foreground commands always carry a timeout" }
         try {
             val drained = withTimeoutOrNull(timeout + config.shutdownTimeoutMillis) { entry.worker.join(); true } == true
             if (!drained) {
@@ -136,11 +115,124 @@ public class ExecProcessProducer(
         }
         val snapshot = entry.snapshot()
         val lifecycle = snapshot.lifecycle
-        val failed = lifecycle !is BackgroundProcessLifecycle.Exited || lifecycle.exitCode != 0 || entry.timedOut
         return ToolExecutionResult(
-            listOf(TextBlock(json.encodeToString(ExecReceipt(entry.metadataSnapshot(), false, snapshot.buffer, snapshot.truncated, entry.timedOut)))),
-            isError = failed,
+            listOf(TextBlock(renderForeground(snapshot, timeout, lifecycle))),
+            // Non-zero exits are command outcomes, not tool failures. Only an
+            // unconfirmed terminal state is an infrastructure error.
+            isError = lifecycle !is BackgroundProcessLifecycle.Exited,
         )
+    }
+
+    /**
+     * Model-facing result for a finished foreground run. Mirrors DSH's shell
+     * renderer: the captured text, `(no output)` when empty, then timeout and
+     * exit markers on their own lines. A non-zero exit is reported, not errored.
+     * stderr is merged into the single capture pipe, so no `[stderr]` section
+     * can be reconstructed here.
+     */
+    private fun renderForeground(
+        snapshot: BackgroundOutputResult.Available,
+        timeoutMillis: Long,
+        lifecycle: BackgroundProcessLifecycle,
+    ): String {
+        var body = snapshot.buffer
+        if (snapshot.truncated) {
+            if (body.isNotEmpty() && !body.endsWith('\n')) body += "\n"
+            body += "[output truncated; full output: (unavailable)]"
+        }
+        if (body.isEmpty()) body = "(no output)"
+        val markers = buildList {
+            if (snapshot.timedOut) add("[timed out after ${timeoutMillis}ms]")
+            if (lifecycle is BackgroundProcessLifecycle.Exited && lifecycle.exitCode != 0) {
+                add("[exit code: ${lifecycle.exitCode}]")
+            }
+        }
+        if (markers.isEmpty()) return body
+        if (!body.endsWith('\n')) body += "\n"
+        return body + markers.joinToString("\n")
+    }
+
+    /**
+     * Start one background process without waiting for completion. The caller
+     * owns the returned inventory identity and must collect it through
+     * [BackgroundProcessesService].
+     */
+    override suspend fun startBackground(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): BackgroundProcess {
+        require(command.background) { "startBackground requires a background command" }
+        return start(command, callId, execution).metadataSnapshot()
+    }
+
+    private suspend fun start(
+        command: ExecCommand,
+        callId: CallId,
+        execution: ToolExecutionContext,
+    ): Entry {
+        require(command.argv.isNotEmpty() && command.argv.first().isNotBlank()) { "argv must contain an executable" }
+        require(command.argv.all { '\u0000' !in it }) { "argv contains NUL" }
+        require(!command.stdin || command.background) { "stdin requires a background command" }
+        // Background calls outlive the caller by design; DSH applies no deadline.
+        val timeout = if (command.background) {
+            null
+        } else {
+            (command.timeoutMillis ?: config.defaultTimeoutMillis).also {
+                require(it in 1L..config.maxTimeoutMillis) { "timeoutMillis is outside the configured limit" }
+            }
+        }
+        val entry = withContext(Dispatchers.IO) {
+            gate.withLock {
+                check(!disposed.get()) { "Exec producer is disposed" }
+                val agent = requireOwner(execution)
+                val cwd = resolveCwd(execution.session, command.cwd)
+                requireCurrent(agent, execution.session)
+                currentCoroutineContext().ensureActive()
+                check(!disposed.get()) { "Exec producer is disposed" }
+                check((execution.session to callId) !in claimed) { "Shell call already created a process" }
+                makeRoom()
+                // Start + registry publication cannot be cancelled midway. Dispose shares
+                // this gate; cancellation after publication leaves a Host-owned record.
+                withContext(NonCancellable) {
+                    val builder = ProcessBuilder(command.argv)
+                        .directory(cwd.toFile())
+                        .redirectErrorStream(true)
+                    // Children must not inherit credentials or DSH's own control
+                    // variables; DSH builds every spawn from a scrubbed parent env.
+                    builder.environment().apply {
+                        val scrubbed = scrubbedEnvironment(toMap())
+                        clear()
+                        putAll(scrubbed)
+                    }
+                    val process = builder.start()
+                    // Once start succeeds a retry may never spawn this call again,
+                    // including failure during the subsequent ownership recheck.
+                    claimed += execution.session to callId
+                    val created = Entry(
+                        BackgroundProcess(
+                            BackgroundProcessId("$incarnation:${UUID.randomUUID()}"), execution.session.id,
+                            callId, json.encodeToString(command.argv), cwd.toString(),
+                            System.currentTimeMillis(), incarnation, BackgroundProcessLifecycle.Running,
+                            inputState = if (command.stdin) BackgroundInputState.Open else BackgroundInputState.Unsupported,
+                        ), process, agent, execution.session, config.maxOutputChars, timeout,
+                    )
+                    try {
+                        if (!command.stdin) process.outputStream.close()
+                        requireCurrent(agent, execution.session)
+                        check(!disposed.get()) { "Exec producer stopped during process creation" }
+                        entries[created.metadata.process] = created
+                        created.worker = scope.launch { monitor(created, timeout) }
+                        created
+                    } catch (error: Throwable) {
+                        terminate(created)
+                        closePipes(created)
+                        throw error
+                    }
+                }
+            }
+        }
+        return entry
     }
 
     private suspend fun requireOwner(execution: ToolExecutionContext): Agent {
@@ -160,6 +252,21 @@ public class ExecProcessProducer(
         check(agents.get(agent.id) === agent && agent.session === session && agent.id.value == session.id.value) { "Agent was replaced" }
         check(store.get(session.id) === session && session.isLive()) { "Session is no longer the exact live store member" }
         check(agents.get(agent.id) === agent && !agent.context.isDisposed) { "Agent changed during Session validation" }
+    }
+
+    /**
+     * Ownership check used by reads and teardown. While the owner is live this
+     * is the full identity check. Session disposal closes and removes the owner
+     * before `Disposed` listeners run, so the exact captured owner must remain
+     * actionable after that removal; otherwise background processes could never
+     * be stopped. A replacement Agent or Session with the same id is rejected.
+     */
+    private suspend fun ownerStillMatches(entry: Entry): Boolean {
+        val registered = agents.get(entry.agent.id)
+        if (registered == null) return store.get(entry.session.id) == null
+        if (registered !== entry.agent) return false
+        if (entry.session.isLive()) requireCurrent(registered, entry.session)
+        return true
     }
 
     private fun resolveCwd(session: Session, requested: String?): Path {
@@ -187,21 +294,23 @@ public class ExecProcessProducer(
         }
     }
 
-    private suspend fun monitor(entry: Entry, timeoutMillis: Long) {
+    private suspend fun monitor(entry: Entry, timeoutMillis: Long?) {
         try {
             coroutineScope {
                 val started = System.nanoTime()
-                val watchdog = launch {
-                    while (isActive) {
-                        rememberDescendants(entry)
-                        if (System.nanoTime() - started >= timeoutMillis * 1_000_000) {
-                            entry.timedOut = true
-                            terminate(entry)
-                            // An inherited pipe can remain open after the direct process exits.
-                            closePipes(entry)
-                            break
+                val watchdog = timeoutMillis?.let { timeout ->
+                    launch {
+                        while (isActive) {
+                            rememberDescendants(entry)
+                            if (System.nanoTime() - started >= timeout * 1_000_000) {
+                                entry.timedOut = true
+                                terminate(entry)
+                                // An inherited pipe can remain open after the direct process exits.
+                                closePipes(entry)
+                                break
+                            }
+                            delay(20)
                         }
-                        delay(20)
                     }
                 }
                 try {
@@ -222,7 +331,7 @@ public class ExecProcessProducer(
                     drain.await()
                     entry.exited(exitCode) // Exit is authoritative only after EOF and waitFor.
                 } finally {
-                    watchdog.cancel()
+                    watchdog?.cancel()
                 }
             }
         } catch (_: CancellationException) {
@@ -254,6 +363,20 @@ public class ExecProcessProducer(
         val snapshot = entry.snapshot()
         requireCurrent(owner, owner.session)
         snapshot
+    }
+
+    /**
+     * Monitor/teardown read for a job whose owner Session may already be gone.
+     * Not part of the public gateway contract: only the process record's own
+     * creator reaches this, and only with the IDs it captured at start.
+     */
+    override suspend fun readOwned(parent: SessionId, process: BackgroundProcessId): BackgroundOutputResult = gate.withLock {
+        if (disposed.get()) return@withLock BackgroundOutputResult.Unavailable(parent, process, "Exec producer is disposed")
+        val entry = entries[process]
+        if (entry == null || entry.session.id != parent || !ownerStillMatches(entry)) {
+            return@withLock BackgroundOutputResult.NotFound(parent, process)
+        }
+        entry.snapshot()
     }
 
     override suspend fun write(parent: SessionId, process: BackgroundProcessId, input: String): BackgroundInputResult {
@@ -326,21 +449,21 @@ public class ExecProcessProducer(
         }
     }
 
-    override suspend fun cancel(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult {
-        val entry = gate.withLock {
-            if (disposed.get()) return BackgroundControlResult.Unavailable(parent, process, "Exec producer is disposed")
-            val owner = currentParent(parent)
-            val entry = entries[process]
-            if (entry == null || entry.session !== owner.session || entry.agent !== owner) {
-                return BackgroundControlResult.NotFound(parent, process)
+    override suspend fun cancel(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        withContext(NonCancellable + Dispatchers.IO) {
+            val entry = gate.withLock {
+                if (disposed.get()) return@withContext BackgroundControlResult.Unavailable(parent, process, "Exec producer is disposed")
+                val owner = currentParent(parent)
+                val entry = entries[process]
+                if (entry == null || entry.session !== owner.session || entry.agent !== owner) {
+                    return@withContext BackgroundControlResult.NotFound(parent, process)
+                }
+                requireCurrent(owner, owner.session)
+                if (entry.lifecycle() is BackgroundProcessLifecycle.Exited) {
+                    return@withContext BackgroundControlResult.Rejected(parent, process, "Process has already exited")
+                }
+                entry
             }
-            requireCurrent(owner, owner.session)
-            if (entry.lifecycle() is BackgroundProcessLifecycle.Exited) {
-                return BackgroundControlResult.Rejected(parent, process, "Process has already exited")
-            }
-            entry
-        }
-        return withContext(NonCancellable + Dispatchers.IO) {
             try {
                 terminate(entry)
                 // A request acknowledgment is not confirmed process exit; read() supplies that evidence.
@@ -349,7 +472,28 @@ public class ExecProcessProducer(
                 BackgroundControlResult.UnknownOutcome(parent, process, "Cancellation outcome is unknown")
             }
         }
-    }
+
+    /** Session-disposal teardown for a captured record; see [readOwned]. */
+    override suspend fun cancelOwned(parent: SessionId, process: BackgroundProcessId): BackgroundControlResult =
+        withContext(NonCancellable + Dispatchers.IO) {
+            val entry = gate.withLock {
+                if (disposed.get()) return@withContext BackgroundControlResult.Unavailable(parent, process, "Exec producer is disposed")
+                val entry = entries[process]
+                if (entry == null || entry.session.id != parent || !ownerStillMatches(entry)) {
+                    return@withContext BackgroundControlResult.NotFound(parent, process)
+                }
+                if (entry.lifecycle() is BackgroundProcessLifecycle.Exited) {
+                    return@withContext BackgroundControlResult.Rejected(parent, process, "Process has already exited")
+                }
+                entry
+            }
+            try {
+                terminate(entry)
+                BackgroundControlResult.Applied(parent, process)
+            } catch (_: Exception) {
+                BackgroundControlResult.UnknownOutcome(parent, process, "Cancellation outcome is unknown")
+            }
+        }
 
     private suspend fun currentParent(parent: SessionId): Agent {
         val agent = agents.get(AgentId(parent.value)) ?: error("Parent Session has no live Agent")
@@ -413,11 +557,13 @@ public class ExecProcessProducer(
         val agent: Agent,
         val session: Session,
         private val limit: Int,
+        val timeoutMillis: Long?,
     ) {
         lateinit var worker: Job
         val descendants = ConcurrentHashMap<Long, ProcessHandle>()
         @Volatile var timedOut: Boolean = false
         private var buffer = ""
+        private var totalChars = 0L
         private var revision = 0L
         private var truncated = false
         private var lifecycle: BackgroundProcessLifecycle = BackgroundProcessLifecycle.Running
@@ -459,6 +605,7 @@ public class ExecProcessProducer(
             var incoming = pendingHighSurrogate + String(chunk, 0, count)
             pendingHighSurrogate = if (incoming.lastOrNull()?.isHighSurrogate() == true) incoming.takeLast(1) else ""
             if (pendingHighSurrogate.isNotEmpty()) incoming = incoming.dropLast(1)
+            totalChars += incoming.length
             val combined = buffer + incoming
             var start = (combined.length - limit).coerceAtLeast(0)
             if (start > 0 && combined[start].isLowSurrogate() && combined[start - 1].isHighSurrogate()) start++
@@ -487,13 +634,7 @@ public class ExecProcessProducer(
         )
         @Synchronized fun snapshot(): BackgroundOutputResult.Available = BackgroundOutputResult.Available(
             session.id, metadata.process, session.id, buffer, revision, truncated, lifecycle, inputState(),
-        )
-    }
-
-    public companion object {
-        public val schema: ToolSchema = ToolSchema(
-            "exec", "Execute argv in the real Session directory. Background returns an owned process handle, not completion. Set stdin=true to keep UTF-8 input open; EOF closes it. No PTY.",
-            Json.parseToJsonElement("""{"type":"object","additionalProperties":false,"required":["argv"],"properties":{"argv":{"type":"array","minItems":1,"items":{"type":"string"}},"cwd":{"type":"string","description":"Existing directory within the real Session cwd"},"background":{"type":"boolean","default":false},"timeoutMillis":{"type":"integer","minimum":1},"stdin":{"type":"boolean","default":false}}}""") as JsonObject,
+            totalChars, timedOut,
         )
     }
 }

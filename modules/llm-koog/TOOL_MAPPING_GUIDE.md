@@ -43,7 +43,7 @@ OpenAI 协议族使用独立的 `OpenAiToolMapper`，通过携带原始 JSON Sch
 `OpenAICompatibleToolDescriptorSchemaGenerator` 扩展点生成参数。Chat Completions 与 Responses 均
 保留完整 Schema，包括数组、嵌套对象、`additionalProperties`、`minimum` 和 `default`；不经过通用
 primitive mapper。客户端 factory 必须同时安装对应 generator。真实 Koog HTTP fixture 使用默认
-`exec` 和 `spawn_agent` 工具验证最终请求，避免只测试简单的查询工具。
+`bash` 和 `subagent` 工具验证最终请求，避免只测试简单的查询工具。
 
 ## 二、工具消息
 

@@ -16,6 +16,7 @@ modules:
   - contracts
   - contracts/harness-protocol
   - modules/agent
+  - modules/agent-instructions
   - modules/agent-loop
   - modules/api/gateway
   - modules/boot
@@ -34,12 +35,14 @@ modules:
   - modules/profile
   - modules/profile-file
   - modules/runtime
+  - modules/schedule-jvm
   - modules/session
   - modules/session-api
   - modules/session-persistence
   - modules/settings
   - modules/settings-file
   - modules/subagent-tools
+  - modules/system-prompt
   - modules/timer
   - modules/tools
   - modules/ui-foundation

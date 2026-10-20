@@ -19,7 +19,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
-class ExecProcessContractTest {
+class SubprocessContractTest {
     @Test
     fun realForegroundCommandPublishesUtf8CwdAndExactTerminalAfterEof() = runBlocking {
         withFixture { f ->
@@ -43,14 +43,14 @@ class ExecProcessContractTest {
     }
 
     @Test
-    fun nonzeroExitAndMergedStderrRemainRealToolFailure() = runBlocking {
+    fun nonzeroExitIsReportedNotErrored() = runBlocking {
         withFixture { f ->
             val result = f.execute("failure", "nonzero")
-            assertTrue(result.isError)
+            assertFalse(result.isError)
+            assertEquals("stdout\nstderr\n[exit code: 7]", result.text())
             val output = f.output(f.inventory().single().process)
             assertEquals(BackgroundProcessLifecycle.Exited(7), output.lifecycle)
             assertEquals("stdout\nstderr\n", output.buffer)
-            assertEquals("7", receipt(result).getValue("process").jsonObject.getValue("lifecycle").jsonObject.getValue("exitCode").toString())
         }
     }
 
@@ -79,7 +79,7 @@ class ExecProcessContractTest {
 
     @Test
     fun boundedOutputKeepsDrainingAndAdvancesRevisionEvenWithIdenticalTail() = runBlocking {
-        withFixture(ExecProcessConfig(maxOutputChars = 64)) { f ->
+        withFixture(SubprocessConfig(maxOutputChars = 64)) { f ->
             val ready = f.cwd.resolve("ready")
             val release = f.cwd.resolve("release")
             f.execute("large", "large", ready.toString(), release.toString(), background = true)
@@ -98,35 +98,44 @@ class ExecProcessContractTest {
     }
 
     @Test
-    fun missingAuthorityScopeMismatchWrongContextAndForeignHostCannotSpawn() = runBlocking {
+    fun wrongContextForeignHostAndShadowedServicesCannotSpawn() = runBlocking {
         withFixture { f ->
-            val request = f.request("untrusted", "utf8")
-            assertFailsWith<IllegalStateException> { f.tools.execute(request) }
-            assertFailsWith<IllegalArgumentException> {
-                f.tools.execute(request.copy(scope = "other"), f.execution)
-            }
             val wrongContext = f.owner.context.child()
             try {
                 assertFailsWith<IllegalArgumentException> {
-                    f.tools.execute(request, ToolExecutionContext(wrongContext, f.owner.session))
+                    f.subprocess.execute(
+                        f.command("utf8"), CallId("untrusted"),
+                        ToolExecutionContext(wrongContext, f.owner.session),
+                    )
                 }
             } finally { wrongContext.dispose() }
             withFixture { other ->
                 assertEquals(f.owner.session.id, other.owner.session.id)
-                assertFailsWith<IllegalArgumentException> { f.tools.execute(request, other.execution) }
+                assertFailsWith<IllegalArgumentException> {
+                    f.subprocess.execute(f.command("utf8"), CallId("foreign"), other.execution)
+                }
                 val shadowStore = f.owner.context.isolate(SessionKey)
                 val shadowRegistry = f.owner.context.isolate(AgentKey)
                 try {
                     shadowStore.provide(SessionKey, other.runtime.context.sessions)
                     shadowRegistry.provide(AgentKey, other.runtime.context.agents)
                     assertFailsWith<IllegalArgumentException> {
-                        f.tools.execute(request, ToolExecutionContext(shadowStore, f.owner.session))
+                        f.subprocess.execute(
+                            f.command("utf8"), CallId("shadow-store"),
+                            ToolExecutionContext(shadowStore, f.owner.session),
+                        )
                     }
                     assertFailsWith<IllegalArgumentException> {
-                        f.tools.execute(request, ToolExecutionContext(shadowRegistry, f.owner.session))
+                        f.subprocess.execute(
+                            f.command("utf8"), CallId("shadow-registry"),
+                            ToolExecutionContext(shadowRegistry, f.owner.session),
+                        )
                     }
                     assertFailsWith<IllegalArgumentException> {
-                        f.tools.execute(request, ToolExecutionContext(f.owner.context, other.owner.session))
+                        f.subprocess.execute(
+                            f.command("utf8"), CallId("foreign-session"),
+                            ToolExecutionContext(f.owner.context, other.owner.session),
+                        )
                     }
                 } finally { shadowStore.dispose(); shadowRegistry.dispose() }
             }
@@ -140,37 +149,49 @@ class ExecProcessContractTest {
             val outside = Files.createTempDirectory("exec-outside-")
             try {
                 assertFailsWith<IllegalArgumentException> {
-                    f.tools.execute(f.request("outside", "utf8", cwd = outside.toString()), f.execution)
+                    f.subprocess.execute(
+                        f.command("utf8", cwd = outside.toString()), CallId("outside"), f.execution,
+                    )
                 }
                 Files.createSymbolicLink(f.cwd.resolve("escape"), outside)
                 assertFailsWith<IllegalArgumentException> {
-                    f.tools.execute(f.request("symlink", "utf8", cwd = "escape"), f.execution)
+                    f.subprocess.execute(f.command("utf8", cwd = "escape"), CallId("symlink"), f.execution)
                 }
                 val noCwd = f.runtime.context.agents.create(id = AgentId("no-cwd"))
                 assertFailsWith<IllegalStateException> {
-                    f.tools.execute(f.request("no-cwd", "utf8").copy(scope = "no-cwd"),
-                        ToolExecutionContext(noCwd.agent.context, noCwd.agent.session))
+                    f.subprocess.execute(
+                        f.command("utf8"), CallId("no-cwd"),
+                        ToolExecutionContext(noCwd.agent.context, noCwd.agent.session),
+                    )
                 }
                 assertTrue(f.inventory().isEmpty())
                 val subdir = Files.createDirectory(f.cwd.resolve("allowed"))
-                assertFalse(f.tools.execute(f.request("inside", "utf8", cwd = "allowed"), f.execution).isError)
+                assertFalse(
+                    f.subprocess.execute(f.command("utf8", cwd = "allowed"), CallId("inside"), f.execution).isError,
+                )
                 assertEquals(subdir.toRealPath().toString(), f.inventory().single().cwd)
             } finally { Files.deleteIfExists(outside) }
         }
     }
 
     @Test
-    fun malformedRequestAndFailedStartNeverPublishRunning() = runBlocking {
+    fun malformedCommandAndFailedStartNeverPublishRunning() = runBlocking {
         withFixture { f ->
-            for (arguments in listOf("{\"argv\":[]}", "{\"argv\":[\"x\"],\"timeoutMillis\":0}",
-                "{\"argv\":[\"x\"],\"forgedSession\":\"owner\"}")) {
+            for (command in listOf(
+                ExecCommand(emptyList()),
+                ExecCommand(listOf("x"), timeoutMillis = 0),
+                ExecCommand(listOf("x"), stdin = true),
+                ExecCommand(listOf("x\u0000")),
+            )) {
                 assertFailsWith<IllegalArgumentException> {
-                    f.tools.execute(f.request("invalid", "utf8").copy(arguments = arguments), f.execution)
+                    f.subprocess.execute(command, CallId("invalid"), f.execution)
                 }
             }
             assertFailsWith<java.io.IOException> {
-                f.tools.execute(f.request("start-failure", "utf8").copy(arguments =
-                    Json.encodeToString(ExecCommand(listOf(f.cwd.resolve("absent-executable").toString())))), f.execution)
+                f.subprocess.execute(
+                    ExecCommand(listOf(f.cwd.resolve("absent-executable").toString())),
+                    CallId("start-failure"), f.execution,
+                )
             }
             assertTrue(f.inventory().isEmpty())
         }
@@ -188,7 +209,7 @@ class ExecProcessContractTest {
             f.runtime.context.agents.create(id = AgentId("owner"), options = AgentOptions(cwd = f.cwd.toString()))
             assertIs<BackgroundOutputResult.NotFound>(f.service.read(SessionId("owner"), process))
             assertTrue(assertIs<BackgroundProcessesResult.Available>(f.service.list(SessionId("owner"))).processes.isEmpty())
-            val reinstalled = ExecProcessProducer(f.runtime.context)
+            val reinstalled = LocalSubprocess(f.runtime.context)
             try { assertIs<BackgroundOutputResult.NotFound>(reinstalled.read(SessionId("owner"), process)) }
             finally { reinstalled.dispose() }
         }
@@ -200,8 +221,8 @@ class ExecProcessContractTest {
             val ready = f.cwd.resolve("ready-timeout")
             val release = f.cwd.resolve("never-release")
             val result = f.execute("timeout", "wait", ready.toString(), release.toString(), timeoutMillis = 500)
-            assertTrue(result.isError)
-            assertTrue(receipt(result).getValue("timedOut").jsonPrimitive.boolean)
+            assertFalse(result.isError)
+            assertTrue("[timed out after 500ms]" in result.text(), result.text())
             assertNotEquals(BackgroundProcessLifecycle.Running, f.output(f.inventory().single().process).lifecycle)
 
             val backgroundReady = f.cwd.resolve("ready-dispose")
@@ -213,7 +234,7 @@ class ExecProcessContractTest {
             f.runtime.context.dispose()
             assertFalse(ProcessHandle.of(pid).map { it.isAlive }.orElse(false))
             assertIs<BackgroundProcessesResult.Unavailable>(f.service.list(f.owner.session.id))
-            assertFailsWith<IllegalStateException> { f.tools.execute(f.request("after-close", "utf8"), f.execution) }
+            assertFailsWith<IllegalStateException> { f.execute("after-close", "utf8") }
         }
     }
 
@@ -250,7 +271,7 @@ class ExecProcessContractTest {
             awaitCondition { Files.exists(ready) && f.output(process).buffer == "ready\n" }
             val pid = Files.readString(ready).toLong()
             assertTrue(ProcessHandle.of(pid).orElseThrow().isAlive)
-            val producer = assertIs<ExecProcessProducer>(f.service)
+            val producer = assertIs<LocalSubprocess>(f.service)
             coroutineScope {
                 val first = async { withTimeout(5_000) { producer.dispose() } }
                 val second = async { withTimeout(5_000) { producer.dispose() } }
@@ -267,20 +288,22 @@ class ExecProcessContractTest {
     fun foregroundCancellationKillsProcessAndCallCannotRespawn() = runBlocking {
         withFixture { f ->
             val ready = f.cwd.resolve("ready")
-            val request = f.request("cancel", "wait", ready.toString(), f.cwd.resolve("never-release").toString())
-            val call = async { f.tools.execute(request, f.execution) }
+            val command = f.command("wait", ready.toString(), f.cwd.resolve("never-release").toString())
+            val call = async { f.subprocess.execute(command, CallId("cancel"), f.execution) }
             awaitCondition { Files.exists(ready) }
             val pid = Files.readString(ready).toLong()
             call.cancelAndJoin()
             awaitCondition { !ProcessHandle.of(pid).map { it.isAlive }.orElse(false) }
-            assertFailsWith<IllegalStateException> { f.tools.execute(request, f.execution) }
+            assertFailsWith<IllegalStateException> {
+                f.subprocess.execute(command, CallId("cancel"), f.execution)
+            }
             assertEquals(1, f.inventory().size)
         }
     }
 
     @Test
     fun processLimitRejectsLiveEntriesAndEvictsOnlyCompletedInventory() = runBlocking {
-        withFixture(ExecProcessConfig(maxProcesses = 1)) { f ->
+        withFixture(SubprocessConfig(maxProcesses = 1)) { f ->
             val ready = f.cwd.resolve("ready")
             val release = f.cwd.resolve("release")
             f.execute("held", "wait", ready.toString(), release.toString(), background = true)
@@ -342,7 +365,7 @@ class ExecProcessContractTest {
 
     @Test
     fun blockedPipeTimesOutWithoutBlockingInventoryAndCanStillBeCancelled() = runBlocking {
-        withFixture(ExecProcessConfig(inputTimeoutMillis = 100)) { f ->
+        withFixture(SubprocessConfig(inputTimeoutMillis = 100)) { f ->
             val ready = f.cwd.resolve("nonreader-ready")
             f.execute("nonreader", "wait", ready.toString(), f.cwd.resolve("never").toString(), background = true, stdin = true)
             val process = f.inventory().single().process
@@ -367,7 +390,157 @@ class ExecProcessContractTest {
         }
     }
 
-    private suspend fun withFixture(config: ExecProcessConfig = ExecProcessConfig(), body: suspend (Fixture) -> Unit) {
+    @Test
+    fun backgroundCommandsIgnoreForegroundTimeouts() = runBlocking {
+        withFixture(SubprocessConfig(defaultTimeoutMillis = 200)) { f ->
+            val ready = f.cwd.resolve("background-no-timeout-ready")
+            val release = f.cwd.resolve("background-no-timeout-release")
+            f.execute("background-no-timeout", "wait", ready.toString(), release.toString(), background = true)
+            val process = f.inventory().single().process
+            awaitCondition { Files.exists(ready) }
+            delay(700)
+            assertEquals(BackgroundProcessLifecycle.Running, f.output(process).lifecycle)
+            Files.writeString(release, "release")
+            assertEquals(BackgroundProcessLifecycle.Exited(0), f.awaitTerminal(process).lifecycle)
+        }
+    }
+
+    @Test
+    fun childEnvironmentScrubsCredentialsAndDshVariables() {
+        val scrubbed = scrubbedEnvironment(
+            mapOf(
+                "PATH" to "/bin",
+                "HOME" to "/home/test",
+                "OPENAI_API_KEY" to "secret",
+                "db_password" to "secret",
+                "github_token" to "secret",
+                "SIGNING_SECRET" to "secret",
+                "DSH_HOME" to "/dsh",
+                "DSH_SESSION_ID" to "session",
+            ),
+        )
+        assertEquals(mapOf("PATH" to "/bin", "HOME" to "/home/test"), scrubbed)
+    }
+
+    @Test
+    fun shellToolSchemasExposeDshArgumentsWithoutSandboxFields() {
+        for (schema in listOf(BashToolSchema, PwshToolSchema)) {
+            val parameters = schema.parameters
+            val properties = parameters.getValue("properties").jsonObject.keys
+            assertEquals(
+                setOf("description", "command", "timeoutMs", "workdir", "run_in_background"),
+                properties,
+            )
+            assertEquals(
+                setOf("description", "command"),
+                parameters.getValue("required").jsonArray.map { it.jsonPrimitive.content }.toSet(),
+            )
+            assertFalse(properties.any { it.contains("sandbox") })
+        }
+    }
+
+    @Test
+    fun bashToolExecutesDshArgumentsThroughTheLocalSubprocess() = runBlocking {
+        if (isWindows()) return@runBlocking
+        withFixture { f ->
+            val result = f.tools.execute(
+                ToolCallRequest(
+                    CallId("bash-ok"), BASH_TOOL_NAME,
+                    """{"description":"Print greeting","command":"printf hello"}""",
+                    f.owner.session.id.value,
+                ),
+                f.execution,
+            )
+            assertFalse(result.isError)
+            val process = f.inventory().single()
+            assertEquals(CallId("bash-ok"), process.callId)
+            assertEquals("hello", f.output(process.process).buffer)
+            assertEquals(f.cwd.toRealPath().toString(), process.cwd)
+        }
+    }
+
+    @Test
+    fun bashToolHonorsWorkdirAndBackgroundArguments() = runBlocking {
+        if (isWindows()) return@runBlocking
+        withFixture { f ->
+            val subdir = Files.createDirectory(f.cwd.resolve("work"))
+            val result = f.tools.execute(
+                ToolCallRequest(
+                    CallId("bash-bg"), BASH_TOOL_NAME,
+                    """{"description":"Print workdir","command":"pwd","workdir":"work","run_in_background":true}""",
+                    f.owner.session.id.value,
+                ),
+                f.execution,
+            )
+            assertFalse(result.isError)
+            val started = (result.content.single() as TextBlock).text
+            assertTrue(started.startsWith("started background job bash-"), started)
+            val process = f.inventory().single()
+            assertEquals(subdir.toRealPath().toString(), process.cwd)
+            val terminal = f.awaitTerminal(process.process)
+            assertEquals("${subdir.toRealPath()}\n", terminal.buffer)
+        }
+    }
+
+    @Test
+    fun shellToolsRejectMissingFieldsUnknownKeysAndForeignScopes() = runBlocking {
+        withFixture { f ->
+            for ((index, arguments) in listOf(
+                """{"command":"echo hi"}""",
+                """{"description":"Do it"}""",
+                """{"description":"Do it","command":"echo hi","unknown":true}""",
+                """{"description":"Do it","command":"echo hi","timeoutMs":0}""",
+                """{"description":"Do it","command":"echo hi","timeoutMs":1.5}""",
+                """{"description":"   ","command":"echo hi"}""",
+                """[]""",
+                """{not json""",
+            ).withIndex()) {
+                assertFailsWith<IllegalArgumentException> {
+                    f.tools.execute(
+                        ToolCallRequest(CallId("bad-$index"), BASH_TOOL_NAME, arguments, f.owner.session.id.value),
+                        f.execution,
+                    )
+                }
+            }
+            assertFailsWith<IllegalArgumentException> {
+                f.tools.execute(
+                    ToolCallRequest(
+                        CallId("foreign-scope"), BASH_TOOL_NAME,
+                        """{"description":"Do it","command":"echo hi"}""", "other",
+                    ),
+                    f.execution,
+                )
+            }
+            assertTrue(f.inventory().isEmpty())
+        }
+    }
+
+    @Test
+    fun pwshResolutionFollowsDshCandidateOrder() {
+        val environment = mapOf(
+            "ProgramFiles" to "/program-files",
+            "SystemRoot" to "/system-root",
+            "PATH" to "/store-bin",
+        )
+        fun resolve(exists: (Path) -> Boolean) =
+            PwshExecutable.resolve({ environment[it] }, "Windows 11", exists)
+
+        assertEquals("pwsh", resolve { false })
+        assertEquals("pwsh.exe", Path.of(resolve { it.fileName.toString() == "pwsh.exe" }).fileName.toString())
+        assertEquals(
+            "powershell.exe",
+            Path.of(resolve { it.fileName.toString() == "powershell.exe" }).fileName.toString(),
+        )
+        assertEquals(
+            "/store-bin",
+            Path.of(resolve { it.toString().startsWith("/store-bin") }).parent.toString(),
+        )
+        assertEquals("pwsh", PwshExecutable.resolve({ environment[it] }, "Mac OS X") { true })
+    }
+
+    private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
+
+    private suspend fun withFixture(config: SubprocessConfig = SubprocessConfig(), body: suspend (Fixture) -> Unit) {
         val cwd = Files.createTempDirectory("harness-exec-test-").toRealPath()
         val runtime = Runtime()
         try {
@@ -376,12 +549,15 @@ class ExecProcessContractTest {
                 runtime.install(AgentPlugin())
                 runtime.install(ToolsPlugin())
                 runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
-                runtime.install(ExecProcessPlugin(config))
+                runtime.install(SubprocessPlugin(config))
+                runtime.install(JobsPlugin())
+                runtime.install(ToolBashPlugin())
+                runtime.install(ToolPwshPlugin())
                 val handle = runtime.context.agents.create(id = AgentId("owner"), options = AgentOptions(cwd = cwd.toString()))
                 val fixture = Fixture(runtime, cwd, handle)
                 assertTrue(fixture.inventory().isEmpty())
-                assertEquals(listOf("exec"), fixture.tools.schemas().map { it.name })
-                assertEquals(EXEC_PROCESS_PLUGIN_NAME, ExecProcessPluginDefinition.name)
+                assertEquals(setOf("bash", "pwsh"), fixture.tools.schemas().map { it.name }.toSet())
+                assertEquals(SUBPROCESS_PLUGIN_NAME, SubprocessPluginDefinition.name)
                 body(fixture)
             }
         } finally {
@@ -398,21 +574,20 @@ class ExecProcessContractTest {
         val execution get() = ToolExecutionContext(owner.context, owner.session)
         val tools = runtime.context.require(ToolsKey)
         val service = runtime.context.require(BackgroundProcessesKey)
+        val subprocess = runtime.context.require(SubprocessKey)
         suspend fun inventory() = assertIs<BackgroundProcessesResult.Available>(service.list(owner.session.id)).processes
         suspend fun output(process: BackgroundProcessId) = assertIs<BackgroundOutputResult.Available>(service.read(owner.session.id, process))
         suspend fun awaitTerminal(process: BackgroundProcessId): BackgroundOutputResult.Available {
             awaitCondition { output(process).lifecycle != BackgroundProcessLifecycle.Running }
             return output(process)
         }
-        fun request(call: String, mode: String, vararg args: String, background: Boolean = false,
-            timeoutMillis: Long? = null, cwd: String? = null, stdin: Boolean = false) = ToolCallRequest(
-            CallId(call), "exec", Json.encodeToString(ExecCommand(
-                javaCommand(mode, *args), cwd, background, timeoutMillis, stdin,
-            )), owner.session.id.value,
-        )
+        fun command(mode: String, vararg args: String, background: Boolean = false,
+            timeoutMillis: Long? = null, cwd: String? = null, stdin: Boolean = false) =
+            ExecCommand(javaCommand(mode, *args), cwd, background, timeoutMillis, stdin)
         suspend fun execute(call: String, mode: String, vararg args: String,
             background: Boolean = false, timeoutMillis: Long? = null, stdin: Boolean = false) =
-            tools.execute(request(call, mode, *args, background = background, timeoutMillis = timeoutMillis, stdin = stdin), execution)
+            subprocess.execute(command(mode, *args, background = background, timeoutMillis = timeoutMillis, stdin = stdin),
+                CallId(call), execution)
     }
 
     private class ControlledAgent(request: AgentFactoryRequest) : Agent {
@@ -435,12 +610,14 @@ class ExecProcessContractTest {
         private fun receipt(result: ToolExecutionResult) =
             Json.parseToJsonElement((result.content.single() as TextBlock).text).jsonObject
 
+        private fun ToolExecutionResult.text(): String = (content.single() as TextBlock).text
+
         internal fun javaCommand(mode: String, vararg args: String): List<String> {
             // Test workers may use a URL classloader rather than the process classpath.
             val paths = linkedSetOf<String>()
             System.getProperty("java.class.path").split(File.pathSeparator).filter { it.isNotBlank() }
                 .forEach { paths += Path.of(it).toAbsolutePath().toString() }
-            for (type in listOf(ExecProcessFixtureMain::class.java, Unit::class.java)) {
+            for (type in listOf(SubprocessFixtureMain::class.java, Unit::class.java)) {
                 type.protectionDomain.codeSource?.location?.let { paths += Path.of(it.toURI()).toString() }
                 var loader: ClassLoader? = type.classLoader
                 while (loader != null) {
@@ -451,13 +628,13 @@ class ExecProcessContractTest {
             }
             val executable = if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java"
             return listOf(Path.of(System.getProperty("java.home"), "bin", executable).toString(),
-                "-cp", paths.joinToString(File.pathSeparator), ExecProcessFixtureMain::class.java.name, mode) + args
+                "-cp", paths.joinToString(File.pathSeparator), SubprocessFixtureMain::class.java.name, mode) + args
         }
     }
 }
 
 /** Only a test command, launched as a real JVM OS process without any shell. */
-object ExecProcessFixtureMain {
+object SubprocessFixtureMain {
     @JvmStatic
     fun main(args: Array<String>) {
         fun write(text: String) { System.out.write(text.toByteArray(Charsets.UTF_8)); System.out.flush() }

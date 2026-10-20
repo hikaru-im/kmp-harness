@@ -159,10 +159,10 @@ class LiveConversationInteractionTest {
     }
 
     @Test
-    fun phaseErrorsAndUnknownRemoteRunStateKeepStopTruthfulAndRetryable() = runComposeUiTest {
+    fun phaseErrorsAndRunningRemoteStateKeepStopTruthfulAndRetryable() = runComposeUiTest {
         val owner = ComposerOwner()
         owner.state = readyState("next message").copy(selectedSessionId = SessionId("actual-session"),
-            runState = ConversationRunState.Unknown, action = ConversationAction.RunningUnknown,
+            runState = ConversationRunState.Running, action = ConversationAction.RunningUnknown,
             errors = mapOf(
                 ConversationErrorKind.Prompt to ConversationError(ConversationErrorKind.Prompt, "发送未确认。", ConversationRetry.SubmitExplicitly),
                 ConversationErrorKind.Completion to ConversationError(ConversationErrorKind.Completion, "运行状态不可用。", null)))
@@ -231,7 +231,7 @@ class LiveConversationInteractionTest {
         var state by mutableStateOf(readyState().copy(selectedSessionId = SessionId("thread"),
             history = typedHistory(), historyPhase = ConversationDataPhase.Loading))
         var retries = 0
-        setContent { HarnessTheme { LiveThreadSurface(state) { retries++ } } }
+        setContent { HarnessTheme { LiveThreadSurface(state, onRetry = { retries++ }) } }
         onNodeWithTag("live-thread-loading").assertExists()
         onNodeWithText("Actual user question").assertExists()
         onNodeWithText("Actual assistant text").assertExists()
@@ -257,7 +257,7 @@ class LiveConversationInteractionTest {
     fun emptyLoadingDisconnectedAndFailedThreadStatesDoNotInventMessages() = runComposeUiTest {
         var state by mutableStateOf(readyState().copy(historyPhase = ConversationDataPhase.Empty))
         var retries = 0
-        setContent { HarnessTheme { LiveThreadSurface(state) { retries++ } } }
+        setContent { HarnessTheme { LiveThreadSurface(state, onRetry = { retries++ }) } }
         onNodeWithTag("live-thread-empty").assertExists()
         onNodeWithText("开始新的会话").assertDoesNotExist()
         runOnIdle { state = state.copy(historyPhase = ConversationDataPhase.Loading) }
@@ -319,7 +319,8 @@ class LiveConversationInteractionTest {
         val messages = (0..24).map { index -> Message("long-$index", MessageRole.ASSISTANT,
             listOf(TextContent("Actual message $index " + "unbroken".repeat(100))), ModelMessageSource("test", "model")) }
         setContent { HarnessTheme(HarnessThemeMode.Dark) {
-            LiveThreadSurface(readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready)) { error("No retry expected") }
+            LiveThreadSurface(readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
+                onRetry = { error("No retry expected") })
         } }
         onNodeWithTag("live-thread-timeline").performScrollToIndex(24)
         val last = onNodeWithText("Actual message 24 ", substring = true).assertExists().getUnclippedBoundsInRoot()

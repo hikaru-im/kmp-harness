@@ -1,7 +1,7 @@
 package im.hikaru.harness.bundle.desktop
 
 import im.hikaru.harness.agent.Agent
-import im.hikaru.harness.agent.AgentInstructionsService
+import im.hikaru.harness.agent.instructions.AgentInstructionsService
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel

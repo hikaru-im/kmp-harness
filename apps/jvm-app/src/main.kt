@@ -14,7 +14,6 @@ import im.hikaru.harness.client.settings.DesktopAppearanceStore
 import im.hikaru.harness.client.settings.themeCustomization
 import im.hikaru.harness.bundle.desktop.resolveDesktopHarnessHome
 import im.hikaru.harness.bundle.desktop.DesktopUserPlugins
-import im.hikaru.harness.agent.AgentInstructionsKey
 import im.hikaru.harness.desktop.plugins.DesktopInstalledPluginRepository
 import im.hikaru.harness.client.app.HarnessApp
 import im.hikaru.harness.client.app.HarnessDestination
@@ -110,10 +109,11 @@ fun main(args: Array<String>) {
     val connection = LocalConnection(harnessHost.gateway)
     val terminalLaunchProvider = im.hikaru.harness.desktop.terminal.DesktopTerminalLaunchProvider(
         harnessHost.profile.hostDescription.hostId, connection)
+    // The agent-instructions profile plugin owns the prompt-side adapter; this
+    // instance serves the plugin management UI over the same inventory file.
     val userPlugins = DesktopUserPlugins(
         resolveDesktopHarnessHome(options.home).directory.resolve("client-plugins.json"),
     )
-    runBlocking { harnessHost.runtime.context.provide(AgentInstructionsKey, userPlugins) }
     val installedPlugins = DesktopInstalledPluginRepository(
         harnessHost.profile.hostDescription.hostId, connection, userPlugins,
     )

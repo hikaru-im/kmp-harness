@@ -309,7 +309,7 @@ class ThreadMessageVisualInteractionTest {
     private fun ComposeUiTest.mount(state: () -> ConversationState, theme: HarnessThemeMode = HarnessThemeMode.Light) {
         setContent { CompositionLocalProvider(LocalDensity provides Density(1f, 1f)) { HarnessTheme(theme) {
             Box(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas).semantics { testTag = FIXTURE }) {
-                LiveThreadSurface(state()) { error("Unexpected history retry in message fixture") }
+                LiveThreadSurface(state(), onRetry = { error("Unexpected history retry in message fixture") })
             }
         } } }
         settle()

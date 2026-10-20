@@ -6,6 +6,7 @@ dependencies:
   - ../../../contracts
   - ../../../contracts/harness-protocol
   - ../../agent
+  - ../../agent-instructions
   - ../../agent-loop
   - ../../boot
   - ../../credentials
@@ -21,10 +22,12 @@ dependencies:
   - ../../profile
   - ../../profile-file
   - ../../runtime
+  - ../../schedule-jvm
   - ../../session
   - ../../session-api
   - ../../session-persistence
   - ../../settings
   - ../../settings-file
   - ../../subagent-tools
+  - ../../system-prompt
   - ../../tools

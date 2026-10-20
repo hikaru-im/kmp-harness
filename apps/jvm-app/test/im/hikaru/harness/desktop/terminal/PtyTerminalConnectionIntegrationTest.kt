@@ -12,8 +12,8 @@ import im.hikaru.harness.client.connection.*
 import im.hikaru.harness.client.conversation.ConversationHostScope
 import im.hikaru.harness.client.panels.*
 import im.hikaru.harness.desktop.connection.LocalConnection
-import im.hikaru.harness.exec.jvm.ExecProcessConfig
-import im.hikaru.harness.exec.jvm.ExecProcessPlugin
+import im.hikaru.harness.exec.jvm.SubprocessConfig
+import im.hikaru.harness.exec.jvm.SubprocessPlugin
 import im.hikaru.harness.exec.jvm.JvmPtyTerminalSessions
 import im.hikaru.harness.exec.jvm.JvmSessionTerminalHost
 import im.hikaru.harness.runtime.Context
@@ -274,7 +274,7 @@ internal class RealPtyPageFixture private constructor(
         Files.createDirectory(cwd.resolve("home"))
         runtime.install(SessionPlugin()); runtime.install(AgentPlugin()); runtime.install(ToolsPlugin())
         runtime.context.agents.registerFactory(AgentFactory { PageAgent(it) })
-        runtime.install(ExecProcessPlugin(ExecProcessConfig(terminalLimits = JvmPtyTerminalSessions.Limits(ioWaitMillis = 10_000))))
+        runtime.install(SubprocessPlugin(SubprocessConfig(terminalLimits = JvmPtyTerminalSessions.Limits(ioWaitMillis = 10_000))))
         runtime.install(SessionApiPlugin()); runtime.install(HostApiPlugin, host)
         val handle = runtime.context.agents.create(AgentId("page-owner"), CoreAgentOptions(cwd = cwd.toString()))
         initializedSession = SessionId(handle.agent.session.id.value)

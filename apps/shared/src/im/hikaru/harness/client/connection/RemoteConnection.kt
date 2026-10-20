@@ -135,6 +135,11 @@ public class RemoteConnection private constructor(
         override suspend fun cancel(id: SessionId, keepInbox: Boolean) {
             invoke("session.cancel", json.encodeToJsonElement(WireCancelRequest.serializer(), WireCancelRequest(id, keepInbox))).decodeResult<Unit>()
         }
+
+        override suspend fun fork(parent: SessionId, beforeMessageId: String): SessionSummary {
+            val request = WireForkRequest(parent, beforeMessageId)
+            return invoke("session.fork", json.encodeToJsonElement(WireForkRequest.serializer(), request)).decodeResult()
+        }
     }
 
     public suspend fun subscribe(streamId: StreamId) {
@@ -321,3 +326,6 @@ private data class WirePromptRequest(val id: SessionId, val message: Message)
 
 @kotlinx.serialization.Serializable
 private data class WireCancelRequest(val id: SessionId, val keepInbox: Boolean = false)
+
+@kotlinx.serialization.Serializable
+private data class WireForkRequest(val parent: SessionId, val beforeMessageId: String)

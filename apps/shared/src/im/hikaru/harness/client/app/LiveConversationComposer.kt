@@ -26,6 +26,7 @@ public fun LiveConversationComposer(
     onDraftChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onCancel: () -> Unit,
+    onCancelEdit: () -> Unit = {},
     models: List<ConversationModelChoice>,
     selectedModel: ConversationModelChoice?,
     onModelSelect: (ConversationModelChoice) -> Unit,
@@ -81,6 +82,18 @@ public fun LiveConversationComposer(
         ) {
             Column(Modifier.padding(top = HarnessTokens.Composer.PaddingTop, bottom = HarnessTokens.Composer.PaddingBottom),
                 verticalArrangement = Arrangement.spacedBy(HarnessTokens.Composer.SectionGap)) {
+                if (state.editing != null) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Composer.PaddingX),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
+                        HarnessText("正在编辑此前的消息；发送将新建分支并重发。",
+                            Modifier.weight(1f).semantics { testTag = "live-composer-editing" },
+                            color = ConversationAppearance.tertiary,
+                            style = MaterialTheme.typography.bodySmall)
+                        HarnessButton("取消编辑", onCancelEdit, testTag = "live-composer-editing-cancel",
+                            size = HarnessControlSize.Compact)
+                    }
+                }
                 BasicTextField(
                     value = editor,
                     onValueChange = { value ->

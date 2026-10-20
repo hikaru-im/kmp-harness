@@ -237,7 +237,7 @@ class JvmSessionTerminalSemanticInputTest {
             runtime.install(AgentPlugin())
             runtime.install(ToolsPlugin())
             runtime.context.agents.registerFactory(AgentFactory { ControlledAgent(it) })
-            runtime.install(ExecProcessPlugin(ExecProcessConfig(terminalLimits = JvmPtyTerminalSessions.Limits(
+            runtime.install(SubprocessPlugin(SubprocessConfig(terminalLimits = JvmPtyTerminalSessions.Limits(
                 inputBytes = inputBytes, ioWaitMillis = 10_000))))
             runtime.install(SessionApiPlugin())
             val handle = runtime.context.agents.create(AgentId("owner"), AgentOptions(cwd = cwd.toString()))

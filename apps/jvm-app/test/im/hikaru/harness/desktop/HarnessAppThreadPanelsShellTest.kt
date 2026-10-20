@@ -580,7 +580,7 @@ private class ShellDraftOperations : ConversationOperations {
             override suspend fun awaitIdle() = Unit
         }
     }
-    override suspend fun cancel(connection: Connection, id: SessionId) = Unit
+    override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) = Unit
 }
 
 private val SHELL_HOST = HostId("shell-panels-controlled-host")

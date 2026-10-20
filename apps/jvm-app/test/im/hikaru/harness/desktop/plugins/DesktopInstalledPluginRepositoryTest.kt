@@ -5,11 +5,10 @@ import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.agent.Agent
-import im.hikaru.harness.agent.AgentInstructionsKey
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.AgentPlugin
 import im.hikaru.harness.agent.agents
-import im.hikaru.harness.agent.loop.AgentLoopConfig
+import im.hikaru.harness.agent.instructions.AgentInstructionsPlugin
 import im.hikaru.harness.agent.loop.AgentLoopPlugin
 import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.host.HostDescribeEndpoint
@@ -45,6 +44,8 @@ import im.hikaru.harness.session.RequestHeaderEvent
 import im.hikaru.harness.session.SessionEventNames
 import im.hikaru.harness.session.SessionPlugin
 import im.hikaru.harness.session.TurnEndEvent
+import im.hikaru.harness.system.prompt.SystemPromptConfig
+import im.hikaru.harness.system.prompt.SystemPromptPlugin
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
@@ -106,7 +107,12 @@ class DesktopInstalledPluginRepositoryTest {
                 runtime.install(SessionPlugin())
                 runtime.install(LlmPlugin())
                 runtime.install(AgentPlugin())
-                runtime.context.provide(AgentInstructionsKey, f.service)
+                runtime.install(
+                    SystemPromptPlugin(
+                        SystemPromptConfig(includeHarnessIdentity = false, personaPrefix = BASE_SYSTEM),
+                    ),
+                )
+                runtime.install(AgentInstructionsPlugin(f.service))
                 val requests = mutableListOf<GenerateOptions>()
                 runtime.context.llm.registerAdapter(providers = listOf("plugin-update-fixture"), adapter = object : LlmAdapter {
                     override fun stream(options: GenerateOptions): Flow<StreamChunk> {
@@ -114,7 +120,7 @@ class DesktopInstalledPluginRepositoryTest {
                         return flowOf(BlockStartChunk(0, "text"), TextDeltaChunk(0, "done"), FinishChunk(StopFinishReason))
                     }
                 })
-                runtime.install(AgentLoopPlugin(AgentLoopConfig(system = BASE_SYSTEM)))
+                runtime.install(AgentLoopPlugin())
                 val agent = runtime.context.agents.create(options = AgentOptions(provider = "plugin-update-fixture", model = "test")).agent
                 request(agent, "old enabled snapshot")
                 val oldSystem = assertNotNull(requests.last().system)
@@ -384,8 +390,13 @@ class DesktopInstalledPluginRepositoryTest {
                 runtime.install(SessionPlugin())
                 runtime.install(LlmPlugin())
                 runtime.install(AgentPlugin())
-                // The adapter and AgentInstructionsKey receive exactly the same disk service.
-                runtime.context.provide(AgentInstructionsKey, f.service)
+                // The prompt section reads exactly the same disk service as the adapter.
+                runtime.install(
+                    SystemPromptPlugin(
+                        SystemPromptConfig(includeHarnessIdentity = false, personaPrefix = BASE_SYSTEM),
+                    ),
+                )
+                runtime.install(AgentInstructionsPlugin(f.service))
                 val requests = mutableListOf<GenerateOptions>()
                 runtime.context.llm.registerAdapter(
                     providers = listOf("plugin-fixture"),
@@ -400,7 +411,7 @@ class DesktopInstalledPluginRepositoryTest {
                         }
                     },
                 )
-                runtime.install(AgentLoopPlugin(AgentLoopConfig(system = BASE_SYSTEM)))
+                runtime.install(AgentLoopPlugin())
                 val handle = runtime.context.agents.create(options = AgentOptions(provider = "plugin-fixture", model = "test"))
                 val agent = handle.agent
                 request(agent, "registered but disabled")

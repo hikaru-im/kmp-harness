@@ -7,6 +7,8 @@ import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.host.HostDescribeEndpoint
 import im.hikaru.harness.api.gateway.session.SessionCancelEndpoint
 import im.hikaru.harness.api.gateway.session.SessionCancelRequest
+import im.hikaru.harness.api.gateway.session.SessionForkEndpoint
+import im.hikaru.harness.api.gateway.session.SessionForkRequest
 import im.hikaru.harness.api.gateway.session.SessionCreateEndpoint
 import im.hikaru.harness.api.gateway.session.SessionCreateRequest
 import im.hikaru.harness.api.gateway.session.SessionHistoryEndpoint
@@ -226,6 +228,10 @@ public class LocalConnection(
             override suspend fun cancel(id: ClientSessionId, keepInbox: Boolean) {
                 invoke(SessionCancelEndpoint, SessionCancelRequest(SessionId(id.value), keepInbox))
             }
+
+            override suspend fun fork(parent: ClientSessionId, beforeMessageId: String): ClientSessionSummary =
+                invoke(SessionForkEndpoint, SessionForkRequest(SessionId(parent.value), beforeMessageId))
+                    .let(::toClientSummary)
         }
 
     private suspend fun <Request : Any, Response : Any, Result> backgroundMutation(
@@ -280,7 +286,8 @@ private fun toClientSummary(summary: SessionSummary): ClientSessionSummary =
         title = summary.title, updatedAt = summary.updatedAt, pinned = summary.pinned, unread = summary.unread,
         archived = summary.archived, revision = summary.revision, lastEventSeq = summary.lastEventSeq,
         managementAvailable = summary.managementAvailable, archiveAvailable = summary.archiveAvailable,
-        live = summary.live, customTitle = summary.customTitle, lastReadSeq = summary.lastReadSeq,
+        live = summary.live, running = summary.running,
+        customTitle = summary.customTitle, lastReadSeq = summary.lastReadSeq,
     )
 
 internal fun toClientMessage(message: Message): ClientMessage =

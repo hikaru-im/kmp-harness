@@ -62,4 +62,4 @@ public interface SessionTerminalHostService {
     public suspend fun close(key: TerminalKey): TerminalMutationResult
 }
 
-public object SessionTerminalHostKey : ServiceKey<SessionTerminalHostService>("session-terminal-host")
+public object SessionTerminalHostKey : ServiceKey<SessionTerminalHostService>("terminal-host")

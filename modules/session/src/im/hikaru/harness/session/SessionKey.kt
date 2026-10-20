@@ -5,7 +5,7 @@ import im.hikaru.harness.runtime.service.ServiceKey
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-object SessionKey : ServiceKey<SessionStore>("session")
+object SessionKey : ServiceKey<SessionStore>("sessions")
 
 val Context.sessions: SessionStore
     get() = require(SessionKey)

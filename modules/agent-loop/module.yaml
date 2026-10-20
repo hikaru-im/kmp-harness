@@ -10,4 +10,8 @@ dependencies:
   - ../loader
   - ../runtime
   - ../session
+  - ../system-prompt
   - ../tools
+
+test-dependencies:
+  - ../agent-instructions

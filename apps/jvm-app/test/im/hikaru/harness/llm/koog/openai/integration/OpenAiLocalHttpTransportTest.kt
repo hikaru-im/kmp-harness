@@ -436,7 +436,7 @@ class OpenAiLocalHttpTransportTest {
 
     private fun openAiProviderPlugin(): DesktopLlmProviderPlugin =
         DesktopLlmProviderPlugin(
-            id = "llm-koog-openai",
+            id = "llm-openai",
             plugin = OpenAiKoogPlugin(),
         )
 

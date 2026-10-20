@@ -70,6 +70,14 @@ public data class SessionCancelRequest(
 
 public object SessionCancelEndpoint : ApiEndpoint<SessionCancelRequest, Unit>("session.cancel")
 
+@kotlinx.serialization.Serializable
+public data class SessionForkRequest(
+    val parent: SessionId,
+    val beforeMessageId: String,
+)
+
+public object SessionForkEndpoint : ApiEndpoint<SessionForkRequest, SessionSummary>("session.fork")
+
 /** Register all session operations for the lifetime of the root Host Context. */
 public suspend fun ApiGateway.registerSessionApi(owner: Context): Disposable {
     val registrations = listOf(
@@ -136,6 +144,9 @@ public suspend fun ApiGateway.registerSessionApi(owner: Context): Disposable {
         },
         register(owner, SessionCancelEndpoint) { request ->
             withSessionApi(owner) { it.cancel(request.id, request.keepInbox); Unit }
+        },
+        register(owner, SessionForkEndpoint) { request ->
+            withSessionApi(owner) { it.fork(request.parent, request.beforeMessageId) }
         },
         registerSessionTerminals(owner),
     )

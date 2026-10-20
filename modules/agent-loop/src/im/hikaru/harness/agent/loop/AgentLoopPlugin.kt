@@ -7,6 +7,8 @@ import im.hikaru.harness.agent.AgentRegistry
 import im.hikaru.harness.agent.QuiescentRestorableFactory
 import im.hikaru.harness.llm.LlmRuntime
 import im.hikaru.harness.llm.LlmKey
+import im.hikaru.harness.system.prompt.SystemPromptKey
+import im.hikaru.harness.system.prompt.SystemPromptService
 import im.hikaru.harness.tools.ToolsKey
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.EffectScope
@@ -24,6 +26,7 @@ class AgentLoopPlugin(
             InjectSpec.required(AgentKey),
             InjectSpec.required(LlmKey),
             InjectSpec.optional(ToolsKey),
+            InjectSpec.optional(SystemPromptKey),
         )
 
     override suspend fun apply(
@@ -31,9 +34,19 @@ class AgentLoopPlugin(
         scope: EffectScope,
     ) {
         val registry: AgentRegistry = context.require(AgentKey)
+        context.get(SystemPromptKey)?.let { prompt ->
+            // DSH exposes the selected model as prompt variables so a
+            // deployment persona can interpolate it.
+            scope.add(prompt.variable("provider") { it.agent?.options?.provider })
+            scope.add(prompt.variable("model") { it.agent?.options?.model })
+        }
         val handle =
             registry.registerFactory(
-                LoopAgentFactory(context.require(LlmKey), config)
+                LoopAgentFactory(
+                    llm = context.require(LlmKey),
+                    config = config,
+                    systemPrompt = context.get(SystemPromptKey),
+                )
             )
         scope.add(handle)
     }
@@ -47,6 +60,7 @@ class AgentLoopPlugin(
 private class LoopAgentFactory(
     private val llm: LlmRuntime,
     private val config: AgentLoopConfig,
+    private val systemPrompt: SystemPromptService?,
 ) : QuiescentRestorableFactory {
     override suspend fun create(request: AgentFactoryRequest): Agent {
         val callConfig = request.options.requireCallConfig()
@@ -55,6 +69,7 @@ private class LoopAgentFactory(
             llm = llm,
             config = config,
             callConfig = callConfig,
+            systemPrompt = systemPrompt,
         )
     }
 }

@@ -74,8 +74,16 @@ public sealed interface BackgroundOutputResult {
         val truncated: Boolean,
         val lifecycle: BackgroundProcessLifecycle,
         val inputState: BackgroundInputState = BackgroundInputState.Unsupported,
+        /** Absolute number of UTF-16 code units captured before the bounded tail was applied. */
+        val totalChars: Long = buffer.length.toLong(),
+        /** The producer's watchdog ended the process at its configured deadline. */
+        val timedOut: Boolean = false,
     ) : BackgroundOutputResult {
-        init { require(ownerSession == parent); require(revision >= 0) }
+        init {
+            require(ownerSession == parent)
+            require(revision >= 0)
+            require(totalChars >= buffer.length)
+        }
     }
 }
 
@@ -172,6 +180,10 @@ public interface BackgroundProcessesService {
         BackgroundControlResult.Unavailable(parent, process, "Background process control service is unavailable")
 }
 
-public object BackgroundProcessesKey : ServiceKey<BackgroundProcessesService>("session.background-processes")
+/**
+ * Producer output seam read by the session API. [im.hikaru.harness.exec.jvm.JobsKey]
+ * is the separate DSH-style `jobs` registry, so this key keeps its own name.
+ */
+public object BackgroundProcessesKey : ServiceKey<BackgroundProcessesService>("background-processes")
 public val Context.backgroundProcesses: BackgroundProcessesService?
     get() = get(BackgroundProcessesKey)

@@ -7,19 +7,19 @@ import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.EffectScope
 import im.hikaru.harness.runtime.plugin.InjectSpec
 import im.hikaru.harness.runtime.plugin.SimplePlugin
+import im.hikaru.harness.session.SessionEvents
 import im.hikaru.harness.session.SessionKey
 import im.hikaru.harness.session.api.BackgroundProcessesKey
 import im.hikaru.harness.session.api.SessionTerminalHostKey
-import im.hikaru.harness.tools.ToolsKey
 import java.nio.file.Path
 
-public const val EXEC_PROCESS_PLUGIN_NAME: String = "exec-process"
+public const val SUBPROCESS_PLUGIN_NAME: String = "subprocess"
 
-/** Compiled local JVM producer. The launcher installs this only in its actual local Host. */
-public val ExecProcessPluginDefinition: PluginDefinition =
-    pluginDefinition(EXEC_PROCESS_PLUGIN_NAME, ExecProcessPlugin())
+/** Compiled local JVM provider. The launcher installs this only in its actual local Host. */
+public val SubprocessPluginDefinition: PluginDefinition =
+    pluginDefinition(SUBPROCESS_PLUGIN_NAME, SubprocessPlugin())
 
-public data class ExecProcessConfig(
+public data class SubprocessConfig(
     val maxOutputChars: Int = 256 * 1024,
     val maxProcesses: Int = 128,
     val defaultTimeoutMillis: Long = 60_000,
@@ -44,20 +44,26 @@ public data class ExecProcessConfig(
     }
 }
 
-public class ExecProcessPlugin(private val config: ExecProcessConfig = ExecProcessConfig()) : SimplePlugin {
+/**
+ * Local subprocess Provider. It exposes the execution seam consumed by the
+ * shell tools, the background process inventory used by the UI, and the PTY
+ * terminal host. Shell syntax and tool schemas stay in `tool-bash`/`tool-pwsh`.
+ */
+public class SubprocessPlugin(private val config: SubprocessConfig = SubprocessConfig()) : SimplePlugin {
     override val inject: Set<InjectSpec> = setOf(
-        InjectSpec.required(ToolsKey), InjectSpec.required(SessionKey), InjectSpec.required(AgentKey),
+        InjectSpec.required(SessionKey), InjectSpec.required(AgentKey),
     )
 
     override suspend fun apply(context: Context, scope: EffectScope) {
-        val producer = ExecProcessProducer(context, config)
+        val subprocess = LocalSubprocess(context, config)
         // Register cleanup first so partial installation is also owned. Reverse disposal
-        // unregisters the tool/read service before stopping the owned OS processes.
-        scope.add(producer)
-        scope.add(context.provide(BackgroundProcessesKey, producer))
-        scope.add(context.require(ToolsKey).register(ExecProcessProducer.schema, producer))
+        // unregisters the services before stopping the owned OS processes.
+        scope.add(subprocess)
+        scope.add(context.provide(SubprocessKey, subprocess))
+        scope.add(context.provide(BackgroundProcessesKey, subprocess))
         val terminalHost = JvmSessionTerminalHost(context, config.maxTerminalBindings, config.terminalLimits, config.allowedRoots)
         scope.add(terminalHost)
+        scope.add(context.on(SessionEvents.Disposed) { notice -> terminalHost.ownerDisposed(notice.session.id) })
         scope.add(context.provide(SessionTerminalHostKey, terminalHost))
     }
 }

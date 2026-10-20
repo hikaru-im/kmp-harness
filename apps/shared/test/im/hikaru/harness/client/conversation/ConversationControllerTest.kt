@@ -175,6 +175,79 @@ class ConversationControllerTest {
     }
 
     @Test
+    fun hostReportedRunningIsAuthoritativeForStopAvailability() = runTest {
+        val operations = FakeOperations().apply { listResult = { listOf(SUMMARY.copy(running = true)) } }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        controller.select(SESSION)
+        runCurrent()
+        assertTrue(controller.state.value.canCancel)
+        assertFalse(controller.state.value.canEdit)
+
+        operations.listResult = { listOf(SUMMARY.copy(running = false)) }
+        assertNotNull(controller.refreshSessions()).join()
+        runCurrent()
+        assertFalse(controller.state.value.canCancel)
+        assertTrue(controller.state.value.canEdit)
+        controller.close()
+    }
+
+    @Test
+    fun stopKeepsTheQueuedInbox() = runTest {
+        val operations = FakeOperations().apply { listResult = { listOf(SUMMARY.copy(running = true)) } }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        controller.select(SESSION)
+        controller.updateDraft("run")
+        assertNotNull(controller.submit()).join()
+        runCurrent()
+        assertNotNull(controller.cancel()).join()
+        assertEquals(listOf(true), operations.cancelKeepInbox)
+        controller.close()
+    }
+
+    @Test
+    fun cancellingAnEditRestoresThePreEditDraft() = runTest {
+        val operations = FakeOperations().apply {
+            historyResult = { _, _ -> listOf(userMessage("m-first", "first"), message("answer")) }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        controller.select(SESSION)
+        runCurrent()
+        controller.updateDraft("unsent")
+        controller.beginEdit("m-first")
+        assertEquals("first", controller.state.value.draft)
+        controller.cancelEdit()
+        assertEquals("unsent", controller.state.value.draft)
+        assertNull(controller.state.value.editing)
+        controller.close()
+    }
+
+    @Test
+    fun editingForksBeforeTheMessageAndPromptsTheEditedTextIntoTheChild() = runTest {
+        val operations = FakeOperations().apply {
+            historyResult = { _, _ -> listOf(userMessage("m-first", "first"), message("answer")) }
+        }
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST)
+        controller.select(SESSION)
+        runCurrent()
+        assertTrue(controller.state.value.canEdit)
+        controller.beginEdit("m-first")
+        controller.updateDraft("edited")
+        assertNotNull(controller.submit()).join()
+        runCurrent()
+        assertEquals(listOf(SESSION to "m-first"), operations.forkRequests)
+        assertEquals(listOf(OTHER), operations.promptIds)
+        assertEquals("edited", (operations.promptMessages.single().content.single() as TextContent).text)
+        assertEquals(OTHER, controller.state.value.selectedSessionId)
+        assertNull(controller.state.value.editing)
+        assertEquals("", controller.state.value.draft)
+        controller.close()
+    }
+
+    @Test
     fun recordedModelFailureIsShownAfterLocalIdleWithoutResending() = runTest {
         val operations = FakeOperations().apply {
             promptResult = { id, _ -> object : SessionPrompt {
@@ -663,7 +736,7 @@ class ConversationControllerTest {
         runCurrent()
         assertEquals("", controller.state.value.draft)
         assertEquals("accepted-1", controller.state.value.lastAcceptedMessageId)
-        assertEquals(ConversationAction.RunningUnknown, controller.state.value.action)
+        assertEquals(ConversationAction.Idle, controller.state.value.action)
         assertEquals(ConversationDataPhase.Failed, controller.state.value.historyPhase)
         assertEquals(ConversationRetry.History, controller.state.value.errors[ConversationErrorKind.History]?.retry)
         assertFalse(controller.state.value.errors.containsKey(ConversationErrorKind.Prompt))
@@ -737,7 +810,7 @@ class ConversationControllerTest {
         runCurrent()
         assertEquals("", controller.state.value.draft)
         assertNotNull(controller.state.value.lastAcceptedReceipt)
-        assertEquals(ConversationRunState.Unknown, controller.state.value.runState)
+        assertEquals(ConversationRunState.Idle, controller.state.value.runState)
         assertTrue(controller.state.value.errors.containsKey(ConversationErrorKind.Completion))
         assertFalse(controller.state.value.errors.containsKey(ConversationErrorKind.Prompt))
         controller.close()
@@ -745,7 +818,10 @@ class ConversationControllerTest {
 
     @Test
     fun deliveryAcknowledgementNeverCallsAwaitIdleOrBecomesIdleOnRefresh() = runTest {
-        val operations = FakeOperations().apply { idleResult = { error("must not be called for relay semantics") } }
+        val operations = FakeOperations().apply {
+            idleResult = { error("must not be called for relay semantics") }
+            listResult = { listOf(SUMMARY.copy(running = true)) }
+        }
         val controller = ConversationController(backgroundScope, operations)
         controller.bind(operations.connection, HOST)
         controller.select(SESSION)
@@ -756,17 +832,24 @@ class ConversationControllerTest {
         assertEquals(0, operations.awaitIdleCalls)
         assertEquals(CompletionCapability.DeliveryAcknowledgedOnly, controller.state.value.completionCapability)
         assertEquals(ConversationAction.RunningUnknown, controller.state.value.action)
-        assertEquals(ConversationRunState.Unknown, controller.state.value.runState)
+        assertEquals(ConversationRunState.Running, controller.state.value.runState)
         assertTrue(controller.state.value.canCancel)
         controller.updateDraft("next")
-        assertFalse(controller.state.value.canSubmit, "receipt/history cannot prove agent completion")
+        assertFalse(controller.state.value.canSubmit, "the Host still reports the turn as running")
+        operations.listResult = { listOf(SUMMARY.copy(running = false)) }
+        assertNotNull(controller.refreshSessions()).join()
+        assertEquals(ConversationAction.Idle, controller.state.value.action)
+        assertTrue(controller.state.value.canSubmit)
         controller.close()
     }
 
     @Test
     fun delayedCancelSurvivesRefreshAndFailureRestoresRunningAction() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val operations = FakeOperations().apply { cancelResult = { gate.await(); error("stop unavailable") } }
+        val operations = FakeOperations().apply {
+            cancelResult = { gate.await(); error("stop unavailable") }
+            listResult = { listOf(SUMMARY.copy(running = true)) }
+        }
         val controller = ConversationController(backgroundScope, operations)
         controller.bind(operations.connection, HOST)
         controller.select(SESSION)
@@ -790,7 +873,7 @@ class ConversationControllerTest {
     }
 
     @Test
-    fun stopAcknowledgementReleasesLocalWaitWithoutClaimingIdle() = runTest {
+    fun stopAcknowledgementReleasesLocalWaitAndTheHostSettlesIdle() = runTest {
         val idle = CompletableDeferred<Unit>()
         val operations = FakeOperations().apply { idleResult = { idle.await() } }
         val controller = ConversationController(backgroundScope, operations)
@@ -804,7 +887,7 @@ class ConversationControllerTest {
         assertTrue(send.isCancelled)
         assertFalse(controller.state.value.cancelling)
         assertEquals(ConversationAction.Idle, controller.state.value.action)
-        assertEquals(ConversationRunState.Unknown, controller.state.value.runState)
+        assertEquals(ConversationRunState.Idle, controller.state.value.runState)
         assertNotNull(controller.state.value.lastAcceptedReceipt)
         controller.close()
     }
@@ -1047,7 +1130,7 @@ class ConversationControllerTest {
         runCurrent()
         assertEquals(listOf(SESSION), operations.promptIds)
         assertEquals("", controller.state.value.draft)
-        assertEquals(ConversationAction.RunningUnknown, controller.state.value.action)
+        assertEquals(ConversationAction.Idle, controller.state.value.action)
         assertNotNull(controller.state.value.lastAcceptedReceipt)
         controller.close()
     }
@@ -1181,6 +1264,9 @@ private fun message(text: String) = Message(
     "m-$text", MessageRole.ASSISTANT, listOf(TextContent(text)), ModelMessageSource("test-provider", "test-model"),
 )
 
+private fun userMessage(id: String, text: String) =
+    Message(id, MessageRole.USER, listOf(TextContent(text)), UserMessageSource)
+
 private fun event(id: SessionId, host: HostId, sequence: Long) = RelayEvent(
     eventId = EventId("event-$sequence"), hostId = host, streamId = StreamId(id.value), sequence = sequence,
     event = "assistant/chunk", payload = JsonPrimitive("not authoritative history"),
@@ -1229,9 +1315,17 @@ private class FakeOperations : ConversationOperations {
         promptMessages += message
         return promptResult(id, message)
     }
-    override suspend fun cancel(connection: Connection, id: SessionId) {
+    val cancelKeepInbox = mutableListOf<Boolean>()
+    override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) {
         cancelIds += id
+        cancelKeepInbox += keepInbox
         cancelResult()
+    }
+    val forkRequests = mutableListOf<Pair<SessionId, String>>()
+    var forkResult: suspend (SessionId, String) -> SessionSummary = { _, _ -> SUMMARY.copy(id = OTHER, createdAt = 2) }
+    override suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary {
+        forkRequests += parent to beforeMessageId
+        return forkResult(parent, beforeMessageId)
     }
     fun accepted(id: SessionId): SessionPrompt = object : SessionPrompt {
         override val receipt = SessionPromptReceipt(id, "accepted-" + promptIds.size)
