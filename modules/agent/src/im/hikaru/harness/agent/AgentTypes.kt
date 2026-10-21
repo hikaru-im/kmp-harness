@@ -5,6 +5,7 @@ import im.hikaru.harness.llm.LlmCallConfig
 import im.hikaru.harness.llm.LlmFailure
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.llm.ReasoningEffortId
+import im.hikaru.harness.llm.ReasoningOptions
 import im.hikaru.harness.llm.RetryPolicy
 import im.hikaru.harness.llm.defaultRetryPolicy
 import im.hikaru.harness.runtime.Context
@@ -24,6 +25,7 @@ data class AgentOptions(
     val model: String? = null,
     val reasoningEffort: ReasoningEffortId? = null,
     val maxTokens: Long? = null,
+    val reasoning: ReasoningOptions? = null,
 ) {
     init {
         require(preset == null || preset.isNotBlank()) { "Agent preset must not be blank" }
@@ -47,6 +49,7 @@ data class AgentOptions(
             model = selectedModel,
             reasoningEffort = reasoningEffort,
             maxTokens = maxTokens,
+            reasoning = reasoning,
         )
     }
 }
@@ -86,6 +89,7 @@ data class InboxItem(
     val message: Message,
     val target: AgentSendTarget,
     val wakeup: AgentWakeup,
+    val callConfig: LlmCallConfig? = null,
 ) {
     init {
         require(id.isNotBlank()) { "Inbox item id must not be blank" }

@@ -9,24 +9,30 @@ import im.hikaru.harness.llm.GenerateOptions
 import im.hikaru.harness.llm.LlmException
 import im.hikaru.harness.llm.koog.KoogLlmErrorCode
 import im.hikaru.harness.llm.koog.KoogOptionMapper
+import im.hikaru.harness.llm.koog.KoogModelRoute
+import im.hikaru.harness.llm.koog.KoogStreamContext
+import im.hikaru.harness.llm.koog.openai.providers.OpenAiCompatibleCapabilityRules
+import im.hikaru.harness.llm.koog.openai.providers.compileReasoning
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 
 /** OpenAI Responses API 参数映射。 */
 public class OpenAiResponsesOptionMapper : KoogOptionMapper {
     override fun map(
         options: GenerateOptions,
         model: LLModel,
-    ): LLMParams {
+    ): LLMParams = map(options, model, KoogStreamContext(options.provider, model.id, model.provider.id, OPENAI_RESPONSES_API_ID))
+
+    override fun resolveModel(route: KoogModelRoute, context: KoogStreamContext): KoogModelRoute =
+        OpenAiCompatibleCapabilityRules.resolve(route, context)
+
+    override fun map(options: GenerateOptions, model: LLModel, context: KoogStreamContext): LLMParams {
         requireResponsesRoute(options, model)
         requireCapability(model, LLMCapability.Completion, "completion")
         requireCapability(model, LLMCapability.OpenAIEndpoint.Responses, "Responses API")
 
         if (options.stop != null) {
             unsupported("OpenAI Responses API does not support stop sequences in this adapter")
-        }
-        if (options.reasoningEffort != null) {
-            unsupported(
-                "OpenAI Responses reasoning effort is not enabled until a route declares its reasoning contract",
-            )
         }
         if (options.temperature != null && !model.supports(LLMCapability.Temperature)) {
             unsupported("Model ${model.id} does not support temperature")
@@ -36,6 +42,9 @@ public class OpenAiResponsesOptionMapper : KoogOptionMapper {
             temperature = options.temperature,
             maxTokens = options.maxTokens?.toOpenAiInt(),
             store = false,
+            additionalProperties = compileReasoning(options, context) +
+                if (context.vendor == "openai" && model.supports(LLMCapability.Thinking))
+                    mapOf("include" to JsonArray(listOf(JsonPrimitive("reasoning.encrypted_content")))) else emptyMap(),
         )
     }
 

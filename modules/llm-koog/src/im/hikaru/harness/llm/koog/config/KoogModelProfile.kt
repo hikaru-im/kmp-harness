@@ -42,6 +42,8 @@ data class KoogModelProfile(
     val maxTokens: Long? = null,
     val input: List<ModelModality>? = null,
     val reasoningEfforts: KoogReasoningEfforts? = null,
+    /** Output capacity learned from a catalog; never becomes a request default. */
+    val maxOutputTokens: Long? = null,
 ) {
     init {
         require(id.isNotBlank()) { "Koog model profile id must not be blank" }
@@ -52,6 +54,8 @@ data class KoogModelProfile(
         require(maxTokens == null || maxTokens > 0L) {
             "Koog model profile max tokens must be positive"
         }
+        require(maxOutputTokens == null || maxOutputTokens > 0L) { "Model output capacity must be positive" }
+        require(maxTokens == null || maxOutputTokens == null || maxTokens <= maxOutputTokens) { "Model default exceeds output capacity" }
         require(input == null || input.distinct().size == input.size) {
             "Koog model profile input must not contain duplicates"
         }

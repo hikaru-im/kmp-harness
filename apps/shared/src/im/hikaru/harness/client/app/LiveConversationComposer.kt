@@ -42,6 +42,9 @@ public fun LiveConversationComposer(
     reasoningEffortKnown: Boolean = state.selectedSessionId == null,
     /** Home rail (`data-composer-rail`, placement above): painted behind the card's top edge. */
     topRail: (@Composable () -> Unit)? = null,
+    selectedReasoning: im.hikaru.harness.client.connection.ReasoningOptions? = null,
+    onReasoningSelect: ((im.hikaru.harness.client.connection.ReasoningOptions) -> Unit)? = null,
+    onManageModels: (() -> Unit)? = null,
 ) {
     val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight)
     val suppliedViewport = LocalConversationViewportHeight.current
@@ -143,9 +146,14 @@ public fun LiveConversationComposer(
                 )
                 ConversationComposerToolbar(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
                     selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown,
-                    permission, onPermissionSelect, draftEmpty = editor.text.isBlank())
-                // The composer carries no status sentence: progress lives on the stop button, failures
-                // arrive as toasts (ConversationErrorToasts), and the draft keeps the full card.
+                    permission, onPermissionSelect, draftEmpty = editor.text.isBlank(),
+                    selectedReasoning = selectedReasoning, onManageModels = onManageModels)
+                if (!useHostDefaultModel && selectedModel != null &&
+                    models.none { it.providerId == selectedModel.providerId && it.modelId == selectedModel.modelId }) {
+                    HarnessText(submitUnavailableReason ?: "当前模型已关闭或不可用，请重新选择模型。",
+                        Modifier.padding(horizontal = HarnessTokens.Composer.PaddingX).semantics { testTag = "live-composer-model-unavailable" },
+                        color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         }
