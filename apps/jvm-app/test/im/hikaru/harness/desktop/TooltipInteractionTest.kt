@@ -260,10 +260,12 @@ class TooltipInteractionTest {
         waitUntil(timeoutMillis = 10_000) { state.navigation.currentPage == PageId.Plugins }
         assertEquals(listOf("plugins"), calls); advance(400)
         onNodeWithTag("rail-tooltip-plugins").assertDoesNotExist()
-        hover("rail-explore"); advance(250); onNodeWithTag("rail-tooltip-explore").assertIsDisplayed()
-        pointer("rail-explore")
+        // 探索 opens its pin menu on hover and never draws a rail tip; a click only keeps it open.
+        hover("rail-explore"); advance(250)
         onNodeWithTag("explore-menu").assertIsDisplayed()
         onNodeWithTag("rail-tooltip-explore").assertDoesNotExist(); assertEquals(1, moreCalls)
+        pointer("rail-explore")
+        onNodeWithTag("explore-menu").assertIsDisplayed(); assertEquals(2, moreCalls)
         hover("rail-home"); advance(250); onNodeWithTag("rail-tooltip-home").assertDoesNotExist()
         // Pinning 项目 from the menu adds the second rail group without navigating.
         pointer("explore-pin-projects")

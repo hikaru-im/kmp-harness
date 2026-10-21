@@ -81,10 +81,14 @@ class WorktreeSessionObservationInteractionTest {
                 assertEquals(setOf("history-parent", "dual-child", "live-grandchild"), byId.keys)
                 assertEquals(setOf(ManagedSessionSource.Durable), byId.getValue("history-parent").sources)
                 assertEquals(setOf(ManagedSessionSource.Live, ManagedSessionSource.Durable), byId.getValue("dual-child").sources)
-                assertEquals(setOf(ManagedSessionSource.Live), byId.getValue("live-grandchild").sources)
+                // Creating a live session persists its header, so a still-live child is observable
+                // through both sources without any explicit flush.
+                assertEquals(setOf(ManagedSessionSource.Live, ManagedSessionSource.Durable),
+                    byId.getValue("live-grandchild").sources)
                 assertEquals("history-parent", byId.getValue("dual-child").parentSessionId)
                 assertEquals("dual-child", byId.getValue("live-grandchild").parentSessionId)
-                onNodeWithText("来源：本次内存会话 + 持久历史").assertExists()
+                // Both the flushed child and the still-live grandchild are observable through both sources.
+                onAllNodesWithText("来源：本次内存会话 + 持久历史").assertCountEquals(2)
                 onNodeWithText("父会话：history-parent").assertExists()
                 onNodeWithTag("managed-session-observation-time").assertTextEquals(observationTime(observed))
                 assertEquals(live, runBlocking { f.context.sessions.list() })
@@ -143,7 +147,9 @@ class WorktreeSessionObservationInteractionTest {
                 val select = observationNode(button.id)
                 revealObservation(select)
                 mouseObservation(select)
-                waitUntil(timeoutMillis = 10_000) {
+                // Selecting the linked worktree re-reads it through real git; the whole-module JVM
+                // can exceed the 10s a single read would take on its own.
+                waitUntil(timeoutMillis = 30_000) {
                     val git = page.git.state.value
                     git.selectedCwd == f.linked.toString() && git.observationRepositoryReady()
                 }

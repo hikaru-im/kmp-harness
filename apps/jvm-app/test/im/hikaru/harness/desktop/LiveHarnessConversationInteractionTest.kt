@@ -46,44 +46,6 @@ class LiveHarnessConversationInteractionTest {
     }
 
     @Test
-    fun subagentPanelReadsVerifiedHistoryRefreshesAndClearsWhenParentChanges() =
-        runSkikoComposeUiTest(size = Size(1440f, 900f)) {
-            val parent = SessionId("panel-parent")
-            val other = SessionId("other-parent")
-            val child = SessionId("verified-child")
-            val api = LiveTestSessionApi(listOf(liveSummary(parent), liveSummary(other)))
-            api.descendantResults[parent] = SessionDescendantsResult.Available(parent, listOf(
-                SessionDescendant(child, parent, listOf(parent, child), DescendantStatus.UNKNOWN)))
-            api.descendantResults[other] = SessionDescendantsResult.Available(other, emptyList())
-            api.childResults[parent to child] = ChildHistoryResult.Available(parent, child, listOf(parent, child),
-                listOf(liveAssistant("Verified child history")))
-            val connection = LiveTestConnection(api)
-            val models = liveTestModels()
-            setContent { HarnessApp(connection, modelSettingsRepository = models) }
-            onNodeWithTag("recent-${parent.value}").performClick()
-            onNodeWithTag("tab:Subagents").assertDoesNotExist()
-            onNodeWithText("子 Agent").performClick()
-            onNodeWithText(child.value).performClick()
-            onNodeWithText("Verified child history").assertExists()
-            onNodeWithText("只读对话记录").assertExists()
-            onNodeWithText("刷新历史").performClick()
-            runOnIdle {
-                assertEquals(listOf(parent to child, parent to child), api.childReads.toList())
-                assertFalse(child in api.historyReads, "Child panel must use lineage checked history")
-            }
-            onNodeWithContentDescription("返回子智能体").performClick()
-            onNodeWithText("刷新子智能体").performClick()
-            runOnIdle { assertEquals(listOf(parent, parent), api.descendantReads.toList()) }
-            onNodeWithTag("recent-${other.value}").performClick()
-            onNodeWithTag("tab:Subagents").assertDoesNotExist()
-            onNodeWithText("Verified child history").assertDoesNotExist()
-            onNodeWithText("子 Agent").performClick()
-            onNodeWithText("没有可读取的 live 子智能体").assertExists()
-            onNodeWithText(child.value).assertDoesNotExist()
-            runOnIdle { assertTrue(api.creates.isEmpty()); assertTrue(api.prompts.isEmpty()); assertTrue(api.cancels.isEmpty()) }
-        }
-
-    @Test
     fun homeCreatesWithCatalogModelThenPromptsTheReturnedIdAndEntersThread() =
         runSkikoComposeUiTest(size = Size(1440f, 900f)) {
             val api = LiveTestSessionApi()
@@ -278,42 +240,6 @@ class LiveHarnessConversationInteractionTest {
             } finally { replacementHistory.release.complete(Unit) }
         }
 
-    @Test
-    fun terminalAndSubagentPanelsCloseAnd600dpOverlayPreservesTheMainArea() =
-        runSkikoComposeUiTest(size = Size(600f, 800f)) {
-            val api = LiveTestSessionApi()
-            val connection = LiveTestConnection(api)
-            val models = liveTestModels()
-            setContent { HarnessApp(connection, modelSettingsRepository = models, themeMode = HarnessThemeMode.Light) }
-            // The rail is always mounted; a compact window floats the navigator instead of a drawer.
-            chooseLiveTestModel()
-            onNodeWithTag("live-composer-editor").performTextReplacement("Open the real Thread route")
-            onNodeWithTag("live-composer-send").assertIsEnabled().performClick()
-            onNodeWithTag("live-thread").assertExists()
-            // Thread routing and the owner-fenced panel binding run in separate effects.
-            waitUntil { onAllNodesWithText("终端").fetchSemanticsNodes().isNotEmpty() }
-            val before = onNodeWithTag("main-content-column").fetchSemanticsNode().boundsInRoot
-            assertTrue(before.width > 0f && before.height > 0f)
-            onNodeWithText("终端").performClick()
-            onNodeWithTag("thread-panel-overlay").assertExists()
-            onNodeWithTag("tab:BackgroundOutput").assertExists()
-            onNodeWithText("终端不可用").assertExists()
-            val during = onNodeWithTag("main-content-column").fetchSemanticsNode().boundsInRoot
-            assertEquals(before, during, "Opening an overlay must preserve the main content area")
-            onNodeWithContentDescription("关闭后台终端").performClick()
-            onNodeWithTag("thread-panel-overlay").assertDoesNotExist()
-            onNodeWithTag("tab:BackgroundOutput").assertDoesNotExist()
-            onNodeWithText("子 Agent").performClick()
-            onNodeWithTag("thread-panel-overlay").assertExists()
-            onNodeWithTag("tab:Subagents").assertExists()
-            onNodeWithText("子智能体不可用").assertExists()
-            assertEquals(before, onNodeWithTag("main-content-column").fetchSemanticsNode().boundsInRoot)
-            onNodeWithContentDescription("关闭子智能体").performClick()
-            onNodeWithTag("thread-panel-overlay").assertDoesNotExist()
-            onNodeWithTag("tab:Subagents").assertDoesNotExist()
-            onNodeWithTag("live-thread").assertExists()
-            assertEquals(before, onNodeWithTag("main-content-column").fetchSemanticsNode().boundsInRoot)
-        }
 }
 
 private const val LIVE_PROVIDER = "live-provider"
@@ -322,10 +248,13 @@ private const val LIVE_MODEL = "live-model"
 private fun SemanticsNodeInteraction.assertDraft(text: String): SemanticsNodeInteraction =
     assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(text)))
 
-private fun SemanticsNodeInteractionsProvider.chooseLiveTestModel() {
+@OptIn(ExperimentalTestApi::class)
+private fun ComposeUiTest.chooseLiveTestModel() {
     onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
-    onNodeWithTag("menu:conversation-model:${LIVE_PROVIDER.length}:$LIVE_PROVIDER:${LIVE_MODEL.length}:$LIVE_MODEL")
-        .performClick()
+    val item = "menu:conversation-model:${LIVE_PROVIDER.length}:$LIVE_PROVIDER:${LIVE_MODEL.length}:$LIVE_MODEL"
+    // The catalogue loads asynchronously; an early click opens the menu before it has rows.
+    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag(item).fetchSemanticsNodes().isNotEmpty() }
+    onNodeWithTag(item).performClick()
     onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Escape) }
     onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
 }

@@ -106,8 +106,10 @@ class ThemeLayersInteractionTest {
                 // The default light navigator is a 65% white tint over the shell; custom themes use an
                 // opaque derived navigation layer, for which compositing is a no-op.
                 sample("workspace-navigator", colors.NavigationBackground.compositeOver(colors.ShellBackground))
+                // The conversation pane draws the home page on the shared workspace canvas, while the
+                // side panel's new-tab page paints its own page surface over it.
                 sample("harness-split-left", colors.WorkspaceBackground, 0.04f)
-                sample("harness-split-right", colors.WorkspaceBackground, 0.04f)
+                sample("harness-split-right", colors.SurfaceCanvas, 0.04f)
                 val directory = File("build/reports/theme-layers").apply { mkdirs() }
                 Image.makeFromBitmap(bitmap.asSkiaBitmap()).use { image ->
                     File(directory, "$name.png").writeBytes(image.encodeToData(EncodedImageFormat.PNG)!!.bytes)

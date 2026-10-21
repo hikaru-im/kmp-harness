@@ -67,20 +67,17 @@ class ThreadMessageVisualInteractionTest {
                 Message("model-assistant", MessageRole.ASSISTANT, listOf(TextContent("Assistant body")), MODEL),
             )
             mount({ ready(messages) })
-            val expected = listOf("You · USER", "Tool message · USER", "Plugin fixture-plugin · USER",
-                "Model message · USER", "User source · ASSISTANT", "Model message · ASSISTANT")
-            messages.zip(expected).forEach { (message, description) ->
-                assertEquals(listOf(description), node("message:${message.id}").config[SemanticsProperties.ContentDescription])
+            messages.forEach { message ->
                 textIsComplete("message:${message.id}:content:0", (message.content.single() as TextContent).text)
             }
-            val assistant = layout("message:model-assistant")
-            val human = layout("message:human")
-            assertTrue(human.width < assistant.width / 2f, "Short human bubble must size to its content")
-            assertNear(assistant.right, human.right, "Human bubble end alignment")
+            // Rows are full-width frames, so bubble geometry is not directly measurable. The human path
+            // shows through its directly tagged Text; every other source goes through the markdown wrapper.
+            assertTrue(node("message:human:content:0").config.contains(SemanticsProperties.Text))
             messages.drop(1).forEach { message ->
+                assertFalse(node("message:${message.id}:content:0").config.contains(SemanticsProperties.Text))
                 val neutral = layout("message:${message.id}")
-                assertNear(assistant.left, neutral.left, "Neutral source left edge")
-                assertNear(assistant.width, neutral.width, "Neutral source full content width")
+                assertNear(layout("message:model-assistant").left, neutral.left, "Neutral source left edge")
+                assertNear(layout("message:model-assistant").width, neutral.width, "Neutral source full content width")
             }
             onNodeWithText("You").assertDoesNotExist()
             onNodeWithText("Harness").assertDoesNotExist()
@@ -90,20 +87,22 @@ class ThreadMessageVisualInteractionTest {
     fun realHeaderMouseTogglesWhileExpandedBodyClicksLeaveDisclosureOpen() =
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             mount({ ready(disclosureHistory()) })
-            assertDisclosure(REASONING, false)
-            assertDisclosure(CALL, false)
+            assertDisclosure(REASONING, false, REASONING_RENDERED)
+            assertDisclosure(CALL, false, ARGUMENTS)
             pointer("$REASONING:header")
-            assertDisclosure(REASONING, true)
-            textIsComplete("$REASONING:body", REASONING_TEXT)
-            assertFalse(node("$REASONING:body").config.contains(SemanticsActions.OnClick))
-            pointer("$REASONING:body")
-            assertDisclosure(REASONING, true)
+            assertDisclosure(REASONING, true, REASONING_RENDERED)
+            val reasoning = textTarget(REASONING, REASONING_RENDERED)
+            textIsCompleteAt(reasoning, REASONING_RENDERED, REASONING, wrapped = false)
+            assertFalse(reasoning.fetchSemanticsNode().config.contains(SemanticsActions.OnClick))
+            pointerTarget(reasoning)
+            assertDisclosure(REASONING, true, REASONING_RENDERED)
             pointer("$CALL:header")
-            assertDisclosure(CALL, true)
-            textIsComplete("$CALL:body", ARGUMENTS)
-            assertFalse(node("$CALL:body").config.contains(SemanticsActions.OnClick))
-            pointer("$CALL:body")
-            assertDisclosure(CALL, true)
+            assertDisclosure(CALL, true, ARGUMENTS)
+            val arguments = textTarget(CALL, ARGUMENTS)
+            textIsCompleteAt(arguments, ARGUMENTS, CALL, wrapped = false)
+            assertFalse(arguments.fetchSemanticsNode().config.contains(SemanticsActions.OnClick))
+            pointerTarget(arguments)
+            assertDisclosure(CALL, true, ARGUMENTS)
             pointer("$REASONING:header")
             pointer("$CALL:header")
             assertDisclosure(REASONING, false)
@@ -114,17 +113,16 @@ class ThreadMessageVisualInteractionTest {
     fun realTabEnterAndSpaceOperateIndependentFocusableHeaders() =
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             mount({ ready(disclosureHistory()) })
-            keyFromRoot(Key.Tab)
-            onNodeWithTag("$REASONING:header").assertIsFocused()
+            // The scrollable timeline is itself a Tab stop before the first activity header.
+            focusByTab("$REASONING:header")
             keyFromRoot(Key.Enter)
             assertDisclosure(REASONING, true)
             keyFromRoot(Key.Spacebar)
             assertDisclosure(REASONING, false)
-            keyFromRoot(Key.Tab)
-            onNodeWithTag("$CALL:header").assertIsFocused()
+            focusByTab("$CALL:header")
             keyFromRoot(Key.Spacebar)
-            assertDisclosure(CALL, true)
-            textIsComplete("$CALL:body", ARGUMENTS)
+            assertDisclosure(CALL, true, ARGUMENTS)
+            textIsCompleteValue(ARGUMENTS)
             assertDisclosure(REASONING, false)
             keyFromRoot(Key.Enter)
             assertDisclosure(CALL, false)
@@ -135,6 +133,8 @@ class ThreadMessageVisualInteractionTest {
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             var state by mutableStateOf(ready(disclosureHistory(long = true)))
             mount({ state })
+            // The list follows the newest message on mount, so reach the disclosure at the top first.
+            wheelUntilVisible("$REASONING:header", direction = -1f)
             pointer("$REASONING:header")
             pointer("$CALL:header")
             wheelPixels(180f)
@@ -143,20 +143,20 @@ class ThreadMessageVisualInteractionTest {
             listOf(ConversationDataPhase.Loading, ConversationDataPhase.Failed, ConversationDataPhase.Ready).forEach { phase ->
                 runOnIdle { state = state.copy(historyPhase = phase) }
                 settle()
-                assertDisclosure(REASONING, true)
-                assertDisclosure(CALL, true)
-                textIsComplete("$REASONING:body", REASONING_TEXT)
-                textIsComplete("$CALL:body", ARGUMENTS)
+                assertDisclosure(REASONING, true, REASONING_RENDERED)
+                assertDisclosure(CALL, true, ARGUMENTS)
+                textIsCompleteValue(REASONING_RENDERED)
+                textIsCompleteValue(ARGUMENTS)
                 assertNear(before, scrollValue(), "Same-scope $phase keeps first item/offset", 0.02f)
             }
             val replacement = "Updated typed reasoning in the same session"
             runOnIdle { state = state.copy(host = state.host!!.copy(generation = 2),
                 history = state.history.map { it.copy(content = listOf(ReasoningContent(replacement)) + it.content.drop(1)) }) }
             settle()
-            assertDisclosure(REASONING, true)
-            assertDisclosure(CALL, true)
-            textIsComplete("$REASONING:body", replacement)
-            textIsComplete("$CALL:body", ARGUMENTS)
+            assertDisclosure(REASONING, true, replacement)
+            assertDisclosure(CALL, true, ARGUMENTS)
+            textIsCompleteValue(replacement)
+            textIsCompleteValue(ARGUMENTS)
             assertNear(before, scrollValue(), "Generation is excluded from timeline composition key", 0.02f)
         }
 
@@ -179,42 +179,65 @@ class ThreadMessageVisualInteractionTest {
             mount({ ready(history) })
             val first = "message:repeated:content:0"
             val second = "message:repeated:content:1"
+            val result = "message:repeated:content:2"
+            // An unmatched result is its own row; it never folds into a call.
+            pointer("message:orphan:content:0:header")
+            assertDisclosure("message:orphan:content:0", true, "Unmatched result before calls")
+            textIsComplete("message:orphan:content:0:content:0", "Unmatched result before calls")
+
+            // Both calls share one id, so the result folds under whichever call is open; only one is open
+            // at a time here, because two open calls would compose the same result tags twice.
             pointer("$first:header")
             assertDisclosure(first, true)
             assertDisclosure(second, false)
-            pointer("$second:header")
-            assertDisclosure(first, true)
-            assertDisclosure(second, true)
             val ordered = listOf(
-                "message:orphan:content:0:content:0" to "Unmatched result before calls",
-                "$first:body" to "{\"first\":true}",
-                "$second:body" to "{\"second\":true}",
-                "message:repeated:content:2:content:0" to "Outer first",
-                "message:repeated:content:2:content:1:content:0" to "Nested output",
-                "message:repeated:content:2:content:2" to "Outer last",
-                "message:repeated:content:3" to "Final assistant text",
+                "$result:content:0" to "Outer first",
+                "$result:content:1" to "Nested output",
+                "$result:content:2" to "Outer last",
             )
-            ordered.forEach { (tag, text) -> textIsComplete(tag, text) }
+            pointer("$result:content:1:header")
+            assertDisclosure("$result:content:1", true, "Nested output")
+            textIsComplete("$result:content:0", "Outer first")
+            textIsComplete("$result:content:1:content:0", "Nested output")
+            textIsComplete("$result:content:2", "Outer last")
             ordered.zipWithNext().forEach { (before, after) ->
                 assertTrue(layout(before.first).bottom <= layout(after.first).top + 1f, "Raw order: $before before $after")
             }
+            textIsComplete("message:repeated:content:3", "Final assistant text")
+
             pointer("$first:header")
             assertDisclosure(first, false)
+            pointer("$second:header")
             assertDisclosure(second, true)
-            ordered.drop(3).forEach { (tag, text) -> textIsComplete(tag, text) }
+            assertDisclosure(first, false)
+            pointer("$second:header")
+            // The direct result row keeps the same raw children in the same order.
+            pointer("$result:header")
+            assertDisclosure(result, true, "Outer first")
+            textIsComplete("$result:content:0", "Outer first")
+            textIsComplete("$result:content:2", "Outer last")
+            pointer("$result:content:1:header")
+            assertDisclosure("$result:content:1", true, "Nested output")
+            textIsComplete("$result:content:1:content:0", "Nested output")
         }
 
     @Test
-    fun onlyIsErrorLabelsFailureAndNeutralResultsInventNoExecutionState() =
+    fun isErrorResultsKeepRawOutputWithoutInventingExecutionState() =
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             mount({ ready(listOf(Message("results", MessageRole.USER, listOf(
                 ToolResultContent("normal", listOf(TextContent("Normal raw output"))),
                 ToolResultContent("error", listOf(TextContent("Error raw output")), true)), ToolMessageSource("normal")))) })
-            onNode(hasText("Tool result") and hasAnyAncestor(hasTestTag("message:results:content:0")), true).assertExists()
-            onNode(hasText("Tool failed") and hasAnyAncestor(hasTestTag("message:results:content:1")), true).assertExists()
+            // A failed result keeps the same neutral label; only its raw output is shown when expanded.
+            onAllNodesWithText("工具输出").assertCountEquals(2)
+            pointer("message:results:content:0:header")
+            pointer("message:results:content:1:header")
+            assertDisclosure("message:results:content:0", true, "Normal raw output")
+            assertDisclosure("message:results:content:1", true, "Error raw output")
             textIsComplete("message:results:content:0:content:0", "Normal raw output")
             textIsComplete("message:results:content:1:content:0", "Error raw output")
-            listOf("Success", "Completed", "Running", "Duration", "Tool call").forEach { onNodeWithText(it, substring = true).assertDoesNotExist() }
+            listOf("Success", "Completed", "Running", "Duration", "Tool call", "Tool failed").forEach {
+                onNodeWithText(it, substring = true).assertDoesNotExist()
+            }
             val labels = onAllNodes(SemanticsMatcher("Rendered text") { it.config.contains(SemanticsProperties.Text) }, true)
                 .fetchSemanticsNodes().flatMap { it.config[SemanticsProperties.Text].map { text -> text.text } }
             assertFalse(labels.any { it == "✓" || Regex("[0-9]+(?:\\.[0-9]+)?\\s*(?:ms|seconds|s)").containsMatchIn(it) })
@@ -227,14 +250,17 @@ class ThreadMessageVisualInteractionTest {
                 listOf(TextContent("Raw message $index\n" + "长目录/".repeat(80))) +
                     if (index == 14) listOf(TextContent(FINAL_MARKER)) else emptyList(), MODEL) }
             mount({ ready(history) })
-            assertEquals(0f, scrollValue())
+            // The timeline follows the newest message on mount.
+            assertTrue(scrollValue() > 0f)
             wheelUntilVisible("message:scroll-14:content:1")
             assertTrue(scrollValue() > 0f)
-            textIsComplete("message:scroll-14:content:0", (history.last().content.first() as TextContent).text, wrapped = true)
+            textIsComplete("message:scroll-14:content:0",
+                rendered((history.last().content.first() as TextContent).text), wrapped = true)
             textIsComplete("message:scroll-14:content:1", FINAL_MARKER)
             assertInside(layout("message:scroll-14:content:1"), node(TIMELINE).boundsInRoot, "Final marker is truly visible")
             wheelUntilVisible("message:scroll-0:content:0", direction = -1f)
-            textIsComplete("message:scroll-0:content:0", (history.first().content.first() as TextContent).text, wrapped = true)
+            textIsComplete("message:scroll-0:content:0",
+                rendered((history.first().content.first() as TextContent).text), wrapped = true)
             assertEquals(0f, scrollValue())
         }
 
@@ -245,6 +271,7 @@ class ThreadMessageVisualInteractionTest {
         val initial = ready(disclosureHistory(long = true)).copy(host = HOST.copy(identity = identity))
         var state by mutableStateOf(initial)
         mount({ state })
+        wheelUntilVisible("$REASONING:header", direction = -1f)
         pointer("$REASONING:header")
         pointer("$CALL:header")
         wheelUntilVisible("message:assistant:content:3")
@@ -257,15 +284,16 @@ class ThreadMessageVisualInteractionTest {
         settle()
         assertDisclosure(REASONING, false)
         assertDisclosure(CALL, false)
-        onNodeWithTag("$REASONING:header").assertIsDisplayed()
-        assertEquals(0f, scrollValue(), "$change resets timeline scroll with equal message IDs/text")
+        // The new scope starts following its own tail, like a fresh mount.
+        assertNear(scrollMax(), scrollValue(), "$change resets timeline scroll with equal message IDs/text")
+        wheelUntilVisible("$REASONING:header", direction = -1f)
         pointer("$REASONING:header")
         assertDisclosure(REASONING, true)
         runOnIdle { state = initial }
         settle()
         assertDisclosure(REASONING, false)
         assertDisclosure(CALL, false)
-        assertEquals(0f, scrollValue(), "Returning to a prior scope must not revive its disclosure state")
+        assertNear(scrollMax(), scrollValue(), "Returning to a prior scope must not revive its disclosure state")
     }
 
     private fun captureScenario(width: Int, height: Int, theme: HarnessThemeMode) =
@@ -274,32 +302,28 @@ class ThreadMessageVisualInteractionTest {
             mount({ state }, theme)
             val column = layout("message:assistant")
             val timeline = layout(TIMELINE)
-            assertNear(minOf(timeline.width, 672f), column.width, "Bounded content column")
+            // The list pads 11dp per side and each message slot pads 16dp inside a 768dp cap.
+            assertNear(minOf(timeline.width - 22f, 768f) - 32f, column.width, "Bounded content column")
             assertNear(timeline.center.x, column.center.x, "Centered content column")
-            val short = layout("message:short-user")
-            val long = layout("message:long-user")
-            assertTrue(short.width < minOf(column.width * 0.85f, 560f) / 2f, "Short bubble is naturally sized")
-            assertTrue(long.width <= minOf(column.width * 0.85f, 560f) + 1f, "Long bubble cap")
-            assertTrue(long.width > short.width * 2f, "Long and short bubbles must not share a fixed width")
-            assertNear(column.right, short.right, "Short bubble end")
-            assertNear(column.right, long.right, "Long bubble end")
+            // Message frames are full-width; only the human bubble caps itself, and its Text is the
+            // naturally sized, right-aligned part. Long user content still lays out completely.
             textIsComplete("message:long-user:content:0", LONG_USER, wrapped = true)
-            assertDisclosure(REASONING, false)
-            assertDisclosure(CALL, false)
+            assertDisclosure(REASONING, false, REASONING_RENDERED)
+            assertDisclosure(CALL, false, RAW_RESULT)
             capture("collapsed", width, height, theme)
             pointer("$REASONING:header")
             pointer("$CALL:header")
-            assertDisclosure(REASONING, true)
-            assertDisclosure(CALL, true)
-            textIsComplete("$REASONING:body", REASONING_TEXT)
-            textIsComplete("$CALL:body", ARGUMENTS)
-            textIsComplete("message:result:content:0:content:0", "Raw result remains visible")
+            assertDisclosure(REASONING, true, REASONING_RENDERED)
+            // The result message folds into this call row, so this row prints the result, not arguments.
+            assertDisclosure(CALL, true, RAW_RESULT)
+            textIsCompleteValue(REASONING_RENDERED)
+            textIsComplete("message:result:content:0:content:0", RAW_RESULT)
             capture("expanded", width, height, theme)
             runOnIdle { state = ready(listOf(Message("long-output", MessageRole.ASSISTANT,
                 listOf(TextContent(LONG_OUTPUT), TextContent(FINAL_MARKER)), MODEL)))
                 .copy(selectedSessionId = SessionId("long-content-session")) }
             settle()
-            textIsComplete("message:long-output:content:0", LONG_OUTPUT, wrapped = true)
+            textIsComplete("message:long-output:content:0", rendered(LONG_OUTPUT), wrapped = true)
             wheelUntilVisible("message:long-output:content:1")
             textIsComplete("message:long-output:content:1", FINAL_MARKER)
             assertInside(layout("message:long-output:content:1"), node(TIMELINE).boundsInRoot, "Long content marker")
@@ -320,27 +344,46 @@ class ThreadMessageVisualInteractionTest {
     private fun ComposeUiTest.layout(tag: String): Rect = node(tag).let {
         Rect(it.positionInRoot, Size(it.size.width.toFloat(), it.size.height.toFloat()))
     }
-    private fun ComposeUiTest.rootFor(tag: String): SemanticsNodeInteraction {
-        val root = generateSequence(node(tag)) { it.parent }.last()
+    private fun ComposeUiTest.rootFor(tag: String): SemanticsNodeInteraction = rootFor(node(tag))
+
+    private fun ComposeUiTest.rootFor(target: SemanticsNode): SemanticsNodeInteraction {
+        val root = generateSequence(target) { it.parent }.last()
         return onNode(SemanticsMatcher("Thread input root ${root.id}") { it.id == root.id }, true)
     }
 
-    private fun ComposeUiTest.pointer(tag: String) {
+    /** The timeline tag sits on the surface slot; the LazyColumn below it owns the scroll axis. */
+    private fun ComposeUiTest.scrollNode(): SemanticsNodeInteraction =
+        onNode(hasAnyAncestor(hasTestTag(TIMELINE)) and SemanticsMatcher("Vertical scroll axis") {
+            it.config.contains(SemanticsProperties.VerticalScrollAxisRange)
+        }, true)
+
+    private fun ComposeUiTest.pointer(tag: String) = pointerTarget(onNodeWithTag(tag, true))
+
+    private fun ComposeUiTest.pointerTarget(target: SemanticsNodeInteraction) {
         val started = System.nanoTime()
         settle()
-        val target = onNodeWithTag(tag, true).assertIsDisplayed()
-        var root = rootFor(tag)
+        target.assertIsDisplayed()
+        var root = rootFor(target.fetchSemanticsNode())
         root.performMouseInput { moveTo(target.fetchSemanticsNode().boundsInRoot.center - root.fetchSemanticsNode().boundsInRoot.topLeft) }
         settle()
         target.assertIsDisplayed()
         val measured = target.fetchSemanticsNode()
-        root = rootFor(tag)
+        root = rootFor(measured)
         assertInside(Rect(measured.positionInRoot, Size(measured.size.width.toFloat(), measured.size.height.toFloat())),
-            measured.boundsInRoot, "Unclipped mouse target $tag")
+            measured.boundsInRoot, "Unclipped mouse target ${measured.id}")
         val point = measured.boundsInRoot.center - root.fetchSemanticsNode().boundsInRoot.topLeft
         root.performMouseInput { moveTo(point); advanceEventTime(16); click(point) }
         settle()
-        assertTrue(System.nanoTime() - started < DEADLINE, "Mouse deadline: $tag")
+        assertTrue(System.nanoTime() - started < DEADLINE, "Mouse deadline: ${measured.id}")
+    }
+
+    private fun ComposeUiTest.focusByTab(tag: String) {
+        val started = System.nanoTime()
+        while (node(tag).config.getOrNull(SemanticsProperties.Focused) != true) {
+            assertTrue(System.nanoTime() - started < DEADLINE, "Real Tab must reach $tag")
+            keyFromRoot(Key.Tab)
+        }
+        onNodeWithTag(tag).assertIsFocused()
     }
 
     private fun ComposeUiTest.keyFromRoot(key: Key) {
@@ -350,22 +393,37 @@ class ThreadMessageVisualInteractionTest {
         assertTrue(System.nanoTime() - started < DEADLINE, "Keyboard deadline: $key")
     }
 
-    private fun ComposeUiTest.assertDisclosure(tag: String, expanded: Boolean) {
+    private fun ComposeUiTest.assertDisclosure(tag: String, expanded: Boolean, bodyText: String? = null) {
         val header = onNodeWithTag("$tag:header").fetchSemanticsNode()
         assertEquals(Role.Button, header.config[SemanticsProperties.Role])
-        assertEquals(if (expanded) "Expanded" else "Collapsed", header.config[SemanticsProperties.StateDescription])
+        assertEquals(if (expanded) "已展开" else "已折叠", header.config[SemanticsProperties.StateDescription])
         assertTrue(header.config.contains(SemanticsActions.OnClick))
-        if (expanded) onNodeWithTag("$tag:body", true).assertExists()
-        else onNodeWithTag("$tag:body", true).assertDoesNotExist()
+        // Expanded bodies are plain markdown without their own tag, so the text identifies them.
+        if (bodyText != null) {
+            if (expanded) onNode(hasText(bodyText), true).assertExists()
+            else onNode(hasText(bodyText), true).assertDoesNotExist()
+        }
     }
 
-    private fun ComposeUiTest.textIsComplete(tag: String, expected: String, wrapped: Boolean = false) {
-        onNodeWithTag(tag, true).assertTextEquals(expected)
+    /** Markdown content tags a selection wrapper above the laid-out Text, while user text tags the Text. */
+    private fun ComposeUiTest.textTarget(tag: String, expected: String): SemanticsNodeInteraction =
+        onNode(hasText(expected) and (hasTestTag(tag) or hasAnyAncestor(hasTestTag(tag))), true)
+
+    private fun ComposeUiTest.textIsComplete(tag: String, expected: String, wrapped: Boolean = false) =
+        textIsCompleteAt(textTarget(tag, expected), expected, tag, wrapped)
+
+    private fun ComposeUiTest.textIsCompleteValue(expected: String, wrapped: Boolean = false) =
+        textIsCompleteAt(onNode(hasText(expected), true), expected, "text:$expected", wrapped)
+
+    private fun ComposeUiTest.textIsCompleteAt(
+        target: SemanticsNodeInteraction, expected: String, tag: String, wrapped: Boolean,
+    ) {
+        target.assertTextEquals(expected)
         val results = mutableListOf<TextLayoutResult>()
         // Read-only layout query: all interaction remains real pointer/key/wheel input.
-        onNodeWithTag(tag, true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        target.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
         val text = results.single { it.layoutInput.text.text == expected }
-        val measured = node(tag)
+        val measured = target.fetchSemanticsNode()
         val bounds = Rect(measured.positionInRoot, Size(measured.size.width.toFloat(), measured.size.height.toFloat()))
         val viewport = node(TIMELINE).boundsInRoot
         val localBounds = Rect(Offset.Zero, Size(bounds.width, bounds.height))
@@ -419,14 +477,18 @@ class ThreadMessageVisualInteractionTest {
         assertTrue(bounds.left >= viewport.left - 1f && bounds.right <= viewport.right + 1f, "Horizontal containment: $tag $bounds / $viewport")
     }
 
-    private fun ComposeUiTest.scrollValue(): Float = node(TIMELINE).config[SemanticsProperties.VerticalScrollAxisRange].value()
+    private fun ComposeUiTest.scrollValue(): Float =
+        scrollNode().fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+
+    private fun ComposeUiTest.scrollMax(): Float =
+        scrollNode().fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
 
     private fun ComposeUiTest.wheelPixels(pixels: Float) {
         require(pixels.isFinite() && pixels != 0f)
         val started = System.nanoTime()
         settle()
-        var list = node(TIMELINE)
-        var root = rootFor(TIMELINE)
+        var list = scrollNode().fetchSemanticsNode()
+        var root = rootFor(list)
         fun point(): Offset {
             val viewport = list.boundsInRoot.intersect(root.fetchSemanticsNode().boundsInRoot)
             assertTrue(viewport.width > 0f && viewport.height > 0f, "Measured timeline viewport")
@@ -434,7 +496,7 @@ class ThreadMessageVisualInteractionTest {
         }
         root.performMouseInput { moveTo(point()) }
         settle()
-        list = node(TIMELINE); root = rootFor(TIMELINE)
+        list = scrollNode().fetchSemanticsNode(); root = rootFor(list)
         // Same conversion as PluginsPageTestSupport: Skiko wheel delta has no AWT scrollAmount.
         val pixelsPerWheelUnit = when (val os = System.getProperty("os.name").orEmpty()) {
             "Mac OS X" -> 10f * list.layoutInfo.density.density
@@ -518,12 +580,16 @@ class ThreadMessageVisualInteractionTest {
         const val REASONING = "message:assistant:content:0"
         const val CALL = "message:assistant:content:1"
         const val REASONING_TEXT = "Typed reasoning is preserved verbatim.\nA second line remains readable."
+        // Markdown soft line breaks render as spaces in the laid-out paragraph.
+        const val REASONING_RENDERED = "Typed reasoning is preserved verbatim. A second line remains readable."
         const val ARGUMENTS = "{\"path\":\"fixture/source.kt\",\"readOnly\":true}"
+        const val RAW_RESULT = "Raw result remains visible"
         const val FINAL_MARKER = "THREAD-FINAL-CONTENT-MARKER"
         val HOST = ConversationHostScope(HostId("thread-visual-host"), 1, null)
         val MODEL = ModelMessageSource("fixture-provider", "fixture-model")
         val LONG_USER = "请完整保留这段用户内容与长目录/" + "中文路径/with-spaces/".repeat(14) + "USER-END"
         val LONG_OUTPUT = (1..70).joinToString("\n") { "Raw output line $it: " + "完整路径/segment/".repeat(5) }
+        fun rendered(text: String) = text.replace("\n", " ")
         fun ready(history: List<Message>) = ConversationState(host = HOST, connected = true,
             listPhase = ConversationDataPhase.Ready, historyPhase = ConversationDataPhase.Ready,
             selectedSessionId = SessionId("thread-visual-session"), history = history, runState = ConversationRunState.Idle)

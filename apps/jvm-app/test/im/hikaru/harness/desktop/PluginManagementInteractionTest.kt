@@ -33,7 +33,9 @@ class PluginManagementInteractionTest {
             waitUntil(timeoutMillis = 5_000) {
                 onAllNodes(hasTestTag("plugins-add-local") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
             }
-            onNodeWithText("已登记插件").assertExists()
+            // The page header is 插件 for both repositories; the management variant shows through
+            // the empty-state wording and the registration actions below it.
+            onNode(hasText("插件") and hasAnyAncestor(hasTestTag("plugins-header")), true).assertExists()
             onNodeWithText("尚无已登记插件").assertExists()
             onNodeWithTag("plugins-add-local").assertIsEnabled().performClick()
             onNodeWithTag("plugin-register-confirm").assertIsNotEnabled()
@@ -42,7 +44,7 @@ class PluginManagementInteractionTest {
             onNodeWithTag("plugin-local-directory").performTextReplacement("/source/plugin")
             onNodeWithTag("plugin-register-confirm").assertIsEnabled().performClick()
             waitUntil(timeoutMillis = 5_000) {
-                onAllNodesWithTag("installed-plugin-fixture").fetchSemanticsNodes().isNotEmpty()
+                onAllNodesWithTag("plugins-installed:fixture").fetchSemanticsNodes().isNotEmpty()
             }
             onNodeWithTag("plugin-local-directory").assertDoesNotExist()
             onNodeWithTag("plugin-mutation-receipt").assertTextEquals("登记已保存")
@@ -52,7 +54,7 @@ class PluginManagementInteractionTest {
                 assertEquals(PluginEnabledState.Disabled, repository.plugin!!.enabled)
             }
 
-            onNodeWithTag("installed-plugin-fixture").performClick()
+            onNodeWithTag("plugins-installed:fixture").performClick()
             waitUntil(timeoutMillis = 5_000) {
                 onAllNodes(hasTestTag("plugin-set-enabled") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
             }
@@ -105,12 +107,13 @@ class PluginManagementInteractionTest {
                     connectionTransport = ConnectionTransport.Local,
                 )
             }
-            waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("installed-plugin-fixture").fetchSemanticsNodes().isNotEmpty() }
-            // Only the page header carries this label; the navigator group heading is "已安装".
-            onAllNodesWithText("已安装插件").assertCountEquals(1)
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("plugins-installed:fixture").fetchSemanticsNodes().isNotEmpty() }
+            // The page header is 插件; the read-only variant shows through the unavailable notice
+            // rather than through a different title.
+            onNode(hasText("插件") and hasAnyAncestor(hasTestTag("plugins-header")), true).assertExists()
             onNodeWithTag("plugin-management-unavailable").assertExists()
             onNodeWithTag("plugins-add-local").assertDoesNotExist()
-            onNodeWithTag("installed-plugin-fixture").performClick()
+            onNodeWithTag("plugins-installed:fixture").performClick()
             waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("installed-plugin-detail-page").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithTag("plugin-set-enabled").assertDoesNotExist()
             onNodeWithTag("plugin-remove-registration").assertDoesNotExist()
@@ -133,8 +136,9 @@ class PluginManagementInteractionTest {
             waitUntil(timeoutMillis = 5_000) {
             onAllNodesWithTag("installed-plugins-page").fetchSemanticsNodes().isNotEmpty()
             }
-            // Only the page header carries this label; the navigator group heading is "已安装".
-            onAllNodesWithText("已安装插件").assertCountEquals(1)
+            // The page header is 插件; the read-only variant shows through the unavailable notice
+            // rather than through a different title.
+            onNode(hasText("插件") and hasAnyAncestor(hasTestTag("plugins-header")), true).assertExists()
             onNodeWithText("已登记插件").assertDoesNotExist()
             onNodeWithTag("plugin-management-unavailable").assertExists()
             onNodeWithTag("plugins-add-local").assertDoesNotExist()

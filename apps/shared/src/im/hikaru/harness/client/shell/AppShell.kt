@@ -390,6 +390,10 @@ public fun AppShell(
                                         shadow = HarnessTokens.Control.CardShadow,
                                     )
                                     .clip(RoundedCornerShape(HarnessTokens.Control.PageSurfaceRadius))
+                                    // The shadow may paint inside the shape, so the card lays the shell
+                                    // tone under its regions; otherwise a translucent region (the
+                                    // navigator's 65% tint) would sample the shadow instead of the shell.
+                                    .background(HarnessTokens.Colors.ShellBackground)
                                     .border(
                                         0.5.dp,
                                         HarnessTokens.Colors.SurfaceRing,

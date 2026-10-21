@@ -56,7 +56,10 @@ class PluginsPageScreenshotTest {
                         Case.List -> {
                             onNodeWithTag("installed-plugin-display-0").assertIsDisplayed()
                             val search = onNodeWithTag("plugins-search").fetchSemanticsNode().boundsInRoot
-                            assertTrue(search.width <= 321f, "Search must retain a bounded width: $search")
+                            // The page's own frame leaves less than 600dp at the compact capture, so
+                            // the search field switches to its 440dp compact cap there.
+                            assertTrue(search.width <= if (width == 600) 441f else 321f,
+                                "Search must retain a bounded width: $search")
                         }
                         Case.Empty -> onNodeWithText("尚无已登记插件").assertIsDisplayed()
                         Case.Loading -> {

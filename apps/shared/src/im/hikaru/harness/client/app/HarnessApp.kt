@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -782,14 +781,11 @@ public fun HarnessApp(
     // A local session cannot start without a provider/model, but the reference composer never prints
     // an inline hint for it; the model chip is the affordance, so keep the block silent.
     val submitBlockedWithoutHint = transport == ConnectionTransport.Local && effectiveNewModel == null
-    val homeComposer: @Composable () -> Unit = {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Project selection lives in the composer rail below; only the loading/error feedback stays here.
-        if (page == PageId.Home && transport == ConnectionTransport.Local &&
-            localProjectsState.phase !in listOf(LocalProjectsPhase.Ready, LocalProjectsPhase.Empty)) {
-            LocalProjectStatus(localProjectsState)
-        }
-        projectPreparationError?.let { HarnessText(it, Modifier.semantics { testTag = "local-project-prepare-error" }, color = HarnessTokens.Colors.Danger) }
+    // A failed project association leaves a created session with an unsent message. Creation moves the
+    // shell to that session's thread, so the retry affordance cannot live only in the 首页 composer:
+    // both composers draw this notice. The durable membership is the proof the association succeeded,
+    // so the notice disappears only after `attachProjectSession` observes it.
+    val pendingAssociationNotice: @Composable () -> Unit = {
         pendingProjectAssociation?.let { pending ->
             val pendingName = localProjectsState.snapshot?.project(pending.first.projectId)?.name ?: pending.first.projectId.value
             HarnessText("会话已创建，项目「$pendingName」关联待确认；消息尚未发送。",
@@ -813,6 +809,16 @@ public fun HarnessApp(
                 !conversationState.cancelling, testTag = "local-project-attach-retry")
             localProjectsState.mutationFailure?.let { HarnessText(it.message(), color = HarnessTokens.Colors.Danger) }
         }
+    }
+    val homeComposer: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Project selection lives in the composer rail below; only the loading/error feedback stays here.
+        if (page == PageId.Home && transport == ConnectionTransport.Local &&
+            localProjectsState.phase !in listOf(LocalProjectsPhase.Ready, LocalProjectsPhase.Empty)) {
+            LocalProjectStatus(localProjectsState)
+        }
+        projectPreparationError?.let { HarnessText(it, Modifier.semantics { testTag = "local-project-prepare-error" }, color = HarnessTokens.Colors.Danger) }
+        pendingAssociationNotice()
         pendingWorktreeChat?.takeIf { page == PageId.Home }?.let { directory ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1052,6 +1058,8 @@ public fun HarnessApp(
         // to another tab cannot draft into, send to or stop the session the pane has left.
         fun stillBound(): Boolean = paneController.state.value.host == conversationHost &&
             paneController.state.value.selectedSessionId == sessionId
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        pendingAssociationNotice()
         LiveConversationComposer(
             state = if (bound) paneState else ConversationState(host = conversationHost, selectedSessionId = sessionId),
             onDraftChange = { if (stillBound()) paneController.updateDraft(it) },
@@ -1063,6 +1071,7 @@ public fun HarnessApp(
             onModelSelect = {}, // Existing sessions expose their configuration read-only.
             modelUnavailableReason = "当前会话暂不支持更换模型。",
             submitUnavailableReason = when {
+                pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
                 !bound -> "正在切换会话…"
                 !paneState.connected -> "请连接可用的 Host 后发送消息。"
                 selectedSummary?.archived == true -> "此会话已归档，取消归档后可继续发送。"
@@ -1073,6 +1082,7 @@ public fun HarnessApp(
             permission = preferences.permission,
             onPermissionSelect = { if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(permission = it) },
         )
+        }
     }
     // The dock exists while the conversation holds one; each pane then decides for itself whether to
     // draw it, so 新标签页 never leaves the dock's gutter behind and a tool tab never borrows it.
@@ -1482,8 +1492,12 @@ public fun HarnessApp(
             shortcutHasFocus = it.hasFocus
             if (!it.hasFocus) shortcuts.input.releaseAll()
         }
-        .onPreviewKeyEvent { shortcuts.input.preview(it.toShortcutInput()) }
-        .onKeyEvent { shortcuts.input.dispatch(it.toShortcutInput()) }.focusable() else Modifier.fillMaxSize()
+        // Window shortcuts run before the focused surface sees the key. A text field would otherwise
+        // swallow a chord's letter key and the window command would never reach its consumer.
+        .onPreviewKeyEvent { event ->
+            val input = event.toShortcutInput()
+            shortcuts.input.preview(input) || shortcuts.input.dispatch(input)
+        }.focusable() else Modifier.fillMaxSize()
     CompositionLocalProvider(LocalShortcutsRepository provides shortcuts, LocalShortcutsEventRoot provides shortcuts.input,
         LocalConversationNavigationActions provides ConversationNavigationActions(
             sessionsById.mapKeys { it.key.value }, conversationState.managingSessionId != null,

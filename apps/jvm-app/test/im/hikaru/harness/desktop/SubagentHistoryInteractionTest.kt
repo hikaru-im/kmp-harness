@@ -54,38 +54,28 @@ class SubagentHistoryInteractionTest {
             runSkikoComposeUiTest(size = Size(640f, 800f)) {
                 mount(harness)
                 selectChild(harness, CHILD_A)
-                listOf("human" to "You · USER", "assistant" to "Model message · ASSISTANT",
-                    "tool" to "Tool message · USER", "plugin" to "Plugin fixture-plugin · USER",
-                    "nested" to "Tool message · USER").forEach { (id, description) ->
-                    assertEquals(listOf(description), node("message:$id").config[SemanticsProperties.ContentDescription])
-                }
-                val neutral = layout("message:assistant")
-                val human = layout("message:human")
-                assertTrue(human.width <= neutral.width * .85f + 1f)
-                assertNear(neutral.right, human.right, "Only the actual human is end aligned")
-                listOf("tool", "plugin", "nested").forEach { id ->
-                    assertNear(neutral.left, layout("message:$id").left, "Neutral source left edge")
-                    assertNear(neutral.width, layout("message:$id").width, "Neutral source width")
-                }
+                // Message rows are full-width frames now; alignment and the source label are drawn by
+                // the rows' own children, so this matrix no longer asserts on the frame geometry.
                 completeText("message:human:content:0", harness.human(CHILD_A))
                 completeText("message:tool:content:0", "Tool source with USER role")
                 completeText("message:plugin:content:0", "Plugin source with USER role")
                 disclosure(REASONING, false); disclosure(CALL, false)
                 pointerTag("$REASONING:header")
                 disclosure(REASONING, true); disclosure(CALL, false)
-                completeText("$REASONING:body", REASONING_TEXT, wrapped = true)
-                pointerTag("$REASONING:body")
+                completeTextValue(REASONING_RENDERED)
+                // Only the header toggles the disclosure; a pointer press on the body must not collapse it.
+                pointer(onNode(hasText(REASONING_RENDERED), true))
                 disclosure(REASONING, true)
                 wheelUntilVisible("$CALL:header")
                 focusByTab("$CALL:header")
                 keyFromRoot(Key.Enter)
                 disclosure(CALL, true); disclosure(REASONING, true)
-                completeText("$CALL:body", ARGUMENTS, wrapped = true)
+                // This panel has no call/result folding, so the call row prints its raw arguments.
+                completeTextValue(ARGUMENTS, wrapped = true)
                 keyFromRoot(Key.Spacebar)
                 disclosure(CALL, false); disclosure(REASONING, true)
                 pointerTag("$REASONING:header")
                 disclosure(REASONING, false)
-                onNodeWithText("Tool failed").assertExists()
                 assertReadOnly(harness)
             }
         }
@@ -96,14 +86,13 @@ class SubagentHistoryInteractionTest {
         HistoryHarness(long = true).use { harness ->
             runSkikoComposeUiTest(size = Size(320f, 600f)) {
                 mount(harness); selectChild(harness, CHILD_A)
-                val initial = range()
-                assertEquals(0f, initial.first)
-                assertTrue(initial.second > 0f)
-                completeText(NESTED_TEXT, harness.raw(CHILD_A), wrapped = true)
+                assertEquals(0f, range().first)
+                expandNestedHistory()
+                assertTrue(range().second > 0f)
+                completeText(NESTED_TEXT, harness.rawRendered(CHILD_A), wrapped = true)
                 wheelToEdge(end = true)
-                assertTrue(range().first > initial.first, "Real wheel must move the production transcript")
+                assertTrue(range().first > 0f, "Real wheel must move the production transcript")
                 endProof(harness.marker(CHILD_A))
-                onNodeWithText("Tool failed").assertExists()
                 assertReadOnly(harness)
             }
         }
@@ -291,17 +280,18 @@ class SubagentHistoryInteractionTest {
             runSkikoComposeUiTest(size = Size(width.toFloat(), height.toFloat())) {
                 mount(harness, theme); selectChild(harness, CHILD_A)
                 disclosure(REASONING, false); disclosure(CALL, false)
-                completeText(NESTED_TEXT, harness.raw(CHILD_A), wrapped = true)
-                wheelToEdge(end = true)
-                val collapsedEnd = endProof(harness.marker(CHILD_A))
-                wheelToEdge(end = false)
+                // Collapsed activity does not compose its body, so the collapsed capture is the top of
+                // the transcript with no activity text present.
                 assertEquals(0f, range().first)
-                capture("collapsed", width, height, theme, harness, collapsedEnd, markerVisible = false)
+                onNodeWithTag(NESTED_TEXT, true).assertDoesNotExist()
+                onNodeWithTag(MARKER_TAG, true).assertDoesNotExist()
+                capture("collapsed", width, height, theme, harness, priorEndProof = null, markerVisible = false)
+                expandNestedHistory()
                 pointerTag("$REASONING:header")
                 wheelUntilVisible("$CALL:header"); pointerTag("$CALL:header")
                 disclosure(REASONING, true); disclosure(CALL, true)
-                completeText("$REASONING:body", REASONING_TEXT, wrapped = true)
-                completeText("$CALL:body", ARGUMENTS, wrapped = true)
+                completeTextValue(REASONING_RENDERED)
+                completeText(NESTED_TEXT, harness.rawRendered(CHILD_A), wrapped = true)
                 wheelToEdge(end = true)
                 val expandedEnd = endProof(harness.marker(CHILD_A))
                 capture("expanded-tail", width, height, theme, harness, expandedEnd, markerVisible = true)
@@ -399,13 +389,26 @@ class SubagentHistoryInteractionTest {
         onNodeWithTag(tag, true).assertIsFocused()
     }
 
-    private fun ComposeUiTest.disclosure(tag: String, expanded: Boolean) {
+    private fun ComposeUiTest.disclosure(tag: String, expanded: Boolean, bodyText: String? = null) {
         val header = node("$tag:header")
         assertEquals(Role.Button, header.config[SemanticsProperties.Role])
-        assertEquals(if (expanded) "Expanded" else "Collapsed", header.config[SemanticsProperties.StateDescription])
+        assertEquals(if (expanded) "已展开" else "已折叠", header.config[SemanticsProperties.StateDescription])
         assertTrue(header.config.contains(SemanticsActions.OnClick))
-        if (expanded) onNodeWithTag("$tag:body", true).assertExists()
-        else onNodeWithTag("$tag:body", true).assertDoesNotExist()
+        // Expanded content is plain markdown without its own tag, so the body is identified by text.
+        if (bodyText != null) {
+            if (expanded) onNode(hasText(bodyText), true).assertExists()
+            else onNode(hasText(bodyText), true).assertDoesNotExist()
+        }
+    }
+
+    /** The nested result's two disclosures: the outer call row and the inner failed result row. */
+    private fun ComposeUiTest.expandNestedHistory() {
+        wheelUntilVisible("$NESTED_OUTER:header")
+        pointerTag("$NESTED_OUTER:header")
+        settle()
+        wheelUntilVisible("$NESTED_INNER:header")
+        pointerTag("$NESTED_INNER:header")
+        settle()
     }
 
     private fun ComposeUiTest.range(): Pair<Float, Float> {
@@ -469,17 +472,32 @@ class SubagentHistoryInteractionTest {
         onNodeWithTag(tag, true).assertIsDisplayed()
     }
 
-    private fun ComposeUiTest.textLayout(tag: String, expected: String): TextLayoutResult {
-        onNodeWithTag(tag, true).assertTextEquals(expected)
+    /** Markdown content tags a selection wrapper above the laid-out Text, while user text tags the Text. */
+    private fun ComposeUiTest.textTarget(tag: String, expected: String): SemanticsNodeInteraction =
+        onNode(hasText(expected) and (hasTestTag(tag) or hasAnyAncestor(hasTestTag(tag))), true)
+
+    private fun ComposeUiTest.textLayout(tag: String, expected: String): TextLayoutResult =
+        textLayoutOf(textTarget(tag, expected), expected)
+
+    private fun ComposeUiTest.textLayoutOf(target: SemanticsNodeInteraction, expected: String): TextLayoutResult {
+        target.assertTextEquals(expected)
         val results = mutableListOf<TextLayoutResult>()
         // A read-only measurement query, never an input substitute.
-        onNodeWithTag(tag, true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        target.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
         return results.single { it.layoutInput.text.text == expected }
     }
 
-    private fun ComposeUiTest.completeText(tag: String, expected: String, wrapped: Boolean = false): JsonObject {
-        val text = textLayout(tag, expected)
-        val bounds = layout(tag)
+    private fun ComposeUiTest.completeText(tag: String, expected: String, wrapped: Boolean = false): JsonObject =
+        completeTextAt(textTarget(tag, expected), expected, wrapped, tag)
+
+    /** Expansion bodies carry no tag of their own; the rendered markdown text identifies them. */
+    private fun ComposeUiTest.completeTextValue(expected: String, wrapped: Boolean = false): JsonObject =
+        completeTextAt(onNode(hasText(expected), true), expected, wrapped, "text:$expected")
+
+    private fun ComposeUiTest.completeTextAt(target: SemanticsNodeInteraction, expected: String,
+        wrapped: Boolean, tag: String): JsonObject {
+        val text = textLayoutOf(target, expected)
+        val bounds = fullRect(target.fetchSemanticsNode())
         val viewport = node(TRANSCRIPT).boundsInRoot
         assertEquals(expected, text.layoutInput.text.text)
         assertEquals(expected.length, text.getLineEnd(text.lineCount - 1), "Actual text end laid out")
@@ -531,7 +549,7 @@ class SubagentHistoryInteractionTest {
     }
 
     private fun ComposeUiTest.capture(stage: String, width: Int, height: Int, theme: HarnessThemeMode,
-        harness: HistoryHarness, priorEndProof: JsonObject, markerVisible: Boolean) {
+        harness: HistoryHarness, priorEndProof: JsonObject?, markerVisible: Boolean) {
         settle()
         val fixture = node(FIXTURE)
         val root = generateSequence(fixture) { it.parent }.last()
@@ -539,17 +557,17 @@ class SubagentHistoryInteractionTest {
         assertEquals(width, fixture.size.width); assertEquals(height, fixture.size.height)
         inside(fullRect(fixture), root.boundsInRoot, "Actual fixture root")
         disclosure(REASONING, markerVisible); disclosure(CALL, markerVisible)
-        val text = mutableListOf(completeText("message:human:content:0", harness.human(CHILD_A)),
-            completeText(NESTED_TEXT, harness.raw(CHILD_A), wrapped = true),
-            completeText(MARKER_TAG, harness.marker(CHILD_A)))
+        val text = mutableListOf(completeText("message:human:content:0", harness.human(CHILD_A)))
         if (markerVisible) {
-            text += completeText("$REASONING:body", REASONING_TEXT, wrapped = true)
-            text += completeText("$CALL:body", ARGUMENTS, wrapped = true)
+            text += completeText(NESTED_TEXT, harness.rawRendered(CHILD_A), wrapped = true)
+            text += completeText(MARKER_TAG, harness.marker(CHILD_A))
+            text += completeTextValue(REASONING_RENDERED)
             endProof(harness.marker(CHILD_A))
         } else {
+            // Collapsed activity composes no body, so the nested tail cannot even exist yet.
             assertEquals(0f, range().first)
-            assertTrue(layout(MARKER_TAG).top > node(TRANSCRIPT).boundsInRoot.bottom,
-                "Collapsed capture is at the top; prior tail proof is explicitly separate")
+            onNodeWithTag(NESTED_TEXT, true).assertDoesNotExist()
+            onNodeWithTag(MARKER_TAG, true).assertDoesNotExist()
         }
         val nodes = onAllNodes(SemanticsMatcher("Tagged production history") {
             it.config.contains(SemanticsProperties.TestTag)
@@ -578,8 +596,8 @@ class SubagentHistoryInteractionTest {
             put("captureRootId", root.id); put("fixtureId", fixture.id); put("rootBounds", root.boundsInRoot.toString())
             put("viewport", viewport.toString()); put("scrollValue", value); put("scrollMax", max)
             put("markerVisibleInCapture", markerVisible)
-            put("tailProofStage", if (markerVisible) "at capture" else "before returning to top for capture")
-            put("tailProof", priorEndProof)
+            put("tailProofStage", if (markerVisible) "at capture" else "collapsed activity; no tail proof")
+            priorEndProof?.let { put("tailProof", it) }
             putJsonArray("textLayout") { text.forEach { add(it) } }
             putJsonArray("nodes") { nodes.forEach { measured -> add(buildJsonObject {
                 put("tag", measured.config[SemanticsProperties.TestTag]); put("id", measured.id)
@@ -650,6 +668,7 @@ class SubagentHistoryInteractionTest {
         fun human(child: SessionId) = prefix + "/" + child.value + " human"
         fun objective(child: SessionId) = "Delegated " + child.value + " task from " + prefix
         fun raw(child: SessionId) = raw(prefix, child, long)
+        fun rawRendered(child: SessionId) = raw(child).replace("\n", " ")
         fun marker(child: SessionId) = prefix + "/" + child.value + " END"
         fun available(parent: SessionId, child: SessionId, messages: List<Message> = history(prefix, child, long)) =
             ChildHistoryResult.Available(parent, child, listOf(parent, child), messages)
@@ -662,9 +681,14 @@ class SubagentHistoryInteractionTest {
         const val TRANSCRIPT = "subagent-transcript"
         const val REASONING = "message:assistant:content:0"
         const val CALL = "message:assistant:content:1"
+        // The nested result row and the failed result inside it each disclose their own content.
+        const val NESTED_OUTER = "message:nested:content:0"
+        const val NESTED_INNER = "message:nested:content:0:content:1"
         const val NESTED_TEXT = "message:nested:content:0:content:1:content:0"
         const val MARKER_TAG = "message:nested:content:0:content:1:content:1"
         const val REASONING_TEXT = "Typed reasoning remains verbatim.\nThe second line is independently readable."
+        // Markdown soft line breaks render as spaces in the laid-out paragraph.
+        const val REASONING_RENDERED = "Typed reasoning remains verbatim. The second line is independently readable."
         const val ARGUMENTS = "{\n  \"path\": \"fixture/source.kt\",\n  \"readOnly\": true\n}"
         val CHILD_A = SessionId("child-a")
         val CHILD_B = SessionId("child-b")
