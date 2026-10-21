@@ -188,11 +188,13 @@ public class RemoteConnection private constructor(
                                 mutableSequenceGaps.tryEmit(
                                     SequenceGap(event.streamId, outcome.expected, outcome.received),
                                 )
-                                mutableEvents.tryEmit(event)
+                                // Deltas must not be dropped: a lost chunk silently corrupts the live
+                                // transcript. `emit` suspends only when the subscriber is behind.
+                                mutableEvents.emit(event)
                                 recoverHistoryFor(event.streamId)
                             }
 
-                            SequenceOutcome.Deliver -> mutableEvents.tryEmit(event)
+                            SequenceOutcome.Deliver -> mutableEvents.emit(event)
                         }
                     }
                 }

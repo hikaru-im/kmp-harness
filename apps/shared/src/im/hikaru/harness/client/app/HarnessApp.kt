@@ -59,6 +59,7 @@ import im.hikaru.harness.client.connection.CreateSessionOptions
 import im.hikaru.harness.client.conversation.ConversationController
 import im.hikaru.harness.client.conversation.ConversationHostScope
 import im.hikaru.harness.client.conversation.ConversationState
+import im.hikaru.harness.client.conversation.ConversationStreams
 import im.hikaru.harness.client.conversation.CompletionCapability
 import im.hikaru.harness.client.panels.ThreadPanelScope
 import im.hikaru.harness.client.panels.ThreadPanelTab
@@ -117,6 +118,7 @@ import kotlinx.coroutines.withContext
 import im.hikaru.contracts.harness.relay.RelayEvent
 import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.harness.client.connection.HistoryRecovery
+import im.hikaru.harness.client.connection.RemoteConnection
 import im.hikaru.harness.client.connection.RemoteConnectionOwner
 import im.hikaru.harness.client.connection.ConnectionDescriptionRepository
 import im.hikaru.harness.client.connection.ConnectionTransport
@@ -443,6 +445,13 @@ public fun HarnessApp(
     val verifiedConversationConnection = connection.takeIf {
         phase == ConnectionsPhase.Online && host?.hostId == conversationHost?.hostId
     }
+    // A local Host supplies its in-process event feed through these hooks; Relay falls back to its own
+    // connection streams. Either way the controller folds the same event shapes.
+    val conversationStreams = remember(sessionEvents, historyRecoveries, onSubscribeSession, onUnsubscribeSession) {
+        if (onSubscribeSession != null && onUnsubscribeSession != null) {
+            ConversationStreams(sessionEvents, historyRecoveries, onSubscribeSession, onUnsubscribeSession)
+        } else null
+    }
     // A window's tabs belong to the **side panel**, and every one of them is a tool page — 新标签页,
     // 变更, and the two the reference also lists but this client cannot draw. None of them is a 会话, so
     // there is exactly one conversation in a window whatever the layout: the one `conversation` holds, in
@@ -604,6 +613,8 @@ public fun HarnessApp(
             host = conversationHost,
             completionCapability = if (transport == ConnectionTransport.Local) CompletionCapability.LocalIdle
                 else CompletionCapability.DeliveryAcknowledgedOnly,
+            streams = conversationStreams
+                ?: (verifiedConversationConnection as? RemoteConnection)?.let(ConversationStreams::remote),
         )
         if (changedOwner && navigation.currentPage is PageId.Thread) {
             navigation = navigation.copy(currentPage = PageId.Home, backStack = emptyList())
@@ -1243,8 +1254,9 @@ public fun HarnessApp(
                         }
                     } else HarnessText("正在绑定当前 Host…", Modifier.semantics { testTag = "scheduled-binding-loading" })
 
-                is PageId.Thread -> LiveThreadSurface(
+                is PageId.Thread -> LiveThreadPane(
                     state = paneConversationState,
+                    live = paneConversation.live,
                     onRetry = { paneConversation.refresh() },
                     onEditMessage = { message -> paneConversation.beginEdit(message.id) },
                 )

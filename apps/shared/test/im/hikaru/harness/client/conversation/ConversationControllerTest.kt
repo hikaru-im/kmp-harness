@@ -10,7 +10,7 @@ import im.hikaru.harness.client.connection.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.*
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.*
 import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1095,7 +1095,7 @@ class ConversationControllerTest {
     }
 
     @Test
-    fun forwardedEventsAndRecoveryRefreshNeverCancelDelayedSend() = runTest {
+    fun forwardedEventsFoldIntoTheLiveTailAndOnlyGapsRefreshHistory() = runTest {
         val gate = CompletableDeferred<Unit>()
         val operations = FakeOperations().apply { promptResult = { id, _ -> gate.await(); accepted(id) } }
         val events = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 8)
@@ -1107,24 +1107,45 @@ class ConversationControllerTest {
         controller.updateDraft("delayed")
         val send = assertNotNull(controller.submit())
         runCurrent()
-        val count = operations.historyIds.size
-        events.emit(event(OTHER, HOST.hostId, 1))
-        events.emit(event(SESSION, HostId("wrong-host"), 2))
+        val reads = operations.historyIds.size
+
+        // Another stream and another Host never reach this transcript or its history.
+        events.emit(event(OTHER, HOST.hostId, 1, "assistant/chunk", JsonPrimitive("noise")))
+        events.emit(event(SESSION, HostId("wrong-host"), 2, "assistant/chunk", JsonPrimitive("noise")))
         recoveries.emit(HistoryRecovery(StreamId(OTHER.value), listOf(message("untrusted"))))
         runCurrent()
-        assertEquals(count, operations.historyIds.size)
-        events.emit(event(SESSION, HOST.hostId, 3))
+        assertEquals(reads, operations.historyIds.size)
+        assertTrue(controller.live.value.messages.isEmpty())
+
+        // Deltas fold into the live tail without touching the authoritative history.
+        events.emit(chunkEvent(SESSION, HOST.hostId, 3, turn = 1, step = 1, text = "Hel"))
+        events.emit(chunkEvent(SESSION, HOST.hostId, 4, turn = 1, step = 1, text = "lo"))
         runCurrent()
-        assertEquals(count + 1, operations.historyIds.size)
+        advanceTimeBy(40)
+        runCurrent()
+        assertEquals(listOf("Hello"), controller.live.value.messages.map { it.text() })
+        assertEquals(reads, operations.historyIds.size)
+
+        // Settlement retires the tail and appends the durable message exactly once.
+        events.emit(assistantMessageEvent(SESSION, HOST.hostId, 5, turn = 1, step = 1, messageId = "m-1", text = "Hello"))
+        runCurrent()
+        assertTrue(controller.live.value.messages.isEmpty())
+        assertEquals(listOf("m-1"), controller.state.value.history.map { it.id })
+
+        // A gap on the selected stream is the one event that re-reads history.
         recoveries.emit(HistoryRecovery(StreamId(SESSION.value), listOf(message("untrusted"))))
         runCurrent()
-        assertEquals(count + 2, operations.historyIds.size)
-        controller.refresh()
+        assertEquals(reads + 1, operations.historyIds.size)
+        assertTrue(controller.state.value.history.isEmpty(), "recovery body is not authoritative API history")
+
+        // Turn end reconciles quietly; the delayed send is never cancelled by the stream.
+        events.emit(event(SESSION, HOST.hostId, 6, "turn/end", JsonPrimitive("done")))
         runCurrent()
+        assertEquals(reads + 2, operations.historyIds.size)
         assertTrue(send.isActive)
         assertEquals(ConversationAction.Sending, controller.state.value.action)
         assertNull(controller.submit())
-        assertTrue(controller.state.value.history.isEmpty(), "recovery body is not authoritative API history")
+
         gate.complete(Unit)
         send.join()
         runCurrent()
@@ -1267,10 +1288,45 @@ private fun message(text: String) = Message(
 private fun userMessage(id: String, text: String) =
     Message(id, MessageRole.USER, listOf(TextContent(text)), UserMessageSource)
 
-private fun event(id: SessionId, host: HostId, sequence: Long) = RelayEvent(
+private fun event(id: SessionId, host: HostId, sequence: Long, type: String, payload: JsonElement) = RelayEvent(
     eventId = EventId("event-$sequence"), hostId = host, streamId = StreamId(id.value), sequence = sequence,
-    event = "assistant/chunk", payload = JsonPrimitive("not authoritative history"),
+    event = type, payload = payload,
 )
+
+private fun chunkEvent(id: SessionId, host: HostId, sequence: Long, turn: Long, step: Long, text: String) =
+    event(id, host, sequence, "assistant/chunk", buildJsonObject {
+        put("turn", turn)
+        put("step", step)
+        put("chunk", buildJsonObject {
+            put("type", "text-delta")
+            put("index", 0)
+            put("text", text)
+        })
+    })
+
+private fun assistantMessageEvent(
+    id: SessionId, host: HostId, sequence: Long, turn: Long, step: Long, messageId: String, text: String,
+) = event(id, host, sequence, "assistant/message", buildJsonObject {
+    put("turn", turn)
+    put("step", step)
+    put("message", buildJsonObject {
+        put("id", messageId)
+        put("role", "assistant")
+        put("content", buildJsonArray {
+            add(buildJsonObject {
+                put("type", "text")
+                put("text", text)
+            })
+        })
+        put("source", buildJsonObject {
+            put("type", "model")
+            put("provider", "test-provider")
+            put("model", "test-model")
+        })
+    })
+})
+
+private fun Message.text(): String = content.filterIsInstance<TextContent>().joinToString("") { it.text }
 
 private class FakeConnection : Connection {
     override val host: HostApi get() = error("Host API is unused by session state")

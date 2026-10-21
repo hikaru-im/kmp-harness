@@ -44,6 +44,8 @@ internal fun ConversationViewport(
     onRetry: () -> Unit = {},
     /** Offered only while the session is settled; editing forks before the message and resends. */
     onEditMessage: ((Message) -> Unit)? = null,
+    /** Streaming assistant tail; it is drawn after the settled history and never gets row actions. */
+    live: List<Message> = emptyList(),
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -59,7 +61,9 @@ internal fun ConversationViewport(
     // The live app draws one activity row per call and keeps the output inside it; our history stores the
     // result as its own message, so those messages fold into the call row instead of printing a second row.
     val toolResults = remember(messages) { toolResultIndex(messages) }
-    val shown = remember(messages, toolResults) { messages.filterNot { it.isFoldedToolResult(toolResults) } }
+    // Settled-only maps stay cached while the tail grows; only this appended reference changes per frame.
+    val shown = remember(messages, toolResults, live) { messages.filterNot { it.isFoldedToolResult(toolResults) } + live }
+    val liveIds = remember(live) { live.mapTo(mutableSetOf()) { it.id } }
     val lastTextMessage = remember(messages) { turnLastTextMessageIds(messages) }
     LaunchedEffect(list) {
         var wasScrolling = false
@@ -82,15 +86,17 @@ internal fun ConversationViewport(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             items(shown, key = { it.id }) { message ->
+                val streaming = message.id in liveIds
                 Box(Modifier.widthIn(max = 768.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
                     MessageCard(
                         message = message,
                         workedForMillis = workedFor[message.id],
                         toolCalls = toolCalls,
                         toolResults = toolResults,
-                        showActions = message.id in lastTextMessage,
+                        showActions = !streaming && message.id in lastTextMessage,
                         onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
                             ?.let { edit -> { edit(message) } },
+                        live = streaming,
                     )
                 }
             }
@@ -117,6 +123,8 @@ internal fun MessageCard(
     toolResults: Map<String, ToolResultEntry> = emptyMap(),
     showActions: Boolean = true,
     onEdit: (() -> Unit)? = null,
+    /** True for the tail that is still arriving; its reasoning and labels stay in progress. */
+    live: Boolean = false,
 ) {
     val isHuman = message.role == MessageRole.USER && message.source == UserMessageSource
     val clipboard = LocalClipboardManager.current
@@ -131,7 +139,7 @@ internal fun MessageCard(
                 Column(contents, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (!isHuman && workedForMillis != null) WorkedForHeader(workedForMillis, "message:${message.id}")
                     message.content.forEachIndexed { index, content ->
-                        MessageContentView(content, "message:${message.id}:content:$index", isHuman, toolCalls, toolResults)
+                        MessageContentView(content, "message:${message.id}:content:$index", isHuman, toolCalls, toolResults, live)
                     }
                 }
             }
@@ -266,6 +274,7 @@ private fun MessageContentView(
     human: Boolean = false,
     toolCalls: Map<String, ToolCallContent> = emptyMap(),
     toolResults: Map<String, ToolResultEntry> = emptyMap(),
+    live: Boolean = false,
 ) {
     when (content) {
         is TextContent -> if (human) HarnessText(content.text, Modifier.semantics { testTag = tag },
@@ -274,7 +283,9 @@ private fun MessageContentView(
                     androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.None)),
             overflow = TextOverflow.Visible)
             else ConversationMarkdown(content.text, Modifier.semantics { testTag = tag })
-        is ReasoningContent -> ActivityDisclosure("已完成思考", HarnessIconName.Search, tag) {
+        // The reasoning row is already open while tokens arrive, so its label names the activity
+        // instead of claiming the thought is complete.
+        is ReasoningContent -> ActivityDisclosure(if (live) "正在思考…" else "已完成思考", HarnessIconName.Search, tag) {
             ConversationMarkdown(content.text, color = ConversationAppearance.muted)
         }
         is ToolCallContent -> ActivityDisclosure(toolActivityLabel(content), HarnessIconName.Host, tag) {
