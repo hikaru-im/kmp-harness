@@ -16,6 +16,26 @@ import kotlin.test.*
 
 class DesktopModelSettingsBackendTest {
     @Test
+    fun modelPreferencesSurviveRestartAndDoNotRestrictRuntimeRoutes() = runBlocking {
+        val store = InMemorySettingsDocumentStore()
+        val original = host(store)
+        try {
+            val backend = DesktopModelSettingsBackend(original.context)
+            backend.save(ProviderConfiguration("custom", credentialName = "MODEL_TEST_KEY",
+                modelIds = listOf("a", "b")), backend.read().revision)
+            backend.selectModel("custom", "b", backend.read().revision)
+            backend.setModelEnabled("custom", "a", false, backend.read().revision)
+        } finally { original.context.dispose() }
+        val restarted = host(store)
+        try {
+            val provider = DesktopModelSettingsBackend(restarted.context).read().providers.single { it.id == "custom" }
+            assertEquals(setOf("a"), provider.disabledModelIds)
+            assertEquals("b", provider.selectedModelId)
+            assertEquals(setOf("a", "b"), restarted.context.llm.listModels("custom").map { it.id }.toSet())
+        } finally { restarted.context.dispose() }
+    }
+
+    @Test
     fun discoveryPersistsRemoteCatalogAndDoesNotOverwriteOnFailureOrConcurrentEdit() = runBlocking {
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         val runtime = host(InMemorySettingsDocumentStore())
@@ -38,12 +58,18 @@ class DesktopModelSettingsBackendTest {
             backend.save(original, backend.read().revision)
             backend.discoverModels("custom", backend.read().revision)
             val imported = backend.read().providers.single { it.id == "custom" }
-            assertEquals(listOf("remote-model"), imported.configuration!!.modelIds)
-            assertEquals("Remote Model", imported.models.single().name)
-            assertEquals(32000, imported.models.single().contextWindow)
+            assertEquals(listOf("old-model"), imported.configuration!!.modelIds)
+            assertEquals(setOf("old-model", "remote-model"), imported.models.map { it.id }.toSet())
+            assertEquals("Remote Model", runtime.context.llm.resolveModelInfo("custom", "remote-model").name)
+            assertNotNull(imported.catalogSource)
+            // Both discovered and manual entries are callable; editing manual entries does not limit discovery.
+            backend.save(imported.configuration!!.copy(modelIds = listOf("remote-model")), backend.read().revision)
+            val selected = backend.read().providers.single { it.id == "custom" }
+            assertEquals("Remote Model", selected.models.single().name)
+            assertEquals(32000, selected.models.single().contextWindow)
             code.set(401)
             assertFailsWith<IllegalStateException> { backend.discoverModels("custom", backend.read().revision) }
-            assertEquals(imported.configuration, backend.read().providers.single { it.id == "custom" }.configuration)
+            assertEquals(selected.configuration, backend.read().providers.single { it.id == "custom" }.configuration)
             code.set(200)
             editDuringFetch.set(true)
             assertFailsWith<ProviderRevisionConflict> { backend.discoverModels("custom", backend.read().revision) }
@@ -136,9 +162,9 @@ class DesktopModelSettingsBackendTest {
             val after = backend.read()
             val provider = after.providers.single { it.id == "custom" }
             assertEquals(configured, provider.configuration)
-            assertTrue(provider.active)
-            assertTrue(provider.models.isNotEmpty())
-            assertTrue(provider.models.any { it.contextWindow != null })
+            // A newly saved connection without discovery/manual entries remains pending.
+            assertFalse(provider.active)
+            assertTrue(provider.models.isEmpty())
             val text = Files.readString(path)
             assertFalse(text.contains("synthetic-test-value"))
             assertEquals("yes", Json.parseToJsonElement(text).jsonObject["unrelated"]!!.jsonObject["keep"]!!.jsonPrimitive.content)

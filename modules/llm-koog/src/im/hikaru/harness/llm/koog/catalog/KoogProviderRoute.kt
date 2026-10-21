@@ -6,6 +6,7 @@ import im.hikaru.harness.llm.LlmModelReasoningInfo
 import im.hikaru.harness.llm.ModelModality
 import im.hikaru.harness.llm.NormalRetryPolicy
 import im.hikaru.harness.llm.RetryPolicy
+import im.hikaru.harness.llm.ReasoningCapabilities
 import im.hikaru.harness.llm.defaultRetryPolicy
 
 /** 一个已安装或由 settings 快照物化的 Harness 模型到 Koog [LLModel] 映射。 */
@@ -18,6 +19,8 @@ data class KoogModelRoute(
     val inputModalities: List<ModelModality>? = null,
     val defaultMaxTokens: Long? = null,
     val reasoning: LlmModelReasoningInfo? = null,
+    val reasoningCapabilities: ReasoningCapabilities? = null,
+    val metadata: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 ) {
     init {
         require(model.id.isNotBlank()) {
@@ -65,6 +68,9 @@ data class KoogProviderRoute(
         requireNotNull(models.firstOrNull()?.model) {
             "Koog provider must declare at least one installed model"
         },
+    val vendor: String = "openai",
+    val serviceVariant: String? = null,
+    val apiVersion: String? = null,
 ) {
     init {
         require(id.isNotBlank()) {

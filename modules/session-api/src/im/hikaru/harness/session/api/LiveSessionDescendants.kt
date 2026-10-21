@@ -33,7 +33,8 @@ internal class LiveSessionDescendants(
                 startedAtEpochMillis = entry.session.header.createdAt,
                 provider = options.provider,
                 model = options.model,
-                reasoningEffort = options.reasoningEffort?.value,
+                reasoningEffort = (options.reasoning?.effort ?: options.reasoningEffort)?.value,
+                reasoning = options.reasoning,
             )
         }
         requireCurrent(listOf(root) + verified.flatMap { it.second.entries })

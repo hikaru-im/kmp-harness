@@ -9,6 +9,7 @@ import im.hikaru.harness.agent.AgentRegistry
 import im.hikaru.harness.agent.AgentStatus
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.ReasoningEffortId
+import im.hikaru.harness.llm.ReasoningOptions
 import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.createUserMessage
 import im.hikaru.harness.runtime.Context
@@ -33,6 +34,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 
 internal class SubagentToolHandler(
     private val hostContext: Context,
@@ -50,6 +52,7 @@ internal class SubagentToolHandler(
         val provider: String?,
         val model: String?,
         val reasoningEffort: String?,
+        val reasoning: ReasoningOptions?,
     )
 
     private val mutex = Mutex()
@@ -117,13 +120,17 @@ internal class SubagentToolHandler(
             validateSnapshot(execution, ancestry)
             val parentOptions = ancestry.first().options
             val cwd = arguments.cwd ?: execution.session.header.cwd ?: parentOptions.cwd
+            val reasoning = arguments.reasoning ?: parentOptions.reasoning?.let { inherited ->
+                arguments.reasoningEffort?.let { inherited.copy(effort = ReasoningEffortId(it)) } ?: inherited
+            }
             val created = registry.create(
                 options = AgentOptions(
                     cwd = cwd,
                     provider = arguments.provider ?: parentOptions.provider,
                     model = arguments.model ?: parentOptions.model,
-                    reasoningEffort = arguments.reasoningEffort?.let(::ReasoningEffortId)
-                        ?: parentOptions.reasoningEffort,
+                    reasoningEffort = if (reasoning == null) arguments.reasoningEffort?.let(::ReasoningEffortId)
+                        ?: parentOptions.reasoningEffort else null,
+                    reasoning = reasoning,
                     maxTokens = parentOptions.maxTokens,
                 ),
                 sessionOptions = CreateSessionOptions(
@@ -342,9 +349,9 @@ internal class SubagentToolHandler(
     private fun decodeArguments(value: String): Arguments {
         val objectValue = Json.parseToJsonElement(value) as? JsonObject ?: error("Arguments must be an object")
         require(
-            objectValue.keys.all { it in setOf("description", "prompt", "cwd", "provider", "model", "reasoning_effort") },
+            objectValue.keys.all { it in setOf("description", "prompt", "cwd", "provider", "model", "reasoning_effort", "reasoning") },
         ) {
-            "Only description, prompt, cwd, provider, model and reasoning_effort are allowed; " +
+            "Only description, prompt, cwd, provider, model, reasoning_effort and reasoning are allowed; " +
                 "parent identity cannot be supplied (got ${objectValue.keys})"
         }
         fun string(name: String): String {
@@ -356,6 +363,13 @@ internal class SubagentToolHandler(
             if (name in objectValue) string(name) else null
         val provider = optionalString("provider")
         val model = optionalString("model")
+        require("reasoning" !in objectValue || "reasoning_effort" !in objectValue) {
+            "Use either reasoning or the legacy reasoning_effort override"
+        }
+        val reasoning = objectValue["reasoning"]?.let {
+            require(it is JsonObject) { "reasoning must be an object" }
+            Json.decodeFromJsonElement<ReasoningOptions>(it)
+        }
         require((provider == null) == (model == null)) {
             "provider and model must be supplied together"
         }
@@ -368,6 +382,7 @@ internal class SubagentToolHandler(
             provider = provider,
             model = model,
             reasoningEffort = optionalString("reasoning_effort"),
+            reasoning = reasoning,
         )
     }
 

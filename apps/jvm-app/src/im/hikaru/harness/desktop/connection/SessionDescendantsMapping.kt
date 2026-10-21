@@ -27,6 +27,7 @@ internal fun CoreDescendants.toClient(): SessionDescendantsResult = when (this) 
                 model = child.model,
                 reasoningEffort = child.reasoningEffort,
                 objective = child.objective,
+                reasoning = child.reasoning?.toClientReasoning(),
             )
         },
         coverage = when (coverage) {

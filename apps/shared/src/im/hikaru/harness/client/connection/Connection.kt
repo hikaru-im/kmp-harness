@@ -40,6 +40,7 @@ public data class AgentOptions(
     val model: String? = null,
     val reasoningEffort: ReasoningEffortId? = null,
     val maxTokens: Long? = null,
+    val reasoning: ReasoningOptions? = null,
 ) {
     init {
         require(preset == null || preset.isNotBlank()) { "Agent preset must not be blank" }
@@ -235,8 +236,11 @@ public interface SessionApi {
         options: CreateSessionOptions = CreateSessionOptions(),
         agentOptions: AgentOptions = AgentOptions(),
     ): SessionSummary
+    public suspend fun modelConfiguration(id: SessionId): AgentOptions? = null
     public suspend fun history(id: SessionId): List<Message>
     public suspend fun prompt(id: SessionId, message: Message): SessionPrompt
+    public suspend fun prompt(id: SessionId, message: Message, agentOptions: AgentOptions): SessionPrompt =
+        error("此连接暂不支持更换模型")
     public suspend fun cancel(id: SessionId, keepInbox: Boolean = false)
 
     /** Creates a child conversation holding this one's history before [beforeMessageId]. */

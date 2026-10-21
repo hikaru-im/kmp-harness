@@ -48,27 +48,27 @@ internal fun ConversationComposerToolbar(
     selectedEffort: String?, onEffortSelect: ((String?) -> Unit)?, effortKnown: Boolean,
     permission: ComposerPermission, onPermissionSelect: (ComposerPermission) -> Unit,
     draftEmpty: Boolean,
+    selectedReasoning: im.hikaru.harness.client.connection.ReasoningOptions? = null,
+    onManageModels: (() -> Unit)? = null,
 ) {
-    var popup by remember(state.host, state.selectedSessionId) { mutableStateOf(ComposerPopup.Closed) }
+    var popupStack by remember(state.host, state.selectedSessionId) { mutableStateOf(emptyList<ComposerPopup>()) }
+    val popup = popupStack.lastOrNull() ?: ComposerPopup.Closed
     val choices = models.distinctBy { it.providerId to it.modelId }
     val idle = state.action == ConversationAction.Idle && !state.cancelling
-    val canChoose = modelReason == null && choices.isNotEmpty() && idle
-    // Live work picker: `disabled = disabled || isLoading || models == null`. A catalogue that is
-    // still loading (or whose provider failed) makes the trigger inert; a loaded-but-empty catalogue
-    // still opens the panel, which then draws its `选择模型` heading over zero rows.
-    val triggerEnabled = modelReason == null && idle
-    val efforts = selectedModel?.reasoningEfforts.orEmpty().filter(String::isNotBlank).distinct()
-    val canAdjust = canChoose && efforts.isNotEmpty() && onEffortSelect != null
-    // The live trigger carries the selected model's own name and falls back to its `默认` entry, which
-    // is the picker's own label for "let Codex decide" — never a status sentence of our own.
-    val modelLabel = selectedModel?.label ?: "默认"
+    val canChoose = choices.isNotEmpty() && idle
+    val triggerEnabled = idle
+    val efforts = selectedModel?.allowedReasoningEfforts(selectedReasoning).orEmpty()
+    val selectedAvailable = choices.any { it.providerId == selectedModel?.providerId && it.modelId == selectedModel?.modelId }
+    val canAdjust = canChoose && selectedAvailable && efforts.isNotEmpty() && onEffortSelect != null
+    val modelLabel = selectedModel?.label ?: "选择模型"
     val strength = effortLabel(selectedEffort)
-    val close = { popup = ComposerPopup.Closed }
+    val close = { popupStack = emptyList() }
+    val back = { popupStack = popupStack.dropLast(1) }
     val focus = LocalFocusManager.current
     val first = remember { FocusRequester() }
     val panelKeys = Modifier.focusRequester(first).focusable().onPreviewKeyEvent {
         if (it.type != KeyEventType.KeyDown) false else when (it.key) {
-            Key.Escape -> { close(); true }
+            Key.Escape -> { back(); true }
             Key.DirectionDown -> { focus.moveFocus(FocusDirection.Next); true }
             Key.DirectionUp -> { focus.moveFocus(FocusDirection.Previous); true }
             else -> false
@@ -91,7 +91,7 @@ internal fun ConversationComposerToolbar(
         }
         Spacer(Modifier.width(HarnessTokens.Composer.ControlGap))
         HarnessPopover(expanded = popup == ComposerPopup.Permissions, onDismissRequest = close,
-            onExpandedChange = { popup = if (it) ComposerPopup.Permissions else ComposerPopup.Closed },
+            onExpandedChange = { popupStack = if (it) listOf(ComposerPopup.Permissions) else emptyList() },
             side = HarnessPopoverSide.Top, popupWidth = HarnessTokens.Composer.PermissionPopupWidth,
             // Live popup: 320 wide, radius 20, 4 inset, 0.5px 8.2% ring, `0 8px 16px -4px` shadow.
             popupShape = HarnessTokens.Composer.PopupRadius,
@@ -140,15 +140,7 @@ internal fun ConversationComposerToolbar(
         HarnessPopover(expanded = popup == ComposerPopup.Reasoning || popup == ComposerPopup.Models,
             onDismissRequest = close,
             onExpandedChange = { open ->
-                popup = when {
-                    !open -> ComposerPopup.Closed
-                    // Nothing to show a strength for: the live picker opens its model list. It opens
-                    // straight on that list, too, when the current model offers fewer than two
-                    // reasoning options (`powerSelections.length >= 2` filters the slider out) — a
-                    // property of the model, so read-only threads land on the same view.
-                    selectedModel == null || efforts.size < 2 -> ComposerPopup.Models
-                    else -> ComposerPopup.Reasoning
-                }
+                popupStack = if (open) listOf(ComposerPopup.Reasoning) else emptyList()
             },
             // Live Radix popper: `data-side="top"`, `data-align="end"` against the trigger, but the
             // rendered menu is centred on it — trigger 141.7 wide, menu 254 wide, centres 1.1 apart.
@@ -177,35 +169,31 @@ internal fun ConversationComposerToolbar(
                 },
                 enabled = triggerEnabled, onClick = toggle, testTag = "live-composer-model") }) {
             if (popup == ComposerPopup.Models) {
-                // Live list: a 26.6px `选择模型` section label (`4px 8px`, 13 / 18.57) over 235×28.6
-                // radio rows inset 4 from the menu edge (8 inside the row), with a 17px trailing
-                // check. The whole list scrolls inside the menu — the heading goes with it — and the
-                // live menu reserves an 11px scrollbar gutter, so rows stop 15px short of its edge.
-                //
-                // The live list renders its `选择模型` heading unconditionally and simply draws no rows
-                // when the catalogue is empty; it has no in-menu error line or retry action. (The
-                // `composer.modelPicker.modelsUnavailable` / `retryModels` strings exist in the bundle's
-                // locales but no code in this build references them.)
+                // Model rows scroll together with an 11px scrollbar gutter and a 17px trailing check.
                 val modelScroll = rememberScrollState()
                 Box(Modifier.fillMaxWidth().heightIn(max = HarnessTokens.Composer.ModelListMaxHeight)) {
                     Column(Modifier.fillMaxWidth()
                         .verticalScroll(modelScroll)
                         .padding(start = 4.dp, end = 15.dp, bottom = HarnessTokens.Composer.PopupContainerInset)) {
-                        HarnessText("选择模型",
-                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                            color = ConversationAppearance.tertiary,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.5.sp))
+                        if (choices.isEmpty()) {
+                            HarnessText(modelReason ?: "暂无可选模型，请在模型管理中开启模型。",
+                                Modifier.padding(8.dp), color = ConversationAppearance.tertiary, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (choices.isEmpty() && onManageModels != null) HarnessButton("前往模型管理",
+                            { close(); onManageModels() }, variant = HarnessButtonVariant.Ghost, testTag = "live-composer-manage-models")
                         choices.forEach { choice ->
+
                             HarnessComposerChoice(choice.label, selected = choice.providerId == selectedModel?.providerId && choice.modelId == selectedModel?.modelId,
                                 onClick = {
                                     if (canChoose) {
                                         onModelSelect(choice)
-                                        // Models without enough effort options close the picker.
-                                        popup = if (choice.reasoningEfforts.filter(String::isNotBlank)
-                                                .distinct().size >= 2) ComposerPopup.Reasoning else ComposerPopup.Closed
+                                        back()
                                     }
                                 },
-                                modifier = Modifier.height(HarnessTokens.Composer.ModelItemHeight),
+                                modifier = Modifier.height(HarnessTokens.Composer.ModelItemHeight)
+                                    .background(ConversationAppearance.ink.copy(alpha =
+                                        if (choice.providerId == selectedModel?.providerId && choice.modelId == selectedModel?.modelId) 0.14f else 0.035f),
+                                        RoundedCornerShape(6.dp)),
                                 selectedArtwork = { ConversationIcon(ConversationGlyph.Check, ConversationAppearance.ink, 17.dp) },
                                 testTag = "menu:${choice.menuKey()}")
                         }
@@ -221,24 +209,24 @@ internal fun ConversationComposerToolbar(
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         ModelChip(modelLabel, strength, showStrength = selectedModel != null && effortKnown && efforts.isNotEmpty(),
                             maximum = selectedEffort == "max" || selectedEffort == "ultra",
-                            enabled = canChoose, onClick = { popup = ComposerPopup.Models },
+                            enabled = idle, onClick = { popupStack = popupStack + ComposerPopup.Models },
                             testTag = "live-composer-model-select")
                     }
                     // Codex's reset restores its recommended model selection. Harness has no
                     // equivalent default option, so there is no reset action in this slot.
                     Spacer(Modifier.width(HarnessTokens.Composer.ModelResetSize))
                 }
-                // The live slider has one stop per effort, without an extra default stop.
-                // Until an effort is selected, Harness parks the knob at the first stop.
-                val values = efforts
-                val selectedIndex = values.indexOf(selectedEffort)
-                Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(HarnessTokens.Composer.EffortRowHeight)) {
-                    ComposerEffortSlider(values.map(::effortLabel),
-                        if (effortKnown && selectedIndex >= 0) selectedIndex else 0,
-                        enabled = canAdjust,
-                        onSelect = { if (canAdjust) onEffortSelect?.invoke(values[it]) })
-                }
-                // The live picker has no explanatory line under the slider.
+                val values = listOf<String?>(null) + efforts
+                val selectedIndex = values.indexOf(selectedEffort).coerceAtLeast(0)
+                if (efforts.isNotEmpty()) {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(HarnessTokens.Composer.EffortRowHeight)) {
+                        ComposerEffortSlider(values.map { if (it == null) "跟随厂商" else effortLabel(it) },
+                            selectedIndex, enabled = canAdjust,
+                            onSelect = { if (canAdjust) onEffortSelect?.invoke(values[it]) })
+                    }
+                } else HarnessText(if (selectedModel == null) "请先选择模型" else "此模型未提供可调整的思考强度，跟随厂商。",
+                    Modifier.padding(8.dp), color = ConversationAppearance.tertiary, style = MaterialTheme.typography.bodySmall)
+
             }
         }
         // Live dictation slot: 28px, white 16px microphone over a transparent disc, flush to the chip.

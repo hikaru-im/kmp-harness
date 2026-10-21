@@ -3,12 +3,14 @@ package im.hikaru.harness.llm
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.effect.Disposable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** 适配器注册返回的生命周期句柄，并支持原子替换同一适配器的 routes。 */
 interface AdapterRegistrationHandle : Disposable {
@@ -24,6 +26,16 @@ private class AdapterOwner(
 private class DirectoryOwner {
     var released: Boolean = false
 }
+
+private class ContributionOwner(val vendor: String) {
+    var released: Boolean = false
+    val instances = mutableListOf<ContributionLlmAdapter>()
+}
+
+private data class ContributionEntry(
+    val owner: ContributionOwner,
+    val contribution: LlmProviderContribution,
+)
 
 private data class AdapterRoute(
     val owner: AdapterOwner,
@@ -41,6 +53,7 @@ private data class ResolvedCall(
     val config: LlmCallConfig,
     val adapterDefaults: LlmCallConfigAdapterDefaults,
     val context: LlmModelContext?,
+    val reasoningCapabilities: ReasoningCapabilities?,
 )
 
 /**
@@ -58,6 +71,8 @@ class LlmRuntime internal constructor(
 
     private val directory =
         linkedMapOf<String, DirectoryEntry>()
+
+    private val contributions = linkedMapOf<String, ContributionEntry>()
 
     private var disposed =
         false
@@ -79,6 +94,102 @@ class LlmRuntime internal constructor(
 
     suspend fun settingsApplication(namespace: String): LlmSettingsApplication? =
         mutex.withLock { settingsApplications[namespace] }
+
+    /** Register installed vendor capabilities independently from active connection routes. */
+    suspend fun registerProviderContribution(
+        contribution: LlmProviderContribution,
+    ): ProviderContributionRegistrationHandle {
+        val candidate = contribution.detachedCopy()
+        val owner = ContributionOwner(candidate.descriptor.id)
+        mutex.withLock {
+            checkActive()
+            if (owner.vendor in contributions) {
+                throw LlmException("Provider contribution '${owner.vendor}' is already registered", LlmErrorCode.DUPLICATE_PROVIDER_CONTRIBUTION)
+            }
+            contributions[owner.vendor] = ContributionEntry(owner, candidate)
+        }
+        emitAdaptersUpdated()
+        return ContributionHandle(this, owner)
+    }
+
+    suspend fun listProviderDescriptors(): List<LlmProviderDescriptor> = mutex.withLock {
+        checkActive()
+        contributions.values.map { it.contribution.descriptor.detachedCopy() }
+    }
+
+    suspend fun providerContribution(vendorId: String): LlmProviderContribution? = mutex.withLock {
+        checkActive()
+        contributions[vendorId]?.contribution?.detachedCopy()
+    }
+
+    /** Discovery works for draft connections; it never requires or activates an adapter route. */
+    suspend fun discoverModels(vendorId: String, access: LlmProviderAccess): LlmCatalogSnapshot {
+        val entry = mutex.withLock {
+            checkActive()
+            contributions[vendorId] ?: throw LlmException(
+                "No provider contribution registered for '$vendorId'", LlmErrorCode.NO_PROVIDER_CONTRIBUTION,
+            )
+        }
+        val contribution = entry.contribution
+        if (access.connection.vendor != vendorId || access.connection.api !in contribution.descriptor.protocols) {
+            throw LlmException("Discovery connection does not match the registered vendor/protocol", LlmErrorCode.INVALID_PROVIDER_CONNECTION)
+        }
+        val discovery = contribution.discovery ?: throw LlmException(
+            "Provider '$vendorId' does not supply model discovery", LlmErrorCode.MODEL_DISCOVERY_UNSUPPORTED,
+        )
+        val snapshot = discovery.discover(access).detachedCopy()
+        if (snapshot.source.isBlank() || snapshot.models.map { it.id }.distinct().size != snapshot.models.size ||
+            snapshot.models.any { it.id.isBlank() || it.name.isBlank() ||
+                (it.contextWindow != null && it.contextWindow <= 0L) ||
+                (it.maxOutputTokens != null && it.maxOutputTokens <= 0L) }) {
+            throw LlmException("Provider returned an invalid model catalog", LlmErrorCode.INVALID_MODEL_CATALOG)
+        }
+        mutex.withLock {
+            checkActive()
+            if (contributions[vendorId] !== entry) {
+                throw LlmException("Provider contribution changed during discovery", LlmErrorCode.REGISTRATION_DISPOSED)
+            }
+        }
+        return snapshot
+    }
+
+    /** The sole vendor factory boundary: captures this contribution's rules and owns its retirement. */
+    suspend fun createProviderAdapter(vendorId: String, access: LlmProviderAccess): LlmProviderAdapter {
+        val entry = mutex.withLock {
+            checkActive()
+            contributions[vendorId] ?: throw LlmException(
+                "No provider contribution registered for '$vendorId'", LlmErrorCode.NO_PROVIDER_CONTRIBUTION,
+            )
+        }
+        if (access.connection.vendor != vendorId || access.connection.api !in entry.contribution.descriptor.protocols) {
+            throw LlmException("Adapter connection does not match the registered vendor/protocol", LlmErrorCode.INVALID_PROVIDER_CONNECTION)
+        }
+        val factory = entry.contribution.adapterFactory ?: throw LlmException(
+            "Provider '$vendorId' does not supply an executable adapter", LlmErrorCode.PROVIDER_ADAPTER_UNSUPPORTED,
+        )
+        val rules = entry.contribution.capabilityRules
+        val ruleVersion = rules?.version
+        if (ruleVersion != null && ruleVersion.isBlank()) {
+            throw LlmException("Capability rules must have a version", LlmErrorCode.INVALID_MODEL_REASONING)
+        }
+        val instance = ContributionLlmAdapter(
+            factory.create(access.detachedCopy()), access.connection, rules, ruleVersion,
+            onRetired = { retired -> mutex.withLock { entry.owner.instances.remove(retired) } },
+        )
+        try {
+            mutex.withLock {
+                checkActive()
+                if (contributions[vendorId] !== entry) {
+                    throw LlmException("Provider contribution changed while creating its adapter", LlmErrorCode.REGISTRATION_DISPOSED)
+                }
+                entry.owner.instances += instance
+            }
+        } catch (error: Throwable) {
+            withContext(NonCancellable) { instance.dispose() }
+            throw error
+        }
+        return instance
+    }
 
     /**
      * 为一组 provider routes 注册同一个适配器。
@@ -229,9 +340,11 @@ class LlmRuntime internal constructor(
                     options = options,
                     route = route,
                     adapterCall = adapterCall,
+                    expectedConfig = resolved.config,
                 )
             },
             release = adapterCall::dispose,
+            reasoningCapabilities = resolved.reasoningCapabilities,
         )
     }
 
@@ -262,7 +375,19 @@ class LlmRuntime internal constructor(
                         return@flow
                     }
                 try {
-                    emitAll(adapterStream(route, request, adapterCall))
+                    val resolved = try {
+                        resolveCall(
+                            route,
+                            request.callConfig(),
+                            normalizeModelInfo(route, request.model, adapterCall.model),
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        emit(errorFinish(error))
+                        return@flow
+                    }
+                    emitAll(adapterStream(route, request.withConfig(resolved.config), adapterCall))
                 } finally {
                     adapterCall.dispose()
                 }
@@ -271,27 +396,36 @@ class LlmRuntime internal constructor(
     }
 
     override suspend fun dispose() {
-        mutex.withLock {
+        val instances = mutex.withLock {
             if (disposed) {
                 return
             }
             disposed = true
+            val instances = contributions.values.flatMap { entry -> entry.owner.instances.toList() }
+            contributions.values.forEach { entry -> entry.owner.instances.clear() }
             routes.clear()
             directory.clear()
+            contributions.clear()
             settingsApplications.clear()
+            instances
         }
+        retireInstances(instances)
     }
 
     private fun dispatch(
         options: GenerateOptions,
         route: AdapterRoute,
         adapterCall: PreparedAdapterCall,
+        expectedConfig: LlmCallConfig,
     ): Flow<StreamChunk> {
         val request = options.detachedCopy()
         return context.waterfall(
             key = LlmStreamEvent,
             event = request,
         ) { request ->
+            if (request.callConfig() != expectedConfig) {
+                throw LlmException("Prepared LLM call config changed in middleware", LlmErrorCode.INVALID_PREPARED_CALL)
+            }
             adapterStream(route, request, adapterCall)
         }
     }
@@ -378,6 +512,10 @@ class LlmRuntime internal constructor(
             )
         }
 
+        if (resolved.maxOutputTokens != null && resolved.maxOutputTokens <= 0L) {
+            throw LlmException("Adapter returned invalid model output capacity", LlmErrorCode.INVALID_MODEL_MAX_TOKENS)
+        }
+
         resolved.reasoning?.let { reasoning ->
             val ids = reasoning.efforts.map { effort -> effort.id }
             if (
@@ -398,6 +536,8 @@ class LlmRuntime internal constructor(
             reasoning = resolved.reasoning?.copy(
                 efforts = resolved.reasoning.efforts.toList(),
             ),
+            reasoningCapabilities = resolved.reasoningCapabilities?.detachedCopy(),
+            metadata = resolved.metadata.detachedCopy(),
         )
     }
 
@@ -422,11 +562,25 @@ class LlmRuntime internal constructor(
             defaultMaxTokens = true
         }
 
+        if (resolved.reasoning != null) {
+            validateReasoningOptions(resolved.reasoning, modelCapabilities(info), resolved.maxTokens)
+            return ResolvedCall(
+                config = resolved,
+                adapterDefaults = LlmCallConfigAdapterDefaults(maxTokens = defaultMaxTokens),
+                context = info.context,
+                reasoningCapabilities = modelCapabilities(info)?.detachedCopy(),
+            )
+        }
+
         val reasoning = info.reasoning
         val requested = resolved.reasoningEffort
         if (reasoning == null) {
             if (requested != null) {
-                unsupportedReasoning(config, requested)
+                if (info.reasoningCapabilities != null) {
+                    validateReasoningOptions(ReasoningOptions(effort = requested), info.reasoningCapabilities, resolved.maxTokens)
+                } else {
+                    unsupportedReasoning(config, requested)
+                }
             }
         } else {
             val effective = requested ?: reasoning.defaultEffort
@@ -438,6 +592,9 @@ class LlmRuntime internal constructor(
                     resolved = resolved.copy(reasoningEffort = effective)
                     defaultReasoning = true
                 }
+                info.reasoningCapabilities?.let { capabilities ->
+                    validateReasoningOptions(ReasoningOptions(effort = effective), capabilities, resolved.maxTokens)
+                }
             }
         }
 
@@ -448,6 +605,7 @@ class LlmRuntime internal constructor(
                 maxTokens = defaultMaxTokens,
             ),
             context = info.context,
+            reasoningCapabilities = modelCapabilities(info)?.detachedCopy(),
         )
     }
 
@@ -460,6 +618,14 @@ class LlmRuntime internal constructor(
             code = LlmErrorCode.UNSUPPORTED_REASONING_EFFORT,
         )
     }
+
+    private fun modelCapabilities(info: LlmResolvedModelInfo): ReasoningCapabilities? =
+        info.reasoningCapabilities ?: info.reasoning?.let { legacy ->
+            ReasoningCapabilities(
+                effortSupport = CapabilitySupport.SUPPORTED,
+                efforts = legacy.efforts.toList(),
+            )
+        }
 
     private fun prepareRoutes(
         providers: List<String>,
@@ -639,6 +805,42 @@ class LlmRuntime internal constructor(
         context.events.emitContained(LlmAdaptersUpdatedEvent, Unit)
     }
 
+    private suspend fun replaceContribution(owner: ContributionOwner, contribution: LlmProviderContribution) {
+        val candidate = contribution.detachedCopy()
+        val instances = mutex.withLock {
+            checkActive()
+            if (owner.released) throw LlmException("Provider contribution registration is disposed", LlmErrorCode.REGISTRATION_DISPOSED)
+            if (candidate.descriptor.id != owner.vendor) {
+                throw LlmException("Provider contribution replacement must preserve vendor identity", LlmErrorCode.INVALID_PROVIDER_CONNECTION)
+            }
+            contributions[owner.vendor] = ContributionEntry(owner, candidate)
+            owner.instances.toList().also { owner.instances.clear() }
+        }
+        emitAdaptersUpdated()
+        retireInstances(instances)
+    }
+
+    private suspend fun releaseContribution(owner: ContributionOwner) {
+        val instances = mutex.withLock {
+            if (owner.released) return
+            owner.released = true
+            if (contributions[owner.vendor]?.owner === owner) contributions.remove(owner.vendor)
+            owner.instances.toList().also { owner.instances.clear() }
+        }
+        emitAdaptersUpdated()
+        retireInstances(instances)
+    }
+
+    private suspend fun retireInstances(instances: List<ContributionLlmAdapter>) = withContext(NonCancellable) {
+        var failure: Throwable? = null
+        for (instance in instances) {
+            try { instance.dispose() } catch (error: Throwable) {
+                if (failure == null) failure = error else if (failure !== error) failure.addSuppressed(error)
+            }
+        }
+        failure?.let { throw it }
+    }
+
     private fun checkActive() {
         if (disposed) {
             throw LlmException(
@@ -674,6 +876,14 @@ class LlmRuntime internal constructor(
             runtime.releaseDirectory(owner)
         }
     }
+
+    private class ContributionHandle(
+        private val runtime: LlmRuntime,
+        private val owner: ContributionOwner,
+    ) : ProviderContributionRegistrationHandle {
+        override suspend fun replace(contribution: LlmProviderContribution) = runtime.replaceContribution(owner, contribution)
+        override suspend fun dispose() = runtime.releaseContribution(owner)
+    }
 }
 
 private fun RetryPolicy.detachedCopy(): RetryPolicy =
@@ -695,6 +905,14 @@ private fun GenerateOptions.detachedCopy(): GenerateOptions =
         stop = stop?.toList(),
     )
 
+private fun GenerateOptions.withConfig(config: LlmCallConfig): GenerateOptions = copy(
+    reasoningEffort = config.reasoningEffort,
+    reasoning = config.reasoning,
+    temperature = config.temperature,
+    maxTokens = config.maxTokens,
+    stop = config.stop,
+)
+
 /** 一次性、绑定到精确适配器 registration 的已准备调用。 */
 class PreparedLlmCall internal constructor(
     val config: LlmCallConfig,
@@ -703,6 +921,7 @@ class PreparedLlmCall internal constructor(
     val adapterDefaults: LlmCallConfigAdapterDefaults,
     private val dispatch: (GenerateOptions) -> Flow<StreamChunk>,
     private val release: suspend () -> Unit = {},
+    val reasoningCapabilities: ReasoningCapabilities? = null,
 ) : Disposable {
     private val mutex = Mutex()
     private var used = false
@@ -710,23 +929,32 @@ class PreparedLlmCall internal constructor(
 
     fun stream(options: GenerateOptions): Flow<StreamChunk> =
         flow {
+            var ownsRelease = false
             try {
                 mutex.withLock {
-                    if (used || released || options.callConfig() != config) {
+                    if (used || released) {
                         throw LlmException(
                             message = "Prepared LLM call was reused or its config changed",
                             code = LlmErrorCode.INVALID_PREPARED_CALL,
                         )
                     }
                     used = true
+                    ownsRelease = true
+                    if (options.callConfig() != config) {
+                        throw LlmException(
+                            message = "Prepared LLM call config changed",
+                            code = LlmErrorCode.INVALID_PREPARED_CALL,
+                        )
+                    }
                 }
                 emitAll(dispatch(options))
             } finally {
-                dispose()
+                // A rejected second collector must not release the first collector's live lease.
+                if (ownsRelease) dispose()
             }
         }
 
-    override suspend fun dispose() {
+    override suspend fun dispose() = withContext(NonCancellable) {
         val shouldRelease =
             mutex.withLock {
                 if (released) false else true.also { released = true }

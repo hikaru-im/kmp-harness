@@ -121,6 +121,19 @@ class LocalConnectionTest {
             assertEquals(ReasoningEffortId("high"), mappedAgent.options.reasoningEffort)
             assertEquals(2048, mappedAgent.options.maxTokens)
 
+            val unified = connection.session.create(agentOptions = AgentOptions(
+                provider = "scripted", model = "test-model",
+                reasoning = im.hikaru.harness.client.connection.ReasoningOptions(
+                    mode = "enabled", budgetTokens = 4096,
+                    effort = im.hikaru.harness.client.connection.ReasoningEffortId("high"),
+                ),
+            ))
+            val unifiedAgent = requireNotNull(host.runtime.context.agents.get(AgentId(unified.id.value)))
+            assertEquals("enabled", unifiedAgent.options.reasoning?.mode?.value)
+            assertEquals(4096L, unifiedAgent.options.reasoning?.budgetTokens)
+            assertEquals(ReasoningEffortId("high"), unifiedAgent.options.reasoning?.effort)
+            assertEquals(unifiedAgent.options.reasoning, unifiedAgent.options.requireCallConfig().reasoning)
+
             val missing =
                 assertFailsWith<LocalConnectionException> {
                     connection.session.create(agentOptions = AgentOptions())

@@ -7,6 +7,10 @@ data class KoogStreamContext(
     val koogProvider: String,
     /** Installed protocol semantics selected for this provider/model route. */
     val api: String = provider,
+    val vendor: String = "openai",
+    val serviceVariant: String? = null,
+    val apiVersion: String? = null,
+    val reasoningCapabilities: im.hikaru.harness.llm.ReasoningCapabilities? = null,
 ) {
     init {
         require(provider.isNotBlank()) {

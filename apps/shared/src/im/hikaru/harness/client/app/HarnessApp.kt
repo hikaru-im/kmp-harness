@@ -658,9 +658,7 @@ public fun HarnessApp(
     }
     val modelChoices = if (transport == ConnectionTransport.Local && modelSettings.snapshot.available &&
         modelSettings.loadError == null && !modelSettings.loading) {
-        modelSettings.snapshot.providers.filter { it.active }.flatMap { provider ->
-            provider.models.map { model -> ConversationModelChoice(provider.id, model.id, provider.displayName + " / " + model.name, model.reasoningEfforts) }
-        }
+        modelSettings.snapshot.composerModelChoices()
     } else emptyList()
     val localSchedulingAllowed = transport == ConnectionTransport.Local && verifiedConversationConnection != null
     val schedulingUnavailableReason = when {
@@ -759,13 +757,19 @@ public fun HarnessApp(
         mutableStateMapOf<SessionId?, ComposerSessionPreferences>()
     }
     val homePreferences = composerPreferences[null] ?: ComposerSessionPreferences()
-    var selectedNewEffort by remember(conversationHost?.hostId, conversationHost?.identity, selectedNewModel?.providerId, selectedNewModel?.modelId) {
-        mutableStateOf<String?>(null)
+    val defaultModel = modelSettings.snapshot.providers.firstOrNull { it.selectedModelId != null }?.let { provider ->
+        modelChoices.firstOrNull { it.providerId == provider.id && it.modelId == provider.selectedModelId }
     }
-    val effectiveNewModel = selectedNewModel?.let { chosen ->
+    val effectiveNewModel = (selectedNewModel ?: defaultModel)?.let { chosen ->
         modelChoices.firstOrNull { it.providerId == chosen.providerId && it.modelId == chosen.modelId }
     }
-    val effectiveNewEffort = selectedNewEffort?.takeIf { it in effectiveNewModel?.reasoningEfforts.orEmpty() }
+    LaunchedEffect(defaultModel?.providerId, defaultModel?.modelId) { selectedNewModel = null }
+    // Validate the previous intent against the newly selected model.
+    var selectedNewReasoning by remember(conversationHost?.hostId, conversationHost?.identity) {
+        mutableStateOf(im.hikaru.harness.client.connection.ReasoningOptions())
+    }
+    val effectiveNewReasoning = resolveComposerReasoning(effectiveNewModel, selectedNewReasoning)
+    val effectiveNewEffort = effectiveNewReasoning.effort?.value
     val modelReason = when {
         transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
         modelSettings.loading -> "正在读取本机模型目录。"
@@ -821,6 +825,12 @@ public fun HarnessApp(
             localProjectsState.mutationFailure?.let { HarnessText(it.message(), color = HarnessTokens.Colors.Danger) }
         }
     }
+    val modelManagementTabStrip = LocalHarnessTabStrip.current
+    val openModelManagement: () -> Unit = {
+        val target = PageId.Settings(SettingsSection.Models)
+        navigation = navigation.navigate(target)
+        modelManagementTabStrip?.selectConversation(target)
+    }
     val homeComposer: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Project selection lives in the composer rail below; only the loading/error feedback stays here.
@@ -842,7 +852,7 @@ public fun HarnessApp(
         LiveConversationComposer(
             state = composerState, onDraftChange = { if (homeComposerIsCurrent()) conversation.updateDraft(it) },
             onSubmit = {
-                if (submitReason == null && homeComposerIsCurrent()) {
+                if (submitReason == null && !submitBlockedWithoutHint && homeComposerIsCurrent()) {
                     var target: ValidatedLocalProjectTarget? = null
                     val expectedProjectId = localProjectsState.selectedProjectId
                     val expectedProjectBinding = projectBinding
@@ -852,7 +862,7 @@ public fun HarnessApp(
                     projectPreparationError = null
                     conversation.submit(
                         agentOptions = AgentOptions(provider = effectiveNewModel?.providerId, model = effectiveNewModel?.modelId,
-                            reasoningEffort = effectiveNewEffort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }),
+                            reasoning = effectiveNewReasoning),
                         prepareCreation = if (worktreeDirectory != null) ({ CreateSessionOptions(cwd = worktreeDirectory) })
                             else if (!useProject) null else ({
                                 if (expectedProjectBinding == null || !localProjects.isBoundTo(expectedProjectBinding) ||
@@ -867,7 +877,7 @@ public fun HarnessApp(
                             }),
                         onSessionCreated = { summary ->
                             composerPreferences[summary.id] = (composerPreferences[null] ?: homePreferences).copy(model = effectiveNewModel,
-                                effort = effectiveNewEffort, modelConfigurationKnown = effectiveNewModel != null)
+                                effort = effectiveNewEffort, reasoning = effectiveNewReasoning, modelConfigurationKnown = effectiveNewModel != null)
                             composerPreferences.remove(null)
                             if (worktreeDirectory != null) { pendingWorktreeChat = null; true }
                             else if (!useProject) true else target?.let { captured ->
@@ -880,10 +890,18 @@ public fun HarnessApp(
             },
             onCancel = { if (homeComposerIsCurrent()) conversation.cancel() }, models = modelChoices,
             selectedModel = effectiveNewModel,
-            onModelSelect = { selectedNewModel = it }, modelUnavailableReason = modelReason,
+            onManageModels = openModelManagement,
+            onModelSelect = {
+                selectedNewReasoning = resolveComposerReasoning(it, effectiveNewReasoning)
+                selectedNewModel = it
+            }, modelUnavailableReason = modelReason,
             submitUnavailableReason = submitReason, submitBlocked = submitBlockedWithoutHint,
             selectedReasoningEffort = effectiveNewEffort,
-            onReasoningEffortSelect = { selectedNewEffort = it },
+            onReasoningEffortSelect = {
+                selectedNewReasoning = effectiveNewReasoning.copy(effort = it?.let { value -> im.hikaru.harness.client.connection.ReasoningEffortId(value) })
+            },
+            selectedReasoning = effectiveNewReasoning,
+            onReasoningSelect = { selectedNewReasoning = it },
             useHostDefaultModel = transport == ConnectionTransport.Relay,
             permission = homePreferences.permission,
             onPermissionSelect = { if (homeComposerIsCurrent()) composerPreferences[null] = homePreferences.copy(permission = it) },
@@ -1065,6 +1083,13 @@ public fun HarnessApp(
         val sessionId = (page as? PageId.Thread)?.threadId?.let(::SessionId)
         val bound = paneState.host == conversationHost && paneState.selectedSessionId == sessionId
         val preferences = composerPreferences[sessionId] ?: ComposerSessionPreferences()
+        val paneModel = if (bound) composerModel(paneState, modelChoices, preferences) else null
+        val paneModelAvailable = paneModel != null && modelChoices.any { it.providerId == paneModel.providerId && it.modelId == paneModel.modelId }
+        val paneReasoning = resolveComposerReasoning(paneModel, preferences.reasoning
+            ?: paneState.modelConfiguration?.reasoning
+            ?: im.hikaru.harness.client.connection.ReasoningOptions(effort = preferences.effort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }
+                ?: paneState.modelConfiguration?.reasoningEffort))
+
         // The composer acts on the pane's live binding, so a callback that lands after the pane moved
         // to another tab cannot draft into, send to or stop the session the pane has left.
         fun stillBound(): Boolean = paneController.state.value.host == conversationHost &&
@@ -1074,22 +1099,46 @@ public fun HarnessApp(
         LiveConversationComposer(
             state = if (bound) paneState else ConversationState(host = conversationHost, selectedSessionId = sessionId),
             onDraftChange = { if (stillBound()) paneController.updateDraft(it) },
-            onSubmit = { if (bound && stillBound()) paneController.submit(agentOptions = AgentOptions()) },
+            onSubmit = {
+                if (bound && stillBound() && (transport != ConnectionTransport.Local || paneModelAvailable)) {
+                    paneController.submit(agentOptions = if (transport == ConnectionTransport.Local)
+                        AgentOptions(provider = paneModel?.providerId, model = paneModel?.modelId, reasoning = paneReasoning)
+                        else AgentOptions())
+                }
+            },
             onCancel = { if (stillBound()) paneController.cancel() },
             onCancelEdit = { if (stillBound()) paneController.cancelEdit() },
             models = modelChoices,
-            selectedModel = if (bound) composerModel(paneState, modelChoices, preferences) else null,
-            onModelSelect = {}, // Existing sessions expose their configuration read-only.
-            modelUnavailableReason = "当前会话暂不支持更换模型。",
+            selectedModel = paneModel,
+            onManageModels = openModelManagement,
+            onModelSelect = { chosen ->
+                if (bound && stillBound()) {
+                    val reasoning = resolveComposerReasoning(chosen, paneReasoning)
+                    composerPreferences[sessionId] = preferences.copy(model = chosen, reasoning = reasoning,
+                        effort = reasoning.effort?.value, modelConfigurationKnown = true)
+                }
+            },
+            modelUnavailableReason = modelReason,
             submitUnavailableReason = when {
                 pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
                 !bound -> "正在切换会话…"
                 !paneState.connected -> "请连接可用的 Host 后发送消息。"
                 selectedSummary?.archived == true -> "此会话已归档，取消归档后可继续发送。"
+                transport == ConnectionTransport.Local && !paneModelAvailable -> "当前模型已关闭或不可用，请重新选择模型。"
                 else -> null
             },
-            selectedReasoningEffort = preferences.effort,
-            reasoningEffortKnown = preferences.modelConfigurationKnown,
+            selectedReasoningEffort = paneReasoning.effort?.value,
+            selectedReasoning = paneReasoning,
+            onReasoningEffortSelect = { effort ->
+                if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(model = paneModel,
+                    reasoning = paneReasoning.copy(effort = effort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }),
+                    effort = effort, modelConfigurationKnown = true)
+            },
+            onReasoningSelect = { reasoning ->
+                if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(model = paneModel,
+                    reasoning = reasoning, effort = reasoning.effort?.value, modelConfigurationKnown = true)
+            },
+            reasoningEffortKnown = true,
             permission = preferences.permission,
             onPermissionSelect = { if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(permission = it) },
         )
@@ -1285,9 +1334,13 @@ public fun HarnessApp(
                     onAppearanceChange = { candidate -> appearanceScope.launch { appearance.save(candidate) } },
                     onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
                     modelSettings = modelSettings,
+                    onModelEnabled = { provider, model, enabled, revision -> modelScope.launch { models.setModelEnabled(provider, model, enabled, revision) } },
+                    onModelSelected = { provider, model, revision -> modelScope.launch { models.selectModel(provider, model, revision) } },
                     onModelsRefresh = { modelScope.launch { models.load() } },
                     onModelsRetryApplication = { modelScope.launch { models.retryApplication() } },
                     onModelsDiscover = { id, revision -> modelScope.launch { models.discoverModels(id, revision) } },
+                    onModelsDiscoverDraft = { configuration, key -> models.discoverDraft(configuration, key) },
+                    onProviderConnect = { configuration, key, revision -> modelScope.launch { models.saveWithCredential(configuration, key, revision) } },
                     onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
                     onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
                     onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
@@ -1893,9 +1946,13 @@ private fun SettingsScreen(
     onAppearanceChange: (AppearanceSettings) -> Unit,
     onAppearanceRetry: () -> Unit,
     modelSettings: ModelSettingsState,
+    onModelEnabled: (String, String, Boolean, Long) -> Unit,
+    onModelSelected: (String, String, Long) -> Unit,
     onModelsRefresh: () -> Unit,
     onModelsRetryApplication: () -> Unit,
     onModelsDiscover: (String, Long) -> Unit,
+    onModelsDiscoverDraft: suspend (ProviderConfiguration, String) -> im.hikaru.harness.client.settings.ModelDiscoveryResult,
+    onProviderConnect: (ProviderConfiguration, String, Long) -> Unit,
     onProviderSave: (ProviderConfiguration, Long) -> Unit,
     onProviderRemove: (String, Long) -> Unit,
     onCredentialSet: (String, String) -> Unit,
@@ -1925,7 +1982,8 @@ private fun SettingsScreen(
       when (section) {
         SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins)
         SettingsSection.Appearance -> SettingsAppearancePage(appearanceState, onAppearanceChange, onAppearanceRetry)
-        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover)
+        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover,
+            onModelsDiscoverDraft, onProviderConnect, onModelEnabled, onModelSelected)
         SettingsSection.Connections -> SettingsConnectionsPage(connectionsState, onConnectionsRefresh, onConnectionSelect)
         SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository)
         SettingsSection.Plugins -> InstalledPluginsPage(pluginsState, onPluginAction)

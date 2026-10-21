@@ -9,6 +9,8 @@ import im.hikaru.harness.llm.PreparedAdapterCall
 import im.hikaru.harness.llm.RetryPolicy
 import im.hikaru.harness.llm.StreamChunk
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
@@ -21,10 +23,10 @@ class KoogReloadableLlmAdapter(
     private var metadata: RegistrationMetadata? = null
 
     override fun providerInfo(provider: String): LlmProviderInfo =
-        requireMetadata(provider).adapter.providerInfo(provider)
+        requireMetadata(provider).providerInfo(provider)
 
     override fun providerRetryPolicy(provider: String): RetryPolicy =
-        requireMetadata(provider).adapter.providerRetryPolicy(provider)
+        requireMetadata(provider).providerRetryPolicy(provider)
 
     override suspend fun listModels(provider: String): List<LlmModelInfo> {
         val lease = coordinator.acquire(provider)
@@ -53,22 +55,22 @@ class KoogReloadableLlmAdapter(
     ): PreparedAdapterCall {
         val lease = coordinator.acquire(provider)
         return try {
-            val resolved = lease.adapter.resolveModel(provider, model)
+            val prepared = lease.adapter.prepareCall(provider, model)
             object : PreparedAdapterCall {
                 private val releaseMutex = Mutex()
                 private var released = false
 
-                override val model: LlmResolvedModelInfo = resolved
+                override val model: LlmResolvedModelInfo = prepared.model
 
                 override fun stream(options: GenerateOptions): Flow<StreamChunk> =
-                    lease.adapter.stream(options)
+                    prepared.stream(options)
 
-                override suspend fun dispose() {
+                override suspend fun dispose() = withContext(NonCancellable) {
                     val shouldRelease =
                         releaseMutex.withLock {
                             if (released) false else true.also { released = true }
                         }
-                    if (shouldRelease) lease.release()
+                    if (shouldRelease) try { prepared.dispose() } finally { lease.release() }
                 }
             }
         } catch (error: Throwable) {
@@ -88,11 +90,10 @@ class KoogReloadableLlmAdapter(
         }
 
     internal fun replaceMetadata(
-        adapter: KoogLlmAdapter?,
-        routes: List<KoogProviderRoute>,
+        adapters: Map<String, LlmAdapter>,
     ): RegistrationMetadata? {
         val previous = metadata
-        metadata = adapter?.let { RegistrationMetadata(it, routes.map(KoogProviderRoute::id).toSet()) }
+        metadata = adapters.takeIf { it.isNotEmpty() }?.let { RegistrationMetadata(it.toMap()) }
         return previous
     }
 
@@ -100,19 +101,14 @@ class KoogReloadableLlmAdapter(
         metadata = previous
     }
 
-    private fun requireMetadata(provider: String): RegistrationMetadata {
-        val snapshot = metadata
-        if (snapshot == null || provider !in snapshot.providers) {
-            throw im.hikaru.harness.llm.LlmException(
+    private fun requireMetadata(provider: String): LlmAdapter =
+        metadata?.adapters?.get(provider)
+            ?: throw im.hikaru.harness.llm.LlmException(
                 message = "Unknown reloadable Koog provider '$provider'",
                 code = KoogLlmErrorCode.UNKNOWN_PROVIDER,
             )
-        }
-        return snapshot
-    }
 
     internal data class RegistrationMetadata(
-        val adapter: KoogLlmAdapter,
-        val providers: Set<String>,
+        val adapters: Map<String, LlmAdapter>,
     )
 }

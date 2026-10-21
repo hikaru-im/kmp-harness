@@ -31,8 +31,8 @@ public class OpenAiPromptExecutorFactory(
         settings: List<KoogProviderSettings>,
         credentials: KoogCredentialResolver,
     ): PromptExecutor {
-        require(routes.isNotEmpty()) {
-            "OpenAI executor requires at least one resolved Provider route"
+        require(routes.size == 1 && settings.size == 1) {
+            "Each OpenAI-compatible executor must own exactly one Harness provider connection"
         }
         val routeIds = routes.map(KoogProviderRoute::id)
         val settingIds = settings.map(KoogProviderSettings::provider)
@@ -66,6 +66,17 @@ public class OpenAiPromptExecutorFactory(
         }
         val settingsByProvider = settings.associateBy(KoogProviderSettings::provider)
         val selectedSettings = routeIds.map(settingsByProvider::getValue)
+        val connection = selectedSettings.single()
+        val vendor = connection.vendor ?: "openai"
+        if (vendor !in setOf("openai", "deepseek", "alibaba", "moonshot", "zhipu")) {
+            throw LlmException("No OpenAI-compatible inference transport for vendor '$vendor'", KoogLlmErrorCode.UNSUPPORTED_OPTION)
+        }
+        if (vendor != "openai" && connection.baseUrl == null) {
+            throw LlmException("Vendor '$vendor' requires an explicit endpoint preset", KoogLlmErrorCode.UNSUPPORTED_OPTION)
+        }
+        if (vendor in setOf("moonshot", "zhipu") && selectedApis.any { it != OpenAiChatOptionMapper.OPENAI_CHAT_COMPLETIONS_API_ID }) {
+            throw LlmException("Vendor '$vendor' has no verified Responses transport", KoogLlmErrorCode.UNSUPPORTED_OPTION)
+        }
         val references =
             selectedSettings.map { setting ->
                 setting.credential
@@ -85,7 +96,7 @@ public class OpenAiPromptExecutorFactory(
         }
         val baseUrls =
             selectedSettings
-                .map { setting -> validateBaseUrl(setting.baseUrl ?: defaultBaseUrl) }
+                .map { setting -> validateBaseUrl(setting.baseUrl ?: defaultBaseUrl, vendor == "openai") }
                 .distinct()
         if (baseUrls.size != 1) {
             throw LlmException(
@@ -119,10 +130,12 @@ public class OpenAiPromptExecutorFactory(
             )
         val baseUrl = baseUrls.single()
         val client =
-            OpenAILLMClient(
+            ReasoningOpenAiClient(
                 apiKey = apiKey,
                 settings = OpenAIClientSettings(
                     baseUrl = baseUrl,
+                    chatCompletionsPath = if (vendor == "openai") "v1/chat/completions" else "chat/completions",
+                    responsesAPIPath = if (vendor == "openai") "v1/responses" else "responses",
                     timeoutConfig =
                         ConnectionTimeoutConfig(
                             requestTimeoutMillis = requestTimeoutMillis.single(),
@@ -130,8 +143,7 @@ public class OpenAiPromptExecutorFactory(
                             socketTimeoutMillis = socketTimeoutMillis.single(),
                         ),
                 ),
-                httpClientFactory = httpClientFactory ?: HttpClientFactoryResolver.resolve(),
-                toolsConverter = OpenAiToolDescriptorSchemaGenerator(),
+                factory = httpClientFactory ?: HttpClientFactoryResolver.resolve(),
             )
 
         return try {
@@ -145,7 +157,7 @@ public class OpenAiPromptExecutorFactory(
         }
     }
 
-    private fun validateBaseUrl(value: String): String {
+    private fun validateBaseUrl(value: String, openAi: Boolean): String {
         val uri =
             runCatching { URI(value) }
                 .getOrElse {
@@ -162,7 +174,7 @@ public class OpenAiPromptExecutorFactory(
         }
         val normalized = value.trimEnd('/')
         // Koog appends v1/chat/completions or v1/responses itself.
-        return normalized.removeSuffix("/v1")
+        return if (openAi) normalized.removeSuffix("/v1") else normalized
     }
 
     private fun invalidBaseUrl(): LlmException =

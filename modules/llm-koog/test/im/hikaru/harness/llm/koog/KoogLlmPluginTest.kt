@@ -326,7 +326,8 @@ class KoogLlmPluginTest {
             )
         var factoryCalls = 0
         var resolverCalls = 0
-        lateinit var executor: RecordingPromptExecutor
+        val executors = mutableListOf<RecordingPromptExecutor>()
+        val createdProviders = mutableListOf<String>()
         val plugin =
             KoogLlmPlugin(
                 routes =
@@ -351,20 +352,11 @@ class KoogLlmPluginTest {
                     KoogProviderExecutorFactory { _, settings, credentials ->
                         yield()
                         factoryCalls++
-                        assertEquals(
-                            listOf("test", "backup"),
-                            settings.map { it.provider },
-                        )
-                        assertEquals(
-                            "resolved-secret",
-                            credentials.resolve(
-                                settings.first { setting ->
-                                    setting.provider == "test"
-                                }.credential!!
-                            ),
-                        )
+                        val setting = settings.single()
+                        createdProviders += setting.provider
+                        setting.credential?.let { reference -> assertEquals("resolved-secret", credentials.resolve(reference)) }
                         RecordingPromptExecutor().also { created ->
-                            executor = created
+                            executors += created
                         }
                     },
             )
@@ -375,7 +367,8 @@ class KoogLlmPluginTest {
 
         val fiber = runtime.install(plugin)
 
-        assertEquals(1, factoryCalls)
+        assertEquals(2, factoryCalls)
+        assertEquals(listOf("test", "backup"), createdProviders)
         assertEquals(1, resolverCalls)
         assertEquals(
             listOf("test", "backup"),
@@ -383,7 +376,7 @@ class KoogLlmPluginTest {
         )
 
         runtime.uninstall(fiber)
-        assertTrue(executor.closed)
+        assertTrue(executors.all { it.closed })
         runtime.context.dispose()
     }
 

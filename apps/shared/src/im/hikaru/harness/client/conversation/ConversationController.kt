@@ -63,6 +63,7 @@ public data class ConversationState(
     val selectedSessionId: SessionId? = null,
     val history: List<Message> = emptyList(),
     val historyReadSeq: Long = -1,
+    val modelConfiguration: AgentOptions? = null,
     val draft: String = "",
     val draftRevision: Long = 0,
     val action: ConversationAction = ConversationAction.Idle,
@@ -98,6 +99,8 @@ public interface ConversationOperations {
     public suspend fun create(connection: Connection, options: CreateSessionOptions, agentOptions: AgentOptions): SessionSummary
     public suspend fun history(connection: Connection, id: SessionId): List<Message>
     public suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt
+    public suspend fun prompt(connection: Connection, id: SessionId, message: Message, options: AgentOptions): SessionPrompt =
+        prompt(connection, id, message)
     /** DSH Stop keeps the queued inbox; only the running turn is aborted. */
     public suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean = true) =
         connection.session.cancel(id, keepInbox = keepInbox)
@@ -111,6 +114,9 @@ public object RealConversationOperations : ConversationOperations {
         connection.session.create(options = options, agentOptions = agentOptions)
     override suspend fun history(connection: Connection, id: SessionId): List<Message> = connection.session.history(id)
     override suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt = connection.session.prompt(id, message)
+    override suspend fun prompt(connection: Connection, id: SessionId, message: Message, options: AgentOptions): SessionPrompt =
+        if (options.provider == null || options.model == null) connection.session.prompt(id, message)
+        else connection.session.prompt(id, message, options)
     override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) = connection.session.cancel(id, keepInbox = keepInbox)
     override suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
         connection.session.fork(parent, beforeMessageId)
@@ -232,7 +238,7 @@ public class ConversationController(
         val wasLoadingList = state.value.listPhase == ConversationDataPhase.Loading
         invalidateRequests()
         mutableState.value = state.value.copy(
-            selectedSessionId = id, history = emptyList(), historyReadSeq = -1, historyPhase = ConversationDataPhase.Unbound,
+            selectedSessionId = id, history = emptyList(), modelConfiguration = null, historyReadSeq = -1, historyPhase = ConversationDataPhase.Unbound,
             draft = drafts[id].orEmpty(), draftRevision = old.draftRevision + 1,
             action = ConversationAction.Idle, runState = state.value.sessions
                 .firstOrNull { it.id == id }?.let { if (it.running) ConversationRunState.Running else ConversationRunState.Idle }
@@ -489,10 +495,11 @@ public class ConversationController(
         return start({ historyJob = it }) {
             try {
                 val result = operations.history(fence.connection, id).map(::snapshotMessage)
+                val configuration = fence.connection.session.modelConfiguration(id)
                 currentCoroutineContext().ensureActive()
                 if (valid(fence) && request == historyRequest) {
                     mutableState.value = state.value.copy(
-                        history = result, historyReadSeq = readableThrough,
+                        history = result, historyReadSeq = readableThrough, modelConfiguration = configuration,
                         historyPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
                         errors = without(ConversationErrorKind.History),
                     )
@@ -557,7 +564,7 @@ public class ConversationController(
                     drafts[created.id] = state.value.draft
                     mutableState.value = state.value.copy(
                         selectedSessionId = created.id, sessions = (state.value.sessions + created).distinctBy { it.id },
-                        listPhase = ConversationDataPhase.Ready, history = emptyList(), historyPhase = ConversationDataPhase.Unbound,
+                        listPhase = ConversationDataPhase.Ready, history = emptyList(), modelConfiguration = null, historyPhase = ConversationDataPhase.Unbound,
                         lastAcceptedReceipt = null,
                         action = if (onSessionCreated == null) ConversationAction.Sending else ConversationAction.Associating,
                         runState = ConversationRunState.Unknown,
@@ -592,7 +599,7 @@ public class ConversationController(
                     drafts[forked.id] = state.value.draft
                     mutableState.value = state.value.copy(
                         selectedSessionId = forked.id, sessions = (state.value.sessions + forked).distinctBy { it.id },
-                        listPhase = ConversationDataPhase.Ready, history = emptyList(), historyPhase = ConversationDataPhase.Unbound,
+                        listPhase = ConversationDataPhase.Ready, history = emptyList(), modelConfiguration = null, historyPhase = ConversationDataPhase.Unbound,
                         lastAcceptedReceipt = null, action = ConversationAction.Sending,
                         runState = ConversationRunState.Unknown,
                     )
@@ -601,7 +608,7 @@ public class ConversationController(
                     phase = ConversationErrorKind.Prompt
                 }
                 val id = requireNotNull(fence.selected)
-                val prompt = operations.prompt(fence.connection, id, userMessage(draft))
+                val prompt = operations.prompt(fence.connection, id, userMessage(draft), if (initial.selected == null) AgentOptions() else agentOptions)
                 currentCoroutineContext().ensureActive()
                 if (!valid(fence) || request != sendRequest) return@start
                 val current = state.value

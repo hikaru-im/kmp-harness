@@ -120,6 +120,9 @@ internal class KoogProviderSemanticsRegistry(
     ): LLMParams =
         requireSemantics(context.api).optionMapper.map(options, model, context)
 
+    override fun resolveModel(route: KoogModelRoute, context: KoogStreamContext): KoogModelRoute =
+        requireSemantics(context.api).optionMapper.resolveModel(route, context)
+
     override fun map(
         metaInfo: ResponseMetaInfo,
         context: KoogStreamContext,

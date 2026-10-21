@@ -24,6 +24,7 @@ public data class SessionDescendant(
     val model: String? = null,
     val reasoningEffort: String? = null,
     val objective: String? = null,
+    val reasoning: im.hikaru.harness.llm.ReasoningOptions? = null,
 ) {
     init {
         require(verifiedAncestorPath.size >= 2)

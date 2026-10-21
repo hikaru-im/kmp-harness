@@ -16,7 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 
-/** Owns activation, registration, and disposal for one configured Koog plugin. */
+/** Test-only activation helper; production creation goes through provider contributions. */
 internal class KoogLlmPluginRuntime(
     private val executorFactory: KoogPromptExecutorFactory,
     routes: List<KoogProviderRoute>,
@@ -33,6 +33,7 @@ internal class KoogLlmPluginRuntime(
     private val textTerminalPolicy: KoogTextTerminalPolicy?,
     private val replayWriter: KoogReplayWriter,
     private val dynamicConfiguration: DynamicKoogConfiguration?,
+    private val staticConfiguration: StaticKoogConfiguration?,
 ) {
     private val routes = routes.map(KoogProviderRoute::detachedCopy)
 
@@ -89,19 +90,22 @@ internal class KoogLlmPluginRuntime(
                 installedRoutes = routes,
                 settings = settingsScope,
                 credentials = credentials,
-                generationFactory =
-                    KoogGenerationFactory { settings, resolvedRoutes ->
-                        dynamic.factory.create(
-                            routes = resolvedRoutes,
-                            settings = resolvedRoutes.map { route ->
-                                settings.providers.getValue(route.id)
-                            },
+                connectionFactory = { settings, route ->
+                        val executor = dynamic.factory.create(
+                            routes = listOf(route),
+                            settings = listOf(settings),
                             credentials = { reference ->
                                 credentials.resolve(CredentialRef(reference.name))?.value
                             },
                         )
+                        try {
+                            val adapter = createAdapter(executor, listOf(route))
+                            object : im.hikaru.harness.llm.LlmProviderAdapter {
+                                override val adapter: im.hikaru.harness.llm.LlmAdapter = adapter
+                                override suspend fun dispose() { executor.close() }
+                            }
+                        } catch (error: Throwable) { executor.close(); throw error }
                     },
-                adapterFactory = ::createAdapter,
                 llm = context.llm,
                 directoryRegistration = directoryRegistration,
                 baseDirectory = dynamic.configurableProviders,
@@ -124,6 +128,31 @@ internal class KoogLlmPluginRuntime(
         context: Context,
         scope: EffectScope,
     ) {
+        staticConfiguration?.let { configuration ->
+            val executors = mutableListOf<PromptExecutor>()
+            val registrations = mutableListOf<Disposable>()
+            try {
+                val adapters = routes.map { route ->
+                    val executor = configuration.factory.create(
+                        listOf(route),
+                        listOf(configuration.settings.single { it.provider == route.id }),
+                        configuration.credentials,
+                    )
+                    executors += executor
+                    route.id to createAdapter(executor, listOf(route))
+                }
+                adapters.forEach { (provider, adapter) ->
+                    registrations += context.llm.registerAdapter(listOf(provider), adapter)
+                }
+            } catch (error: Throwable) {
+                registrations.asReversed().forEach { runCatching { it.dispose() }.exceptionOrNull()?.let(error::addSuppressed) }
+                executors.asReversed().forEach { runCatching { it.close() }.exceptionOrNull()?.let(error::addSuppressed) }
+                throw error
+            }
+            executors.forEach { executor -> scope.add(Disposable { executor.close() }) }
+            registrations.forEach(scope::add)
+            return
+        }
         val executor = executorFactory.create()
         scope.add(Disposable { executor.close() })
         scope.add(

@@ -4,10 +4,17 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import im.hikaru.harness.llm.LlmConfigurableProvider
 import im.hikaru.harness.settings.SettingsNamespace
 
-/** Creates a fresh PromptExecutor whenever a static plugin instance activates. */
+/** Test fixture executor creation seam. */
 fun interface KoogPromptExecutorFactory {
     suspend fun create(): PromptExecutor
 }
+
+/** Immutable connections are still isolated by Harness provider identity. */
+data class StaticKoogConfiguration(
+    val settings: List<KoogProviderSettings>,
+    val credentials: KoogCredentialResolver,
+    val factory: KoogProviderExecutorFactory,
+)
 
 /** Runtime inputs required by the live settings reload lifecycle. */
 data class DynamicKoogConfiguration(

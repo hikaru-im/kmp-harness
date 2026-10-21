@@ -45,7 +45,7 @@ public object SettingsNavigatorModel {
         SettingsNavGroup("个人", listOf(
             SettingsNavItem("general", "常规", SettingsNavIcon.General),
             SettingsNavItem("appearance", "外观", SettingsNavIcon.Appearance),
-            SettingsNavItem("models", "模型与 Provider", SettingsPlaceholderGlyph(HarnessIconName.Settings)),
+            SettingsNavItem("models", "模型管理", SettingsPlaceholderGlyph(HarnessIconName.Settings)),
             SettingsNavItem("keyboard-shortcuts", "键盘快捷键", SettingsNavIcon.KeyboardShortcuts),
         )),
         SettingsNavGroup("集成", listOf(

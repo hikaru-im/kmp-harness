@@ -25,6 +25,7 @@ internal class ModelUiBackend : ModelSettingsBackend {
     var writes = 0
     var retries = 0
     var discoveries = 0
+    var draftDiscoveries = 0
     var snapshot = ModelSettingsSnapshot(
         providers = listOf(ConfigurableProvider("openai", "OpenAI", ProviderConfiguration("openai", "OpenAI", credentialName = "MODEL_UI_TEST_KEY", modelIds = listOf("model-a", "model-b")),
             active = true, credentialWritable = true, canRemove = true,
@@ -32,6 +33,19 @@ internal class ModelUiBackend : ModelSettingsBackend {
         protocols = listOf(ModelProtocol("openai-chat-completions", "Chat Completions"), ModelProtocol("openai-responses", "Responses")),
         available = true, writable = true, canAddProvider = true, unavailableReason = null,
     )
+    override suspend fun setModelEnabled(providerId: String, modelId: String, enabled: Boolean, expectedRevision: Long) {
+        check(expectedRevision == snapshot.revision)
+        snapshot = snapshot.copy(revision = snapshot.revision + 1, providers = snapshot.providers.map {
+            if (it.id != providerId) it else it.copy(disabledModelIds = if (enabled) it.disabledModelIds - modelId else it.disabledModelIds + modelId,
+                selectedModelId = if (!enabled && it.selectedModelId == modelId) null else it.selectedModelId)
+        })
+    }
+    override suspend fun selectModel(providerId: String, modelId: String, expectedRevision: Long) {
+        check(expectedRevision == snapshot.revision)
+        snapshot = snapshot.copy(revision = snapshot.revision + 1, providers = snapshot.providers.map {
+            it.copy(selectedModelId = modelId.takeIf { _ -> it.id == providerId })
+        })
+    }
     override suspend fun read(): ModelSettingsSnapshot = snapshot
     override suspend fun save(configuration: ProviderConfiguration, expectedRevision: Long) {
         if (expectedRevision != snapshot.revision) throw ProviderRevisionConflict()
@@ -60,10 +74,86 @@ internal class ModelUiBackend : ModelSettingsBackend {
             if (it.id == providerId) it.copy(models = listOf(ProviderModel("remote-model", "Remote Model"))) else it
         })
     }
+
+    override suspend fun discoverDraft(configuration: ProviderConfiguration, apiKey: String): ModelDiscoveryResult {
+        draftDiscoveries++
+        assertEquals("fixture-plugin-key", apiKey)
+        assertEquals("fixture-vendor", configuration.vendor)
+        return ModelDiscoveryResult(listOf(ProviderModel("remote-chat", "Discovered Chat")), "fixture-catalog", true)
+    }
 }
 
 @OptIn(ExperimentalTestApi::class)
 class ModelSettingsInteractionTest {
+    @Test
+    fun switchDoesNotSelectRowAndDisablingSelectedModelClearsDefault() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        backend.snapshot = backend.snapshot.copy(providers = backend.snapshot.providers.map {
+            it.copy(models = listOf(ProviderModel("model-a", "GPT-6 Astra"), ProviderModel("model-b", "Gemini4")))
+        })
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-select-openai-model-a").performScrollTo().performClick()
+        onNodeWithTag("models-select-openai-model-a").assertIsSelected()
+        onNodeWithTag("models-select-openai-model-b").performScrollTo()
+        captureDialog(onRoot().captureToImage(), "model-management-selected.png")
+        onNodeWithTag("models-enabled-openai-model-a").performScrollTo().performClick()
+        onNodeWithTag("models-enabled-openai-model-a").assertIsOff()
+        onNodeWithTag("models-select-openai-model-a").assertIsNotSelected()
+        onNodeWithTag("models-enabled-openai-model-a").performClick()
+        onNodeWithTag("models-enabled-openai-model-a").assertIsOn()
+        onNodeWithTag("models-select-openai-model-a").assertIsNotSelected()
+        runOnIdle { assertNull(backend.snapshot.providers.single().selectedModelId) }
+    }
+
+    @Test
+    fun pluginKeyDiscoverySavesWholeCatalogWithoutModelSelection() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        onNodeWithTag("provider-editor-id").assertDoesNotExist()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+        onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+        runOnIdle { assertEquals(1, backend.draftDiscoveries); assertEquals(0, backend.writes); assertTrue(backend.keys.isEmpty()) }
+        onNodeWithText("Discovered Chat").assertExists()
+        onNodeWithTag("provider-editor-save").performClick()
+        runOnIdle {
+            val saved = requireNotNull(repository.state.value.confirmedProviderConfiguration)
+            assertEquals("fixture-vendor", saved.vendor)
+            assertEquals("https://fixture.test/v1", saved.baseUrl)
+            assertNull(saved.modelIds)
+            assertEquals("fixture-plugin-key", backend.keys[saved.credentialName])
+            assertFalse(repository.state.value.toString().contains("fixture-plugin-key"))
+            assertEquals(1, backend.writes)
+        }
+        onNodeWithTag("provider-editor-save").assertDoesNotExist()
+    }
+
+    @Test
+    fun changedConnectionCanBeSavedPendingDiscovery() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+        onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+        onNodeWithText("Discovered Chat").assertExists()
+        onNodeWithTag("provider-editor-advanced").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-base-url").performScrollTo().performTextReplacement("https://second.test/v1")
+        onNodeWithTag("provider-editor-discovered-model").assertDoesNotExist()
+        onNodeWithTag("provider-editor-save").performClick()
+        runOnIdle { assertEquals(1, backend.writes); assertNull(repository.state.value.confirmedProviderConfiguration?.modelIds) }
+    }
+
+    private fun pluginBackend(): ModelUiBackend = ModelUiBackend().also { backend ->
+        backend.snapshot = backend.snapshot.copy(providers = emptyList(), plugins = listOf(ProviderPlugin(
+            "fixture-vendor", "Fixture Vendor", listOf("openai-chat-completions"),
+            endpoints = listOf(ProviderEndpointProfile("default", "Default", "https://fixture.test/v1", "openai-chat-completions")),
+            supportsDiscovery = true, inferenceSupported = true,
+        )))
+    }
+
     @Test
     fun discoveryButtonLoadsServerModelsAndShowsFeedback() = runComposeUiTest {
         val backend = ModelUiBackend()
@@ -72,9 +162,9 @@ class ModelSettingsInteractionTest {
         setContent { OwnedModels(repository) }
         onNodeWithTag("models-discover-openai").performClick()
         runOnIdle { assertEquals(1, backend.discoveries) }
-        onNodeWithText("服务端模型列表已获取并保存；生效结果见下方状态。").assertExists()
+        onNodeWithText("模型目录已更新；来源与生效结果见下方状态。").assertExists()
         onNodeWithTag("models-view-openai").performClick()
-        onNodeWithText("Remote Model").assertExists()
+        onAllNodesWithText("Remote Model").assertCountEquals(2)
     }
 
     @Test
@@ -118,7 +208,7 @@ class ModelSettingsInteractionTest {
         onNodeWithTag("settings-models-title").assertIsDisplayed()
         onNodeWithTag("models-provider-openai").assertExists()
         onNodeWithTag("models-search").performTextInput("missing")
-        onNodeWithTag("models-empty").assertIsDisplayed()
+        onNodeWithTag("models-empty").performScrollTo().assertIsDisplayed()
         onNodeWithTag("models-search").performTextClearance()
         onNodeWithTag("models-provider-openai").assertExists()
         onNodeWithTag("settings-row-general").performClick()
@@ -267,12 +357,16 @@ class ModelSettingsInteractionTest {
                 { id, revision -> scope.launch { repository.remove(id, revision) } },
                 { name, value -> scope.launch { repository.setCredential(name, value) } },
                 { scope.launch { repository.retryApplication() } },
-                { id, revision -> scope.launch { repository.discoverModels(id, revision) } })
+                { id, revision -> scope.launch { repository.discoverModels(id, revision) } },
+                { config, key -> repository.discoverDraft(config, key) },
+                { config, key, revision -> scope.launch { repository.saveWithCredential(config, key, revision) } },
+                { provider, model, enabled, revision -> scope.launch { repository.setModelEnabled(provider, model, enabled, revision) } },
+                { provider, model, revision -> scope.launch { repository.selectModel(provider, model, revision) } })
         }
     }
 
     private fun captureDialog(bitmap: androidx.compose.ui.graphics.ImageBitmap, name: String) {
-        val root = File("/Volumes/Data/IdeaProjects/kmp-harness/docs/desktop-ui/captures/models").apply { mkdirs() }
+        val root = File("build/test-captures/models").apply { mkdirs() }
         Image.makeFromBitmap(bitmap.asSkiaBitmap()).use { image -> File(root, name).writeBytes(requireNotNull(image.encodeToData(EncodedImageFormat.PNG)).bytes) }
     }
 }

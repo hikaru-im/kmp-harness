@@ -6,6 +6,7 @@ import im.hikaru.harness.agent.agents
 import im.hikaru.harness.client.git.ManagedWorktreeChatRestore
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.session.SessionId
+import im.hikaru.harness.session.foldRequestHeader
 import im.hikaru.harness.session.persistence.SessionPersistenceKey
 import im.hikaru.harness.session.persistence.SessionQuiescentLoad
 import im.hikaru.harness.session.persistence.SessionQuiescentRejection
@@ -31,11 +32,15 @@ class DesktopWorktreeChatRestoreService(private val context: Context) {
             }
             is SessionQuiescentLoad.Loaded -> {
                 val model = loaded.session.requestContext()
+                val config = foldRequestHeader(loaded.session.events())?.config
                 val options = AgentOptions(
                     cwd = loaded.session.header.cwd,
                     preset = loaded.session.header.agentPreset,
-                    provider = model?.provider,
-                    model = model?.model,
+                    provider = model?.provider ?: config?.provider,
+                    model = model?.model ?: config?.model,
+                    reasoningEffort = config?.reasoningEffort,
+                    maxTokens = config?.maxTokens,
+                    reasoning = config?.reasoning,
                 )
                 when (val restored = context.agents.restoreQuiescent(loaded.session, options)) {
                     is AgentQuiescentRestore.Granted -> ManagedWorktreeChatRestore.Restored

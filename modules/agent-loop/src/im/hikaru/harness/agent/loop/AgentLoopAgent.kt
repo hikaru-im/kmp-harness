@@ -108,7 +108,7 @@ internal class AgentLoopAgent(
     request: AgentFactoryRequest,
     private val llm: LlmRuntime,
     private val config: AgentLoopConfig,
-    private val callConfig: LlmCallConfig,
+    private var callConfig: LlmCallConfig,
     private val systemPrompt: SystemPromptService?,
 ) : Agent, AgentAttemptResumer {
     override val id: AgentId = request.id
@@ -191,15 +191,27 @@ internal class AgentLoopAgent(
         }
     }
 
+    override suspend fun followup(message: im.hikaru.harness.llm.Message, options: AgentOptions): String {
+        val nextConfig = options.requireCallConfig()
+        // Resolve capabilities before accepting the message; the queue persists its exact intent.
+        llm.prepareCall(nextConfig).dispose()
+        return enqueue(message, AgentSendTarget.NEXT_TURN, AgentWakeup.IF_IDLE, nextConfig)
+    }
+
     override suspend fun send(
         message: im.hikaru.harness.llm.Message,
         target: AgentSendTarget,
         wakeup: AgentWakeup,
+    ): String = enqueue(message, target, wakeup, null)
+
+    private suspend fun enqueue(
+        message: im.hikaru.harness.llm.Message, target: AgentSendTarget, wakeup: AgentWakeup,
+        selectedConfig: LlmCallConfig?,
     ): String {
         val permit = session.acquireOperationPermit()
         try {
             ensureInitialized()
-            val itemId = inbox.insert(message, target, wakeup)
+            val itemId = inbox.insert(message, target, wakeup, selectedConfig)
             if (wakeup != AgentWakeup.NONE) {
                 mutex.withLock { wakeupGeneration += 1L }
                 startDriver()
@@ -344,6 +356,7 @@ internal class AgentLoopAgent(
             while (true) {
                 currentCoroutineContext().ensureActive()
                 val item = inbox.claim(InboxQueue.NEXT_TURN).firstOrNull() ?: break
+                item.callConfig?.let { callConfig = it }
                 runTurn(item.message)
                 currentCoroutineContext().ensureActive()
             }
@@ -618,6 +631,7 @@ internal class AgentLoopAgent(
                         model = prepared.config.model,
                         messages = session.deriveMessages(),
                         reasoningEffort = prepared.config.reasoningEffort,
+                        reasoning = prepared.config.reasoning,
                         system = system,
                         tools = toolSchemas,
                         temperature = prepared.config.temperature,

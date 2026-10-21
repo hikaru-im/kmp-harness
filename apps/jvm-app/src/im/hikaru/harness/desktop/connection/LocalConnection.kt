@@ -210,9 +210,17 @@ public class LocalConnection(
                             model = agentOptions.model,
                             reasoningEffort = agentOptions.reasoningEffort?.let { ReasoningEffortId(it.value) },
                             maxTokens = agentOptions.maxTokens,
+                            reasoning = agentOptions.reasoning?.toCoreReasoning(),
                         ),
                     ),
                 ).let(::toClientSummary)
+
+            override suspend fun modelConfiguration(id: ClientSessionId): ClientAgentOptions? =
+                optionalRead(im.hikaru.harness.api.gateway.session.SessionModelConfigurationEndpoint, SessionId(id.value))?.options?.let {
+                    ClientAgentOptions(provider = it.provider, model = it.model, maxTokens = it.maxTokens,
+                        reasoningEffort = it.reasoningEffort?.let { effort -> im.hikaru.harness.client.connection.ReasoningEffortId(effort.value) },
+                        reasoning = it.reasoning?.toClientReasoning())
+                }
 
             override suspend fun history(id: ClientSessionId): List<ClientMessage> =
                 invoke(SessionHistoryEndpoint, SessionId(id.value)).map(::toClientMessage)
@@ -224,6 +232,12 @@ public class LocalConnection(
                         SessionPromptRequest(SessionId(id.value), message.toCoreMessage()),
                     )
                 )
+
+            override suspend fun prompt(id: ClientSessionId, message: ClientMessage, agentOptions: ClientAgentOptions): ClientSessionPrompt =
+                LocalSessionPrompt(invoke(SessionPromptEndpoint, SessionPromptRequest(SessionId(id.value), message.toCoreMessage(),
+                    AgentOptions(provider = agentOptions.provider, model = agentOptions.model,
+                        reasoningEffort = agentOptions.reasoningEffort?.let { ReasoningEffortId(it.value) },
+                        maxTokens = agentOptions.maxTokens, reasoning = agentOptions.reasoning?.toCoreReasoning()))))
 
             override suspend fun cancel(id: ClientSessionId, keepInbox: Boolean) {
                 invoke(SessionCancelEndpoint, SessionCancelRequest(SessionId(id.value), keepInbox))

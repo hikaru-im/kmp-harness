@@ -33,6 +33,9 @@ internal class KoogModelMetadataMapper {
             inputModalities = route.inputModalities?.toList(),
             context = route.model.contextLength?.let(::LlmModelContext),
             defaultMaxTokens = route.defaultMaxTokens,
+            maxOutputTokens = route.model.maxOutputTokens,
             reasoning = route.reasoning,
+            reasoningCapabilities = route.reasoningCapabilities,
+            metadata = route.metadata,
         )
 }

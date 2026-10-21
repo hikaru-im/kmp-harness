@@ -29,7 +29,30 @@ val SubagentToolSchema: ToolSchema = ToolSchema(
         "intermediate steps. This tool starts an independently managed subagent and immediately returns its " +
         "id. Use send_message to steer it while running or continue its conversation after it finishes.",
     parameters = Json.parseToJsonElement(
-        """{"type":"object","properties":{"description":{"type":"string","description":"A short (3-5 word) description of the delegated task, for display."},"prompt":{"type":"string","description":"The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."},"cwd":{"type":"string","description":"Initial child working directory. Omitted inherits the calling agent's directory."},"provider":{"type":"string","description":"LLM provider route for the child. Supply together with model; omit both to inherit the parent route."},"model":{"type":"string","description":"Model id interpreted by provider. Supply together with provider; omit both to inherit the parent route."},"reasoning_effort":{"type":"string","description":"Adapter-owned reasoning effort for the child route. Omit to inherit the parent route's effort."}},"required":["description","prompt"]}""",
+        """{
+          "type":"object",
+          "properties":{
+            "description":{"type":"string","description":"A short (3-5 word) description of the delegated task, for display."},
+            "prompt":{"type":"string","description":"The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."},
+            "cwd":{"type":"string","description":"Initial child working directory. Omitted inherits the calling agent's directory."},
+            "provider":{"type":"string","description":"LLM provider route for the child. Supply together with model; omit both to inherit the parent route."},
+            "model":{"type":"string","description":"Model id interpreted by provider. Supply together with provider; omit both to inherit the parent route."},
+            "reasoning_effort":{"type":"string","description":"Legacy effort override. Cannot be combined with reasoning."},
+            "reasoning":{
+              "type":"object",
+              "description":"Unified reasoning override. Omit to inherit; an empty object explicitly follows provider defaults. Options must be supported by the selected model.",
+              "properties":{
+                "mode":{"type":"string","description":"provider-default, disabled, enabled, adaptive, or a registered model-specific mode."},
+                "effort":{"type":"string"},
+                "budgetTokens":{"type":"integer","minimum":0},
+                "executionModeId":{"type":"string"}
+              },
+              "additionalProperties":false
+            }
+          },
+          "required":["description","prompt"],
+          "additionalProperties":false
+        }""",
     ).jsonObject,
 )
 

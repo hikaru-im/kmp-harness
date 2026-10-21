@@ -22,6 +22,9 @@ fun interface KoogOptionMapper {
         model: LLModel,
         context: KoogStreamContext,
     ): LLMParams = map(options, model)
+
+    /** Advertise only controls that this same mapper can encode for the resolved connection. */
+    fun resolveModel(route: KoogModelRoute, context: KoogStreamContext): KoogModelRoute = route
 }
 
 /** 当前只支持 Koog 通用的采样字段。 */
@@ -34,7 +37,10 @@ class BasicKoogOptionMapper : KoogOptionMapper {
         if (options.stop != null) {
             unsupportedOption("Koog generic streaming does not support stop sequences")
         }
-        if (options.reasoningEffort != null) {
+        if (options.reasoningEffort != null || options.reasoning?.let {
+                it.mode.value != "provider-default" || it.effort != null ||
+                    it.budgetTokens != null || it.executionModeId != null
+            } == true) {
             unsupportedOption("Koog generic streaming does not support reasoning effort")
         }
         options.temperature?.let { temperature ->

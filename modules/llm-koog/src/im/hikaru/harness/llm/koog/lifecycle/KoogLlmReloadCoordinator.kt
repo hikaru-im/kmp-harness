@@ -1,6 +1,5 @@
 package im.hikaru.harness.llm.koog
 
-import ai.koog.prompt.executor.model.PromptExecutor
 import im.hikaru.harness.credentials.CredentialProvider
 import im.hikaru.harness.credentials.CredentialRef
 import im.hikaru.harness.credentials.CredentialUpdateListener
@@ -36,12 +35,12 @@ class KoogLlmReloadCoordinator(
     installedRoutes: List<KoogProviderRoute>,
     private val settings: SettingsScope,
     private val credentials: CredentialProvider,
-    private val generationFactory: KoogGenerationFactory,
-    private val adapterFactory: (PromptExecutor, List<KoogProviderRoute>) -> KoogLlmAdapter,
     private val llm: LlmRuntime,
     private val directoryRegistration: DirectoryRegistrationHandle,
     baseDirectory: List<LlmConfigurableProvider>,
     parentScope: CoroutineScope,
+    private val connectionFactory: suspend (KoogProviderSettings, KoogProviderRoute) -> im.hikaru.harness.llm.LlmProviderAdapter,
+    private val routeResolver: (suspend (KoogLlmSettings) -> List<KoogProviderRoute>)? = null,
 ) : Disposable, LlmSettingsApplication {
     private val installedRoutes = installedRoutes.map(KoogProviderRoute::detachedCopy)
     private val baseDirectory = baseDirectory.map(LlmConfigurableProvider::detachedCopy)
@@ -147,23 +146,33 @@ class KoogLlmReloadCoordinator(
     }
 
     private suspend fun applySnapshot(nextSettings: KoogLlmSettings) {
-        val resolvedRoutes = nextSettings.resolveRoutes(installedRoutes)
-        val nextGeneration =
-            resolvedRoutes.takeIf(List<KoogProviderRoute>::isNotEmpty)?.let { routes ->
-                createGeneration(nextSettings, routes)
-            }
-        val nextGenerations =
-            resolvedRoutes.associate { route -> route.id to requireNotNull(nextGeneration) }
+        val resolvedRoutes = routeResolver?.invoke(nextSettings) ?: nextSettings.resolveRoutes(installedRoutes)
         val nextDirectory = directoryFor(nextSettings)
+        // A Koog provider identifies a protocol, not a Harness connection. Never put two
+        // independently configured connections in the SDK's provider-based routing pool.
+        val nextGenerations = linkedMapOf<String, KoogLlmGeneration>()
+        try {
+            resolvedRoutes.forEach { route ->
+                nextGenerations[route.id] = createGeneration(
+                    KoogLlmSettings(mapOf(route.id to nextSettings.providers.getValue(route.id))),
+                    listOf(route),
+                )
+            }
+        } catch (error: Throwable) {
+            withContext(NonCancellable) {
+                retireGenerations(nextGenerations.values, error)
+            }
+            throw error
+        }
 
         val previousGenerations: Map<String, KoogLlmGeneration>
         val previousMetadata: KoogReloadableLlmAdapter.RegistrationMetadata?
         val previousDirectory: List<LlmConfigurableProvider>
         val registration: AdapterRegistrationHandle?
         val previousProviderIds: List<String>
-        mutex.withLock {
+        withContext(NonCancellable) { mutex.withLock {
             if (disposed) {
-                nextGeneration?.retire()
+                retireGenerations(nextGenerations.values)
                 throw LlmException(
                     message = "Koog LLM reload coordinator is disposed",
                     code = LlmErrorCode.LLM_DISPOSED,
@@ -174,11 +183,12 @@ class KoogLlmReloadCoordinator(
             registration = adapterRegistration
             previousProviderIds = previousGenerations.keys.toList()
 
-            // Keep removed routes callable until the LlmRuntime registration commit. New and
-            // retained routes already resolve against the complete next generation.
-            generationsByProvider = previousGenerations + nextGenerations
-            previousMetadata = adapter.replaceMetadata(nextGeneration?.adapter, resolvedRoutes)
-        }
+            // Keep existing routes on their previous generation until the registration commit.
+            generationsByProvider = nextGenerations + previousGenerations
+            previousMetadata = adapter.replaceMetadata(
+                generationsByProvider.mapValues { (_, generation) -> generation.adapter }
+            )
+        } }
 
         var directoryReplaced = false
         var routesReplaced = false
@@ -205,6 +215,7 @@ class KoogLlmReloadCoordinator(
                     adapterRegistration = createdRegistration
                 }
                 generationsByProvider = nextGenerations
+                adapter.replaceMetadata(nextGenerations.mapValues { (_, generation) -> generation.adapter })
                 directorySnapshot = nextDirectory
             }
         } catch (cancelled: CancellationException) {
@@ -218,7 +229,7 @@ class KoogLlmReloadCoordinator(
                     createdRegistration = createdRegistration,
                     routesReplaced = routesReplaced,
                     directoryReplaced = directoryReplaced,
-                    nextGeneration = nextGeneration,
+                    nextGenerations = nextGenerations.values,
                     primary = cancelled,
                 )
             }
@@ -233,17 +244,14 @@ class KoogLlmReloadCoordinator(
                 createdRegistration = createdRegistration,
                 routesReplaced = routesReplaced,
                 directoryReplaced = directoryReplaced,
-                nextGeneration = nextGeneration,
+                nextGenerations = nextGenerations.values,
                 primary = error,
             )
             throw error
         }
 
         withContext(NonCancellable) {
-            previousGenerations.values
-                .distinct()
-                .filter { generation -> generation !== nextGeneration }
-                .forEach { generation -> generation.retire() }
+            retireGenerations(previousGenerations.values)
         }
     }
 
@@ -256,7 +264,7 @@ class KoogLlmReloadCoordinator(
         createdRegistration: AdapterRegistrationHandle?,
         routesReplaced: Boolean,
         directoryReplaced: Boolean,
-        nextGeneration: KoogLlmGeneration?,
+        nextGenerations: Collection<KoogLlmGeneration>,
         primary: Throwable,
     ) {
         mutex.withLock {
@@ -281,24 +289,32 @@ class KoogLlmReloadCoordinator(
                 if (rollbackError !== primary) primary.addSuppressed(rollbackError)
             }
         }
-        nextGeneration?.retire()
+        retireGenerations(nextGenerations, primary)
+    }
+
+    private suspend fun retireGenerations(
+        generations: Collection<KoogLlmGeneration>,
+        primary: Throwable? = null,
+    ) {
+        var failure = primary
+        generations.distinct().forEach { generation ->
+            try {
+                generation.retire()
+            } catch (error: Throwable) {
+                if (failure == null) failure = error
+                else if (failure !== error) failure!!.addSuppressed(error)
+            }
+        }
+        if (primary == null) failure?.let { throw it }
     }
 
     private suspend fun createGeneration(
         nextSettings: KoogLlmSettings,
         resolvedRoutes: List<KoogProviderRoute>,
     ): KoogLlmGeneration {
-        val executor = generationFactory.create(nextSettings, resolvedRoutes)
-        return try {
-            KoogLlmGeneration(
-                adapter = adapterFactory(executor, resolvedRoutes),
-                executor = executor,
-                routes = resolvedRoutes.map(KoogProviderRoute::detachedCopy),
-            )
-        } catch (error: Throwable) {
-            executor.close()
-            throw error
-        }
+        val route = resolvedRoutes.single()
+        val resource = connectionFactory(nextSettings.providers.getValue(route.id), route)
+        return KoogLlmGeneration(resource.adapter, resource, resolvedRoutes)
     }
 
     private fun directoryFor(nextSettings: KoogLlmSettings): List<LlmConfigurableProvider> {
@@ -356,10 +372,10 @@ class KoogLlmReloadCoordinator(
                 adapterRegistration = null
                 generations = generationsByProvider.values.distinct()
                 generationsByProvider = emptyMap()
-                adapter.replaceMetadata(adapter = null, routes = emptyList())
+                adapter.replaceMetadata(emptyMap())
             }
             registration?.dispose()
-            generations.forEach { generation -> generation.retire() }
+            retireGenerations(generations)
             directoryRegistration.dispose()
         }
     }

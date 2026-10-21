@@ -8,7 +8,7 @@ import im.hikaru.harness.runtime.plugin.SimplePlugin
 import im.hikaru.harness.settings.SettingsNamespace
 import im.hikaru.harness.settings.settingsNamespace
 
-/** 把一个 Koog PromptExecutor 及其 provider routes 安装到 LlmRuntime。 */
+/** Test fixture for exercising Koog seams without installing production vendor contributions. */
 class KoogLlmPlugin(
     executorFactory: KoogPromptExecutorFactory,
     routes: List<KoogProviderRoute>,
@@ -27,6 +27,7 @@ class KoogLlmPlugin(
     textTerminalPolicy: KoogTextTerminalPolicy? = null,
     replayWriter: KoogReplayWriter = NoopKoogReplayWriter,
     dynamicConfiguration: DynamicKoogConfiguration? = null,
+    staticConfiguration: StaticKoogConfiguration? = null,
 ) : SimplePlugin {
     private val runtime =
         KoogLlmPluginRuntime(
@@ -45,6 +46,7 @@ class KoogLlmPlugin(
             textTerminalPolicy = textTerminalPolicy,
             replayWriter = replayWriter,
             dynamicConfiguration = dynamicConfiguration,
+            staticConfiguration = staticConfiguration,
         )
 
     /**
@@ -110,6 +112,7 @@ class KoogLlmPlugin(
         replayWriter = replayWriter,
         replayRestorer = replayRestorer,
         failureClassifier = failureClassifier,
+        staticConfiguration = StaticKoogConfiguration(providerSettings.toList(), credentials, providerExecutorFactory),
     )
 
     /**
@@ -209,12 +212,14 @@ class KoogLlmPlugin(
                 routes = routes,
                 semantics = providerSemantics,
             ),
+        staticConfiguration = StaticKoogConfiguration(providerSettings.toList(), credentials, providerExecutorFactory),
     )
 
     private constructor(
         executorFactory: KoogPromptExecutorFactory,
         routes: List<KoogProviderRoute>,
         semanticsRegistry: KoogProviderSemanticsRegistry,
+        staticConfiguration: StaticKoogConfiguration? = null,
     ) : this(
         executorFactory = executorFactory,
         routes = routes,
@@ -230,6 +235,7 @@ class KoogLlmPlugin(
         replayWriter = semanticsRegistry,
         replayRestorer = semanticsRegistry,
         failureClassifier = semanticsRegistry,
+        staticConfiguration = staticConfiguration,
     )
 
     private constructor(
