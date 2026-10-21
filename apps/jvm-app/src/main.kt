@@ -107,6 +107,12 @@ fun main(args: Array<String>) {
     val harnessHost = profiledHost.host
     val modelSettings = ModelSettingsRepository(DesktopModelSettingsBackend(harnessHost.runtime.context))
     val connection = LocalConnection(harnessHost.gateway)
+    // Local mode has no Relay socket, but the transcript folds the same Session events the Relay
+    // forwards, so streaming behaviour is identical across transports.
+    val sessionEvents = im.hikaru.harness.desktop.connection.LocalSessionEventSource(
+        harnessHost.runtime.context,
+        harnessHost.profile.hostDescription.hostId,
+    )
     val terminalLaunchProvider = im.hikaru.harness.desktop.terminal.DesktopTerminalLaunchProvider(
         harnessHost.profile.hostDescription.hostId, connection)
     // The agent-instructions profile plugin owns the prompt-side adapter; this
@@ -246,6 +252,9 @@ fun main(args: Array<String>) {
             ) {
                 HarnessApp(
                     connection = connection,
+                    sessionEvents = sessionEvents.events,
+                    onSubscribeSession = { sessionEvents.subscribe(it) },
+                    onUnsubscribeSession = { sessionEvents.unsubscribe(it) },
                     terminalLaunchProvider = terminalLaunchProvider,
                     connectionTransport = ConnectionTransport.Local,
                     gitBackend = gitBackend,
@@ -293,6 +302,7 @@ fun main(args: Array<String>) {
             }
             executionScope.cancel()
             try {
+                sessionEvents.close()
                 hostRelay.close()
             } finally {
                 try {

@@ -332,6 +332,38 @@ class LiveConversationInteractionTest {
     }
 
     @Test
+    fun streamingTailJoinsTheTimelineAndLeavesWhenItSettles() = runSkikoComposeUiTest(size = Size(420f, 600f)) {
+        val session = SessionId("thread")
+        val settled = Message("user", MessageRole.USER, listOf(TextContent("Actual question")), UserMessageSource)
+        var live by mutableStateOf(
+            LiveTranscript(session, listOf(
+                Message("live:1:1", MessageRole.ASSISTANT,
+                    listOf(ReasoningContent("still thinking"), TextContent("Streaming answer")),
+                    ModelMessageSource("test", "model")),
+            )),
+        )
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            LiveThreadSurface(
+                readyState().copy(selectedSessionId = session, history = listOf(settled),
+                    historyPhase = ConversationDataPhase.Ready),
+                live = live,
+                onRetry = { error("No retry expected") },
+            )
+        } }
+        onNodeWithTag("message:live:1:1").assertExists()
+        onNodeWithText("Streaming answer", substring = true).assertExists()
+        // Reasoning is still arriving, and a streaming row offers no settled-message actions.
+        onNodeWithText("正在思考…").assertExists()
+        onNodeWithContentDescription("复制").assertDoesNotExist()
+
+        // The settled message retires the tail; the timeline keeps only durable history.
+        runOnIdle { live = LiveTranscript(session, emptyList()) }
+        waitForIdle()
+        onNodeWithTag("message:live:1:1").assertDoesNotExist()
+        onNodeWithText("Streaming answer", substring = true).assertDoesNotExist()
+    }
+
+    @Test
     fun welcomeAndThreadUseDifferentPromptsAndOnlyAdvertisedEffortsAreSelectable() = runComposeUiTest {
         val owner = ComposerOwner()
         owner.chosen = FIRST.copy(reasoningEfforts = listOf("low", "high"))

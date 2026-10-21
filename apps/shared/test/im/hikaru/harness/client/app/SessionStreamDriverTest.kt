@@ -6,6 +6,7 @@ import im.hikaru.contracts.harness.relay.RelayEvent
 import im.hikaru.contracts.harness.relay.StreamId
 import im.hikaru.harness.client.connection.HistoryRecovery
 import im.hikaru.harness.client.connection.SessionId
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +46,7 @@ class SessionStreamDriverTest {
     }
 
     @Test
-    fun forwardedEventsAndGapRecoveriesRefreshOnlyTheSelectedSession() = runBlocking {
+    fun forwardedEventsReachTheFoldAndOnlyGapRecoveriesRefresh() = runBlocking {
         val events = MutableSharedFlow<RelayEvent>(replay = 8, extraBufferCapacity = 8)
         val recoveries = MutableSharedFlow<HistoryRecovery>(replay = 8, extraBufferCapacity = 8)
         events.emit(event("session-1", sequence = 0))
@@ -66,11 +67,37 @@ class SessionStreamDriverTest {
             )
 
         val running = launch { driver.run(selected) }
-        withTimeout(5_000) { while (refreshed.size < 2) delay(5) }
+        withTimeout(5_000) { while (refreshed.isEmpty()) delay(5) }
         delay(50)
 
         assertEquals(listOf("session-1"), seen.map { it.streamId.value })
-        assertEquals(listOf(selected, selected), refreshed)
+        assertEquals(listOf(selected), refreshed, "only a gap on the selected stream re-reads history")
+
+        running.cancel()
+        running.join()
+    }
+
+    @Test
+    fun consecutiveDeltasAreNeverConflated() = runBlocking {
+        val events = MutableSharedFlow<RelayEvent>(replay = 4, extraBufferCapacity = 8)
+        val subscribed = CompletableDeferred<Unit>()
+        val seen = mutableListOf<Long>()
+        val driver =
+            SessionStreamDriver(
+                events = events,
+                recoveries = emptyFlow(),
+                subscribe = { subscribed.complete(Unit) },
+                unsubscribe = {},
+                refresh = {},
+                onEvent = { seen += it.sequence },
+            )
+
+        val running = launch { driver.run(selected) }
+        subscribed.await()
+        repeat(4) { events.emit(event("session-1", sequence = it.toLong())) }
+        withTimeout(5_000) { while (seen.size < 4) delay(5) }
+
+        assertEquals(listOf(0L, 1L, 2L, 3L), seen)
 
         running.cancel()
         running.join()
@@ -136,7 +163,7 @@ class SessionStreamDriverTest {
         val running = launch { driver.run(selected) }
         withTimeout(5_000) {
             while (refreshes < 1) {
-                events.emit(event("session-1", sequence = refreshes.toLong()))
+                recoveries.emit(HistoryRecovery(StreamId("session-1"), emptyList()))
                 delay(10)
             }
         }

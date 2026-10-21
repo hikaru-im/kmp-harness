@@ -26,8 +26,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import im.hikaru.harness.client.conversation.ConversationDataPhase
 import im.hikaru.harness.client.conversation.ConversationState
+import im.hikaru.harness.client.conversation.LiveTranscript
 import im.hikaru.harness.client.connection.Message
 import im.hikaru.harness.ui.foundation.*
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Owners may override the shared editor height cap for constrained viewports.
@@ -173,13 +175,30 @@ private fun DrawScope.drawHeroUnderline(layout: TextLayoutResult?, range: IntRan
     }
 }
 
+/**
+ * Collects the streaming tail here, not at the app root: a token frame then recomposes only the
+ * timeline scope instead of every shell surface that reads [ConversationState].
+ */
+@Composable
+public fun LiveThreadPane(
+    state: ConversationState,
+    live: StateFlow<LiveTranscript>,
+    onRetry: () -> Unit,
+    onEditMessage: ((Message) -> Unit)? = null,
+) {
+    val transcript by live.collectAsState()
+    LiveThreadSurface(state, transcript, onRetry, onEditMessage)
+}
+
 /** Timeline only. The app owns the selected route, controller and separate shared composer. */
 @Composable
 public fun LiveThreadSurface(
     state: ConversationState,
+    live: LiveTranscript = LiveTranscript(),
     onRetry: () -> Unit,
     onEditMessage: ((Message) -> Unit)? = null,
 ) {
+    val liveMessages = live.messages.takeIf { it.isNotEmpty() }?.takeIf { live.sessionId == state.selectedSessionId }.orEmpty()
     Column(Modifier.fillMaxSize().padding(HarnessTokens.Spacing.Four).semantics { testTag = "live-thread" },
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
@@ -196,10 +215,10 @@ public fun LiveThreadSurface(
                 )
             }
         }
-        if (state.history.isNotEmpty()) {
+        if (state.history.isNotEmpty() || liveMessages.isNotEmpty()) {
             key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {
                 ConversationViewport(state.history, Modifier.weight(1f).semantics { testTag = "live-thread-timeline" },
-                    onEditMessage = onEditMessage?.takeIf { state.canEdit })
+                    live = liveMessages, onEditMessage = onEditMessage?.takeIf { state.canEdit })
             }
         } else {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {

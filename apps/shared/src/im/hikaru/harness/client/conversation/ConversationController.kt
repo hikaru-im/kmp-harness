@@ -143,12 +143,23 @@ public class ConversationController(
     scope: CoroutineScope,
     private val operations: ConversationOperations = RealConversationOperations,
     private val cleanupTimeoutMillis: Long = 2_000,
+    /** Streamed assistant text is published at most once per frame interval instead of per token. */
+    private val liveFrameMillis: Long = 33,
 ) : AutoCloseable {
-    init { require(cleanupTimeoutMillis > 0) }
+    init {
+        require(cleanupTimeoutMillis > 0)
+        require(liveFrameMillis >= 0)
+    }
     private val owner = SupervisorJob(scope.coroutineContext[Job])
     private val work = CoroutineScope(scope.coroutineContext + owner)
     private val mutableState = MutableStateFlow(ConversationState())
     public val state: StateFlow<ConversationState> = mutableState.asStateFlow()
+    // Streaming text lives beside `state`, not inside it: only the transcript collects this flow, so a
+    // token never recomposes the shell or the session list.
+    private val mutableLive = MutableStateFlow(LiveTranscript())
+    public val live: StateFlow<LiveTranscript> = mutableLive.asStateFlow()
+    private val liveFold = LiveAssistantFold()
+    private var livePublishJob: Job? = null
     // Scoped to the bound Host/member; null owns the Home draft before session creation.
     private val drafts = mutableMapOf<SessionId?, String>()
     private var connection: Connection? = null
@@ -424,7 +435,7 @@ public class ConversationController(
                         action = settledAction(runState),
                         runState = runState,
                     )
-                    if (historyNeedsCatchup()) refreshHistory()
+                    if (historyNeedsCatchup()) refreshHistory(quiet = quiet)
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
@@ -455,13 +466,26 @@ public class ConversationController(
         if (runState == ConversationRunState.Idle && state.value.action == ConversationAction.RunningUnknown)
             ConversationAction.Idle else state.value.action
 
-    public fun refreshHistory(): Job? {
+    public fun refreshHistory(): Job? = refreshHistory(quiet = false)
+
+    /**
+     * [quiet] reconciles the authoritative snapshot after streamed messages settled without flashing
+     * the transcript back to Loading. A list or history refresh already in flight publishes a newer
+     * snapshot than a quiet call would, so it is reused instead of being replaced.
+     */
+    private fun refreshHistory(quiet: Boolean): Job? {
         val fence = capture() ?: return null
         val id = fence.selected ?: return null
         val readableThrough = state.value.sessions.firstOrNull { it.id == id }?.lastEventSeq ?: -1
+        if (quiet) {
+            historyJob?.takeIf { it.isActive }?.let { return it }
+        } else {
+            historyJob?.cancel()
+        }
         val request = ++historyRequest
-        historyJob?.cancel()
-        mutableState.value = state.value.copy(historyPhase = ConversationDataPhase.Loading, errors = without(ConversationErrorKind.History))
+        if (!quiet) {
+            mutableState.value = state.value.copy(historyPhase = ConversationDataPhase.Loading, errors = without(ConversationErrorKind.History))
+        }
         return start({ historyJob = it }) {
             try {
                 val result = operations.history(fence.connection, id).map(::snapshotMessage)
@@ -472,11 +496,13 @@ public class ConversationController(
                         historyPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
                         errors = without(ConversationErrorKind.History),
                     )
-                    if (historyNeedsCatchup()) refreshHistory()
+                    // This request is settled; a catch-up must not reuse this now-finished job.
+                    if (request == historyRequest) historyJob = null
+                    if (historyNeedsCatchup()) refreshHistory(quiet = quiet)
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
-                if (valid(fence) && request == historyRequest) {
+                if (!quiet && valid(fence) && request == historyRequest) {
                     mutableState.value = state.value.copy(historyPhase = ConversationDataPhase.Failed)
                     fail(ConversationErrorKind.History, ConversationRetry.History)
                 }
@@ -604,8 +630,10 @@ public class ConversationController(
                             "模型执行失败（$code）。", ConversationRetry.History)
                         mutableState.value = state.value.copy(errors = state.value.errors + (ConversationErrorKind.Completion to error))
                     }
-                    refreshHistory()
-                    refreshSessions()
+                    // The stream already appended the settled turn; reconcile silently so the transcript
+                    // never drops back to its loading state after an answer finishes.
+                    refreshHistory(quiet = true)
+                    refreshSessions(quiet = true)
                 }
                 // Delivery-only deliberately does not call awaitIdle: Relay returns Unit immediately.
             } catch (cancelled: CancellationException) { throw cancelled
@@ -657,7 +685,7 @@ public class ConversationController(
                 sendJob?.cancel()
                 // Stop acknowledgement also does not prove remote idle; ask the Host for the truth.
                 mutableState.value = state.value.copy(action = ConversationAction.Idle, runState = ConversationRunState.Unknown)
-                refreshHistory()
+                refreshHistory(quiet = true)
                 refreshSessions(quiet = true)
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
@@ -675,6 +703,10 @@ public class ConversationController(
         epoch++
         invalidateRequests()
         streamJob?.cancel()
+        livePublishJob?.cancel()
+        livePublishJob = null
+        liveFold.reset()
+        mutableLive.value = LiveTranscript()
         owner.cancel()
         connection = null
         streams = null
@@ -685,6 +717,8 @@ public class ConversationController(
     private fun replaceStream() {
         val previous = streamJob
         previous?.cancel()
+        // A different Host, member, Session, or connection never inherits another transcript's deltas.
+        stopLive()
         val fence = capture()
         val source = streams
         val id = fence?.selected
@@ -698,14 +732,130 @@ public class ConversationController(
                     recoveries = source.recoveries,
                     subscribe = source.subscribe,
                     unsubscribe = { selected -> withTimeout(cleanupTimeoutMillis) { source.unsubscribe(selected) } },
-                    // Transcript updates and the Host's authoritative run state arrive together.
-                    refresh = { if (valid(fence)) { refreshHistory(); refreshSessions(quiet = true) } },
+                    // A gap is the only signal that the delta fold can no longer be trusted: re-read the
+                    // authoritative history and start the fold over.
+                    refresh = {
+                        if (valid(fence)) {
+                            stopLive()
+                            refreshHistory(quiet = true)
+                            refreshSessions(quiet = true)
+                        }
+                    },
+                    onEvent = ::onStreamEvent,
                 ).run(id)
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Throwable) {
                 if (valid(fence)) fail(ConversationErrorKind.Stream, ConversationRetry.History)
             }
         }
+    }
+
+    /**
+     * Folds one Session stream event into the live tail or the authoritative history.
+     *
+     * Deltas never touch [ConversationState]: they are throttled into [live]. A settled message is
+     * appended to history immediately (deduplicated by id) so the tail disappears exactly when its
+     * own message takes over, and `turn/end` reconciles the list and history quietly.
+     */
+    private fun onStreamEvent(event: RelayEvent) {
+        val fence = capture() ?: return
+        val id = fence.selected ?: return
+        if (event.streamId.value != id.value) return
+        when (event.event) {
+            in LiveSessionEventNames.attentionBoundaries -> {
+                // A retry or a new step must not concatenate the previous attempt's partial text.
+                liveFold.reset()
+                publishLive(immediate = true)
+            }
+
+            LiveSessionEventNames.ASSISTANT_CHUNK -> {
+                val update = LiveSessionEventCodec.decode(event) as? LiveUpdate.Chunk ?: return
+                liveFold.apply(update.turn, update.step, update.chunk)
+                publishLive(immediate = false)
+            }
+
+            LiveSessionEventNames.ASSISTANT_MESSAGE -> {
+                val update = LiveSessionEventCodec.decode(event) as? LiveUpdate.AssistantSettled ?: return
+                // The settled message takes over from the tail; the two must never both be visible.
+                liveFold.reset()
+                publishLive(immediate = true)
+                appendSettled(update.message)
+            }
+
+            LiveSessionEventNames.USER_MESSAGE -> {
+                val update = LiveSessionEventCodec.decode(event) as? LiveUpdate.UserMessage ?: return
+                appendSettled(update.message)
+            }
+
+            LiveSessionEventNames.TURN_START -> {
+                // The Host now reports the turn as running; the list carries Stop's authority.
+                refreshSessions(quiet = true)
+            }
+
+            LiveSessionEventNames.TURN_END -> {
+                liveFold.reset()
+                publishLive(immediate = true)
+                scheduleReconcile(fence)
+            }
+        }
+    }
+
+    /** Appends a durable Session message; IDs make the Host snapshot and the stream converge. */
+    private fun appendSettled(message: Message) {
+        val current = state.value
+        if (current.history.any { it.id == message.id }) return
+        val settled = snapshotMessage(message).let {
+            if (it.timestampMillis == null) it.copy(timestampMillis = System.currentTimeMillis()) else it
+        }
+        mutableState.value = current.copy(
+            history = current.history + settled,
+            // An initial snapshot in flight owns the phase; it replaces this list when it lands.
+            historyPhase = if (current.historyPhase == ConversationDataPhase.Loading) current.historyPhase
+                else ConversationDataPhase.Ready,
+        )
+    }
+
+    /**
+     * Reconciles the transcript after a turn settled. Waiting for an in-flight snapshot first keeps
+     * this refresh from being satisfied by a fetch that started before the final message.
+     */
+    private fun scheduleReconcile(fence: Fence) {
+        work.launch {
+            historyJob?.takeIf { it.isActive }?.join()
+            if (!valid(fence)) return@launch
+            refreshHistory(quiet = true)
+            if (valid(fence)) refreshSessions(quiet = true)
+        }
+    }
+
+    private fun publishLive(immediate: Boolean) {
+        val session = state.value.selectedSessionId
+        if (session == null) {
+            livePublishJob?.cancel()
+            livePublishJob = null
+            mutableLive.value = LiveTranscript()
+            return
+        }
+        if (immediate) {
+            livePublishJob?.cancel()
+            livePublishJob = null
+            mutableLive.value = LiveTranscript(session, listOfNotNull(liveFold.message()))
+        } else if (livePublishJob?.isActive != true) {
+            livePublishJob = work.launch {
+                delay(liveFrameMillis)
+                livePublishJob = null
+                if (closed) return@launch
+                val current = state.value.selectedSessionId ?: return@launch
+                mutableLive.value = LiveTranscript(current, listOfNotNull(liveFold.message()))
+            }
+        }
+    }
+
+    private fun stopLive() {
+        liveFold.reset()
+        livePublishJob?.cancel()
+        livePublishJob = null
+        mutableLive.value = LiveTranscript(state.value.selectedSessionId)
     }
 
     private fun start(register: (Job) -> Unit, block: suspend () -> Unit): Job {
