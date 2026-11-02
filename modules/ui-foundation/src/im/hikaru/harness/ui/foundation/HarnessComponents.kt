@@ -362,24 +362,3 @@ public fun HarnessBadge(
         contentColor = HarnessTokens.Colors.OnAccent,
     ) { HarnessText(text, color = HarnessTokens.Colors.OnAccent, style = MaterialTheme.typography.labelMedium) }
 }
-
-@Composable
-public fun HarnessScrollbar(
-    fraction: Float,
-    position: Float,
-    modifier: Modifier = Modifier,
-) {
-    val clampedFraction = fraction.coerceIn(0.05f, 1f)
-    val clampedPosition = position.coerceIn(0f, 1f - clampedFraction)
-    Box(modifier = modifier.width(6.dp).fillMaxHeight()) {
-        Box(
-            modifier =
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxHeight(clampedFraction)
-                    .padding(top = (clampedPosition * 100).dp)
-                    .width(6.dp)
-                    .background(HarnessTokens.Colors.TextMuted, RoundedCornerShape(3.dp)),
-        )
-    }
-}

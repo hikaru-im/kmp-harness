@@ -61,6 +61,68 @@ public sealed interface ThreadSummaryLoad {
     public data class Ready(val environment: ThreadSummaryEnvironment) : ThreadSummaryLoad
 }
 
+/** Section titles and empty states, from Codex `locales/zh-cn.ts` (`codex.localConversation.*`). */
+public const val ThreadSummaryPlanTitle: String = "计划"
+public const val ThreadSummaryOutputsTitle: String = "输出"
+public const val ThreadSummaryOutputsEmpty: String = "暂无产物"
+public const val ThreadSummarySideChatsTitle: String = "侧边聊天"
+public const val ThreadSummarySourcesTitle: String = "来源"
+public const val ThreadSummarySourcesEmpty: String = "暂无来源"
+
+/** A tool (MCP app) or web source the turn used, as one Sources chip. */
+public enum class ThreadSummarySourceKind { Tool, Web }
+
+public data class ThreadSummarySource(
+    val id: String,
+    val name: String,
+    val kind: ThreadSummarySourceKind = ThreadSummarySourceKind.Tool,
+    /** Plugin display names joined for a tool source, or the page title for a web source. */
+    val detail: String? = null,
+    val url: String? = null,
+) {
+    init {
+        require(id.isNotBlank())
+        require(name.isNotBlank())
+        require(kind == ThreadSummarySourceKind.Web || url == null)
+    }
+}
+
+/** One output artifact the turn produced (`summary-panel-artifacts-list.tsx`). */
+public data class ThreadSummaryOutput(
+    val id: String,
+    val name: String,
+    /** Repository-relative path or absolute file target, when the artifact names one. */
+    val target: String? = null,
+) {
+    init {
+        require(id.isNotBlank())
+        require(name.isNotBlank())
+    }
+}
+
+/** The plan document attached to the conversation (`plan-summary-card`). */
+public data class ThreadSummaryPlan(
+    val title: String,
+    val content: String,
+) {
+    init {
+        require(title.isNotBlank())
+        require(content.isNotBlank())
+    }
+}
+
+/** A side chat opened from this conversation (`thread-summary-side-chat-rows.tsx`). */
+public data class ThreadSummarySideChat(
+    val tabId: String,
+    val title: String,
+    val inProgress: Boolean = false,
+) {
+    init {
+        require(tabId.isNotBlank())
+        require(title.isNotBlank())
+    }
+}
+
 /**
  * Pure projection. [GitState.summaryStats] is deliberately separate from the page diff, so selecting a
  * diff on the Git page cannot change these numbers and vice versa.

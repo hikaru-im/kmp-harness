@@ -4,6 +4,7 @@ import im.hikaru.harness.client.connection.BackgroundProcessLifecycle
 import im.hikaru.harness.client.panels.BackgroundTerminalSummary
 import im.hikaru.harness.client.panels.ChildAgentStatus
 import im.hikaru.harness.client.panels.ChildAgentSummary
+import im.hikaru.harness.client.panels.ChildDiffStats
 import im.hikaru.harness.client.panels.PanelLoad
 import im.hikaru.harness.client.panels.SubagentOverview
 
@@ -23,6 +24,8 @@ public data class ThreadSummaryActivity(
     val label: String,
     val meta: String? = null,
     val running: Boolean = false,
+    /** Host-reported diff stats; the row draws no badge when absent. */
+    val diffStats: ChildDiffStats? = null,
 ) {
     init {
         require(id.isNotBlank()) { "Activity id must not be blank" }
@@ -73,6 +76,7 @@ public fun threadSummarySubagents(load: PanelLoad<SubagentOverview>): List<Threa
                 label = child.label,
                 meta = if (child.isRunning()) ThreadSummaryRunningLabel else null,
                 running = child.isRunning(),
+                diffStats = child.diffStats,
             )
         }
 }

@@ -31,10 +31,22 @@ public enum class GitFailureKind {
 public data class GitFailure(val kind: GitFailureKind, val message: String)
 public class GitReadException(public val failure: GitFailure) : RuntimeException(failure.message)
 
-/** Working-tree text for the diff rich preview. It is read from the file, never rebuilt from a patch. */
+/**
+ * Working-tree content for the diff rich preview. It is read from the file, never rebuilt from a
+ * patch. Text previews (markdown) use [Ready]; images, SVG and PDF use [Binary].
+ */
 public sealed interface GitPreviewFile {
     public data object Loading : GitPreviewFile
     public data class Ready(val text: String) : GitPreviewFile
+    public class Binary(
+        public val bytes: ByteArray,
+        public val mimeType: String,
+    ) : GitPreviewFile {
+        init {
+            require(bytes.isNotEmpty())
+            require(mimeType.isNotBlank())
+        }
+    }
     public data class Unavailable(val reason: String) : GitPreviewFile {
         init { require(reason.isNotBlank()) }
     }

@@ -1,5 +1,7 @@
 package im.hikaru.harness.client.git
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,17 +17,26 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -34,8 +45,11 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import im.hikaru.harness.client.page.SettingsFormCard
 import im.hikaru.harness.ui.foundation.*
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /** Optional read-only event observation; absent in normal app composition and adds no UI. */
 public data class GitSelectEvent(
@@ -232,6 +246,10 @@ internal fun GitPatch(
     onRefresh: () -> Unit = {},
     refreshDisabled: Boolean = false,
     copyGitApplyCommandDisabled: Boolean = false,
+    contextExpansionAllowed: Boolean = true,
+    /** A path a transcript card asked to reveal; the view opens and scrolls to it once. */
+    revealPath: String? = null,
+    onRevealConsumed: () -> Unit = {},
 ) {
     val document = remember(patch) { parseGitDiff(patch) }
     val clipboard = LocalClipboardManager.current
@@ -252,13 +270,16 @@ internal fun GitPatch(
             }
         },
         copyGitApplyCommandDisabled = copyGitApplyCommandDisabled,
-        copyFeedback = copyFeedback)
+        copyFeedback = copyFeedback,
+        contextExpansionAllowed = contextExpansionAllowed,
+        initialRevealPath = revealPath,
+        onInitialRevealConsumed = onRevealConsumed)
 }
 
 /**
  * ASAR D01/D03: the original renders a diff as one block per file with a status and +/- statistics,
- * collapsible with a sticky header, and opens small diffs by default. The file-count/line thresholds
- * that decide `initialOpen` are not observed, so [openByDefault] is a Harness choice.
+ * collapsible with a sticky header, and opens small diffs by default. The restored page exports the
+ * auto-open limits; a diff beyond either one switches to the banner's single-file mode.
  */
 @Composable
 internal fun GitDiffView(
@@ -274,6 +295,12 @@ internal fun GitDiffView(
     onCopyGitApplyCommand: () -> Unit = {},
     copyGitApplyCommandDisabled: Boolean = false,
     copyFeedback: String? = null,
+    contextExpansionAllowed: Boolean = true,
+    autoOpenMaxFiles: Int = GitDiffAutoOpenMaxFiles,
+    autoOpenMaxChangedLines: Int = GitDiffAutoOpenMaxChangedLines,
+    /** A transcript card's one-shot request to open and scroll to [initialRevealPath]. */
+    initialRevealPath: String? = null,
+    onInitialRevealConsumed: () -> Unit = {},
 ) {
     var layout by remember { mutableStateOf(GitDiffLayout.Unified) }
     var richPreview by remember { mutableStateOf(false) }
@@ -283,21 +310,55 @@ internal fun GitDiffView(
     // `hideDiffImports` defaults to false in the original (`Fu(hideDiffImports, !1)`), so imports stay
     // visible until the menu item is checked.
     var hideImports by remember { mutableStateOf(false) }
-    val openByDefault = document.files.size <= 10 && document.addedLines + document.deletedLines <= 400
+    val opensByDefault = gitDiffOpensByDefault(document, autoOpenMaxFiles, autoOpenMaxChangedLines)
+    val largeDiff = !opensByDefault
     // Open/closed state lives here rather than inside each card, so the expand/collapse-all action
     // (`codex.review.expandOrCollapseDiffMenu.*`) and its menu label always agree with what is on screen.
-    var expandedHeaders by remember(document) {
+    var expandedHeaders by remember(document, opensByDefault) {
         mutableStateOf(
-            document.files.filter { openByDefault && it.status != GitDiffFileStatus.Deleted }
+            document.files.filter { opensByDefault && it.status != GitDiffFileStatus.Deleted }
                 .map { it.header }.toSet(),
         )
     }
+    fun setExpanded(header: String, open: Boolean) {
+        expandedHeaders = when {
+            !open -> expandedHeaders - header
+            // The banner promises one file at a time for a large diff.
+            largeDiff -> setOf(header)
+            else -> expandedHeaders + header
+        }
+    }
     val allExpanded = document.files.isNotEmpty() && document.files.all { it.header in expandedHeaders }
-    // `fOr`: only markdown files, never a deletion, and only while the toggle is on.
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val searchResult = remember(document, searchQuery) { findGitDiffMatches(document, searchQuery) }
+    var activeMatchIndex by remember(document, searchQuery) { mutableStateOf(0) }
+    val activeMatch = searchResult.matches.getOrNull(activeMatchIndex)
+    var reveal by remember(document) { mutableStateOf<GitDiffReveal?>(null) }
+    var revealNonce by remember { mutableStateOf(0) }
+    // Choosing a hit opens (or, in single-file mode, replaces) its file and asks the card to scroll
+    // the exact line into view once its Text layout exists.
+    LaunchedEffect(activeMatch, searchQuery, document) {
+        val match = activeMatch ?: return@LaunchedEffect
+        expandedHeaders = if (largeDiff) setOf(match.fileHeader) else expandedHeaders + match.fileHeader
+        revealNonce++
+        reveal = GitDiffReveal(revealNonce, match.fileHeader, match.bodyLineIndex)
+    }
+    // A transcript file-change card names a path, not a line: open its file and land at the top of
+    // the body. Consuming unconditionally keeps a path absent from this diff from retrying forever.
+    LaunchedEffect(initialRevealPath, document) {
+        val path = initialRevealPath ?: return@LaunchedEffect
+        onInitialRevealConsumed()
+        val file = document.files.firstOrNull { it.path == path || it.originalPath == path } ?: return@LaunchedEffect
+        expandedHeaders = if (largeDiff) setOf(file.header) else expandedHeaders + file.header
+        revealNonce++
+        reveal = GitDiffReveal(revealNonce, file.header, 0)
+    }
+    // `fOr`: markdown, image, SVG and PDF files, never a deletion, and only while the toggle is on.
     val previewPaths = remember(document, richPreview) {
         if (!richPreview) emptyList()
         else document.files
-            .filter { gitDiffPreviewKind(it.path, it.status == GitDiffFileStatus.Deleted, true) == GitDiffPreviewKind.Markdown }
+            .filter { gitDiffPreviewKind(it.path, it.status == GitDiffFileStatus.Deleted, true) != GitDiffPreviewKind.Diff }
             .map { it.path }
     }
     // Re-request when the diff itself changes: the controller drops its cache then, so the card
@@ -312,6 +373,11 @@ internal fun GitDiffView(
     ) {
         HarnessText(diffSummary(document), Modifier.testTag("git-diff-summary"), style = MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One), verticalAlignment = Alignment.CenterVertically) {
+            HarnessButton(
+                text = "搜索", onClick = { searchOpen = !searchOpen },
+                testTag = "git-diff-search-toggle", variant = HarnessButtonVariant.Secondary,
+                size = HarnessControlSize.Compact, selected = searchOpen,
+            )
             GitDiffLayoutSelector(layout) { layout = it }
             GitDiffRichPreviewToggle(richPreview) { richPreview = it }
             GitDiffOptionsMenu(
@@ -336,32 +402,81 @@ internal fun GitDiffView(
             )
         }
     }
+    if (searchOpen) {
+        GitDiffSearchBar(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            result = searchResult,
+            activeIndex = activeMatchIndex,
+            onPrevious = { activeMatchIndex = stepMatch(activeMatchIndex, -1, searchResult.matches.size) },
+            onNext = { activeMatchIndex = stepMatch(activeMatchIndex, 1, searchResult.matches.size) },
+            onClose = {
+                searchOpen = false
+                searchQuery = ""
+                activeMatchIndex = 0
+                reveal = null
+            },
+        )
+    }
     if (document.leadingContent) {
         HarnessText("补丁开头存在不属于任何文件的文本，未合并进文件卡片。",
             Modifier.testTag("git-diff-leading"), color = HarnessTokens.Colors.TextMuted)
     }
+    if (largeDiff) {
+        HarnessText(GitDiffLargeBannerCopy, Modifier.fillMaxWidth().testTag("git-diff-large-banner")
+            .background(HarnessTokens.Colors.SurfaceElevated, RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
+    }
     // No viewport-wide SelectionContainer: the unified gutter must stay out of the selectable text.
     // Selectable regions (headers, previews, patch bodies) wrap themselves instead.
+    val verticalScroll = rememberScrollState()
+    val density = LocalDensity.current
+    val revealScope = rememberCoroutineScope()
+    var viewportTopInWindow by remember { mutableStateOf(0f) }
+    val cardTops = remember(document) { mutableStateMapOf<String, Int>() }
+    val headerHeights = remember(document) { mutableStateMapOf<String, Int>() }
+    val matchCounts = remember(searchResult) { searchResult.matches.groupingBy { it.fileHeader }.eachCount() }
     BoxWithConstraints(Modifier.fillMaxWidth().height(288.dp).testTag("git-diff-viewport")
+        .onGloballyPositioned { viewportTopInWindow = it.positionInWindow().y }
         .border(1.dp, HarnessTokens.Colors.Border, RoundedCornerShape(8.dp))
         .background(HarnessTokens.Colors.SurfaceElevated, RoundedCornerShape(8.dp))) {
         val narrowPane = maxWidth < 520.dp
-        Column(Modifier.fillMaxSize().testTag("git-diff-vertical").verticalScroll(rememberScrollState()).padding(12.dp),
+        Column(Modifier.fillMaxSize().testTag("git-diff-vertical").verticalScroll(verticalScroll)
+            .clipToBounds().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            document.files.forEach { file ->
+            document.files.forEachIndexed { index, file ->
                 key(file.path, file.originalPath, file.status, file.header) {
                     GitDiffFileCard(
                         file = file,
                         expanded = file.header in expandedHeaders,
-                        onExpandedChange = { open ->
-                            expandedHeaders = if (open) expandedHeaders + file.header else expandedHeaders - file.header
-                        },
+                        onExpandedChange = { open -> setExpanded(file.header, open) },
                         layout = effectiveGitDiffLayout(layout, file, narrowPane),
                         preview = gitDiffPreviewKind(file.path, file.status == GitDiffFileStatus.Deleted, richPreview),
                         previewFile = previewFiles[file.path],
                         wrap = wrap,
                         wordDiffs = wordDiffs,
                         hideImports = hideImports,
+                        scrollState = verticalScroll,
+                        headerTop = cardTops[file.header],
+                        nextHeaderTop = document.files.getOrNull(index + 1)?.let { cardTops[it.header] },
+                        headerHeight = headerHeights[file.header] ?: 0,
+                        onHeaderPositioned = { top -> cardTops[file.header] = top },
+                        onHeaderSized = { height -> headerHeights[file.header] = height },
+                        searchQuery = if (searchOpen) searchQuery else "",
+                        activeSearchLine = activeMatch?.takeIf { it.fileHeader == file.header }?.bodyLineIndex,
+                        matchCount = matchCounts[file.header] ?: 0,
+                        reveal = reveal?.takeIf { it.fileHeader == file.header },
+                        onRevealLine = { lineTopInWindow ->
+                            val top = viewportTopInWindow
+                            val padding = with(density) { 12.dp.toPx() }
+                            val target = (verticalScroll.value + lineTopInWindow - top - padding).toInt()
+                            revealScope.launch {
+                                verticalScroll.animateScrollTo(target.coerceIn(0, verticalScroll.maxValue))
+                            }
+                        },
+                        contextExpansionAllowed = contextExpansionAllowed,
+                        onRequestContextText = { onRequestPreviews(listOf(file.path)) },
                     )
                 }
             }
@@ -372,6 +487,50 @@ internal fun GitDiffView(
         HarnessText(feedback, Modifier.testTag("git-diff-copy-git-apply-feedback"),
             color = if (feedback == "未能生成 git apply 命令") HarnessTokens.Colors.Danger
             else HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** One reveal request: which file and which original body line the viewport should land on. */
+internal data class GitDiffReveal(val nonce: Int, val fileHeader: String, val bodyLineIndex: Int)
+
+private fun stepMatch(current: Int, delta: Int, size: Int): Int =
+    if (size == 0) 0 else ((current + delta) % size + size) % size
+
+@Composable
+private fun GitDiffSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    result: GitDiffSearchResult,
+    activeIndex: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().testTag("git-diff-search"),
+        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HarnessSearchField(
+            value = query, onValueChange = onQueryChange,
+            placeholder = "在差异中搜索", accessibilityLabel = "在差异中搜索",
+            modifier = Modifier.weight(1f), testTag = "git-diff-search-field",
+        )
+        val count = when {
+            query.isBlank() -> "输入以搜索"
+            result.matches.isEmpty() -> "无命中"
+            else -> "${activeIndex + 1}/${result.matches.size}" + if (result.truncated) "+" else ""
+        }
+        HarnessText(count, Modifier.testTag("git-diff-search-count"),
+            style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
+        HarnessButton("上一个", onPrevious, testTag = "git-diff-search-prev",
+            enabled = result.matches.isNotEmpty(), variant = HarnessButtonVariant.Secondary,
+            size = HarnessControlSize.Compact)
+        HarnessButton("下一个", onNext, testTag = "git-diff-search-next",
+            enabled = result.matches.isNotEmpty(), variant = HarnessButtonVariant.Secondary,
+            size = HarnessControlSize.Compact)
+        HarnessButton("关闭", onClose, testTag = "git-diff-search-close",
+            variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact)
     }
 }
 
@@ -519,10 +678,51 @@ private fun GitDiffFileCard(
     wrap: Boolean = false,
     wordDiffs: Boolean = false,
     hideImports: Boolean = false,
+    scrollState: ScrollState? = null,
+    headerTop: Int? = null,
+    nextHeaderTop: Int? = null,
+    headerHeight: Int = 0,
+    onHeaderPositioned: (Int) -> Unit = {},
+    onHeaderSized: (Int) -> Unit = {},
+    searchQuery: String = "",
+    activeSearchLine: Int? = null,
+    matchCount: Int = 0,
+    reveal: GitDiffReveal? = null,
+    onRevealLine: (Float) -> Unit = {},
+    contextExpansionAllowed: Boolean = true,
+    onRequestContextText: () -> Unit = {},
 ) {
-    Column(Modifier.fillMaxWidth().border(1.dp, HarnessTokens.Colors.Border, RoundedCornerShape(8.dp))) {
-        SelectionContainer {
+    // A header stays at the top of the viewport while its own body passes underneath it. The next
+    // header pushes it out, which is the same behaviour LazyColumn's stickyHeader gives, without
+    // turning a diff whose body must stay one selectable text into lazy items.
+    val stickyOffset by remember(headerTop, nextHeaderTop, headerHeight, scrollState) {
+        derivedStateOf {
+            val top = headerTop
+            if (top == null || scrollState == null) 0f
+            else {
+                val stick = (scrollState.value - top).coerceAtLeast(0)
+                val limit = nextHeaderTop?.let { (it - top - headerHeight).coerceAtLeast(0) }
+                    ?: Int.MAX_VALUE
+                minOf(stick, limit).toFloat()
+            }
+        }
+    }
+    // Window position only feeds one-shot reveal scrolling, so it stays out of snapshot state: a
+    // state write here would recompose every card on every scroll frame.
+    val cardTopInWindow = remember { floatArrayOf(Float.NaN) }
+    Column(Modifier.fillMaxWidth()
+        .onGloballyPositioned {
+            onHeaderPositioned(it.positionInParent().y.roundToInt())
+            cardTopInWindow[0] = it.positionInWindow().y
+        }
+        .border(1.dp, HarnessTokens.Colors.Border, RoundedCornerShape(8.dp))) {
+        // The header's zIndex must apply to the card's own child, otherwise the body drawn after it
+        // paints over the translated header and sticky text would overlap with body text.
+        SelectionContainer(Modifier.zIndex(if (stickyOffset > 0f) 1f else 0f)) {
             Column(Modifier.fillMaxWidth().testTag("git-diff-file")
+                .graphicsLayer { translationY = stickyOffset }
+                .background(HarnessTokens.Colors.SurfaceElevated, RoundedCornerShape(8.dp))
+                .onSizeChanged { onHeaderSized(it.height) }
                 .clickable(role = Role.Button) { onExpandedChange(!expanded) }
                 .padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 HarnessText(
@@ -531,44 +731,242 @@ private fun GitDiffFileCard(
                 val detail = buildString {
                     append(if (expanded) "收起" else "展开")
                     append(" · +").append(file.addedLines).append(" −").append(file.deletedLines)
+                    if (matchCount > 0) append(" · ").append(matchCount).append(" 处命中")
                     if (file.binary) append(" · 二进制，无文本差异")
                 }
                 HarnessText(detail, Modifier.testTag("git-diff-file-detail"),
                     style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
             }
         }
-        if (expanded && file.body.isNotEmpty()) {
+        val hasPreviewKind = preview != GitDiffPreviewKind.Diff
+        if (expanded && (file.body.isNotEmpty() || hasPreviewKind)) {
             val markdown = if (preview == GitDiffPreviewKind.Markdown) {
                 (previewFile as? GitPreviewFile.Ready)?.text
             } else {
                 null
             }
+            val binary = if (hasPreviewKind && preview != GitDiffPreviewKind.Markdown) {
+                previewFile as? GitPreviewFile.Binary
+            } else {
+                null
+            }
+            val hunks = remember(file.body) { parseGitDiffHunks(file.body) }
+            // Context comes from the working-tree file. The Index diff's new side lives in the index
+            // instead, so the page disables expansion there rather than showing other content.
+            val fullText = (previewFile as? GitPreviewFile.Ready)?.text
+                ?.takeIf { contextExpansionAllowed && file.status != GitDiffFileStatus.Deleted }
+            val gaps = remember(hunks, fullText) {
+                if (fullText == null || hunks.isEmpty()) emptyList() else gitDiffContextGaps(hunks, fullText)
+            }
+            var contextAbove by remember(file.header, fullText) { mutableStateOf(emptyMap<Int, Int>()) }
+            var contextBelow by remember(file.header, fullText) { mutableStateOf(emptyMap<Int, Int>()) }
+            val expandedBody = remember(file.body, hunks, gaps, contextAbove, contextBelow) {
+                if (hunks.isEmpty() || gaps.isEmpty()) file.body
+                else gitDiffExpandedBody(hunks, gaps, contextAbove, contextBelow)
+            }
+            val renderedActiveLine = activeSearchLine?.let {
+                gitDiffExpandedLineIndex(it, hunks, gaps, contextAbove, contextBelow)
+            }
+            val highlight = if (searchQuery.isBlank()) null else GitDiffTextHighlight(
+                query = searchQuery,
+                activeLine = renderedActiveLine,
+                hitBackground = HarnessTokens.Colors.Warning.copy(alpha = HIT_ALPHA),
+                activeHitBackground = HarnessTokens.Colors.Warning.copy(alpha = ACTIVE_HIT_ALPHA),
+            )
+            val bodyFile = if (expandedBody == file.body) file else file.copy(body = expandedBody)
+            val lineLevelReveal = layout != GitDiffLayout.Split && !wrap
+            LaunchedEffect(reveal?.nonce) {
+                if (reveal == null || lineLevelReveal) return@LaunchedEffect
+                var frames = 0
+                while (cardTopInWindow[0].isNaN() && frames++ < 10) withFrameNanos { }
+                withFrameNanos { }
+                val top = cardTopInWindow[0]
+                if (!top.isNaN()) onRevealLine(top)
+            }
             if (markdown != null) {
                 SelectionContainer { GitMarkdownPreview(file.path, markdown) }
+            } else if (binary != null) {
+                GitBinaryPreview(preview, file.path, binary.bytes) {
+                    GitDiffFallbackBody(bodyFile, layout, wrap, wordDiffs, hideImports, highlight,
+                        renderedActiveLine, reveal?.nonce ?: 0, onRevealLine)
+                }
             } else {
-                if (preview == GitDiffPreviewKind.Markdown) {
-                    // The original silently falls back to the diff while a preview loads or fails;
-                    // this page names the reason instead of hiding it.
-                    val notice = when (previewFile) {
-                        null -> "尚未读取文件，先显示差异文本。"
-                        is GitPreviewFile.Loading -> "正在加载预览…"
-                        is GitPreviewFile.Unavailable -> previewFile.reason
-                        is GitPreviewFile.Ready -> null
-                    }
-                    if (notice != null) {
-                        SelectionContainer {
-                            HarnessText(notice, Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                .testTag("git-diff-rich-preview-notice-${file.path}"),
-                                style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
-                        }
+                // The original silently falls back to the diff while a preview loads or fails;
+                // this page names the reason instead of hiding it.
+                val notice = when (previewFile) {
+                    null -> if (hasPreviewKind) "尚未读取文件，先显示差异文本。" else null
+                    is GitPreviewFile.Loading -> "正在加载预览…"
+                    is GitPreviewFile.Unavailable -> previewFile.reason
+                    is GitPreviewFile.Ready, is GitPreviewFile.Binary -> null
+                }
+                if (notice != null) {
+                    SelectionContainer {
+                        HarnessText(notice, Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            .testTag("git-diff-rich-preview-notice-${file.path}"),
+                            style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
                     }
                 }
-                if (layout == GitDiffLayout.Split) {
-                    GitDiffSplitView(file, wordDiffs, hideImports)
-                } else {
-                    GitUnifiedDiff(file.body, wrap, wordDiffs, hideImports)
+                if (contextExpansionAllowed && file.status != GitDiffFileStatus.Deleted && hunks.isNotEmpty()) {
+                    GitDiffContextControls(
+                        path = file.path,
+                        gaps = gaps,
+                        above = contextAbove,
+                        below = contextBelow,
+                        previewFile = previewFile,
+                        onRequestText = onRequestContextText,
+                        onExpandAbove = { hunk ->
+                            val gap = gaps.getOrNull(hunk) ?: return@GitDiffContextControls
+                            val used = (contextAbove[hunk] ?: 0) + (contextBelow[hunk] ?: 0)
+                            val add = minOf(GitDiffContextChunk, (gap.lines.size - used).coerceAtLeast(0))
+                            if (add > 0) contextAbove = contextAbove + (hunk to (contextAbove[hunk] ?: 0) + add)
+                        },
+                        onExpandBelow = { hunk ->
+                            val gap = gaps.getOrNull(hunk + 1) ?: return@GitDiffContextControls
+                            val used = (contextAbove[hunk + 1] ?: 0) + (contextBelow[hunk + 1] ?: 0)
+                            val add = minOf(GitDiffContextChunk, (gap.lines.size - used).coerceAtLeast(0))
+                            if (add > 0) contextBelow = contextBelow + (hunk + 1 to (contextBelow[hunk + 1] ?: 0) + add)
+                        },
+                    )
                 }
+                GitDiffFallbackBody(bodyFile, layout, wrap, wordDiffs, hideImports, highlight,
+                    renderedActiveLine, reveal?.nonce ?: 0, onRevealLine)
             }
+        }
+    }
+}
+
+/**
+ * Per-hunk context expansion. Until the working-tree text is known the only action is to read it;
+ * afterwards each hunk gets one action per hidden side, labelled with the exact line count.
+ */
+@Composable
+private fun GitDiffContextControls(
+    path: String,
+    gaps: List<GitDiffContextGap>,
+    above: Map<Int, Int>,
+    below: Map<Int, Int>,
+    previewFile: GitPreviewFile?,
+    onRequestText: () -> Unit,
+    onExpandAbove: (Int) -> Unit,
+    onExpandBelow: (Int) -> Unit,
+) {
+    if (gaps.isEmpty()) {
+        when (previewFile) {
+            is GitPreviewFile.Loading -> HarnessText("正在读取完整文件…",
+                Modifier.testTag("git-diff-context-loading-$path"),
+                style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
+            is GitPreviewFile.Unavailable -> HarnessText(previewFile.reason,
+                Modifier.testTag("git-diff-context-unavailable-$path"),
+                style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
+            else -> HarnessButton(
+                text = "展开上下文", onClick = onRequestText, testTag = "git-diff-context-load-$path",
+                variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact,
+            )
+        }
+        return
+    }
+    val hunkCount = (gaps.size - 1).coerceAtLeast(0)
+    val actions = buildList {
+        for (hunk in 0 until hunkCount) {
+            val aboveGap = gaps[hunk]
+            val aboveUsed = (above[hunk] ?: 0) + (below[hunk] ?: 0)
+            val aboveRemaining = (aboveGap.lines.size - aboveUsed).coerceAtLeast(0)
+            if (aboveRemaining > 0) add(Triple(hunk, true, minOf(GitDiffContextChunk, aboveRemaining)))
+            val belowGap = gaps[hunk + 1]
+            val belowUsed = (above[hunk + 1] ?: 0) + (below[hunk + 1] ?: 0)
+            val belowRemaining = (belowGap.lines.size - belowUsed).coerceAtLeast(0)
+            if (belowRemaining > 0) add(Triple(hunk, false, minOf(GitDiffContextChunk, belowRemaining)))
+        }
+    }
+    if (actions.isEmpty()) return
+    Column(Modifier.fillMaxWidth().testTag("git-diff-context-$path")
+        .padding(horizontal = 10.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        actions.forEach { (hunk, isAbove, count) ->
+            HarnessButton(
+                text = "展开第 ${hunk + 1} 处${if (isAbove) "上方" else "下方"} $count 行",
+                onClick = { if (isAbove) onExpandAbove(hunk) else onExpandBelow(hunk) },
+                testTag = "git-diff-context-${if (isAbove) "above" else "below"}-$hunk-$path",
+                variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact,
+            )
+        }
+    }
+}
+
+/** Search text carried into one body: the query, the current hit line and its resolved palette. */
+internal data class GitDiffTextHighlight(
+    val query: String,
+    val activeLine: Int?,
+    val hitBackground: Color,
+    val activeHitBackground: Color,
+)
+
+/** The diff body a rich preview falls back to when it cannot be decoded. */
+@Composable
+private fun GitDiffFallbackBody(
+    file: GitDiffFile,
+    layout: GitDiffLayout,
+    wrap: Boolean,
+    wordDiffs: Boolean,
+    hideImports: Boolean,
+    highlight: GitDiffTextHighlight? = null,
+    revealLine: Int? = null,
+    revealNonce: Int = 0,
+    onRevealLine: (Float) -> Unit = {},
+) {
+    if (file.body.isEmpty()) return
+    if (layout == GitDiffLayout.Split) {
+        GitDiffSplitView(file, wordDiffs, hideImports)
+    } else {
+        GitUnifiedDiff(file.body, wrap, wordDiffs, hideImports, highlight, revealLine, revealNonce, onRevealLine)
+    }
+}
+
+/**
+ * Image, SVG and PDF previews read from the working tree. Decoding happens once per byte array; a
+ * format the platform cannot decode keeps the diff text instead of drawing an empty frame.
+ */
+@Composable
+private fun GitBinaryPreview(
+    kind: GitDiffPreviewKind,
+    path: String,
+    bytes: ByteArray,
+    fallback: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val bitmap = remember(kind, bytes) {
+        when (kind) {
+            GitDiffPreviewKind.Image -> decodeGitRasterPreview(bytes)
+            GitDiffPreviewKind.Pdf -> renderGitPdfPreview(bytes)
+            else -> null
+        }
+    }
+    val painter = remember(kind, bytes, density) {
+        if (kind == GitDiffPreviewKind.Svg) decodeGitSvgPreview(bytes, density) else null
+    }
+    val previewModifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).padding(10.dp)
+        .testTag("git-diff-rich-preview-${kind.name.lowercase()}")
+    when {
+        bitmap != null -> Image(
+            bitmap = bitmap,
+            contentDescription = path,
+            modifier = previewModifier,
+            contentScale = ContentScale.Fit,
+        )
+        painter != null -> Image(
+            painter = painter,
+            contentDescription = path,
+            modifier = previewModifier,
+            contentScale = ContentScale.Fit,
+        )
+        else -> {
+            HarnessText(
+                "无法解码该文件的预览，先显示差异文本。",
+                Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    .testTag("git-diff-rich-preview-notice-$path"),
+                style = MaterialTheme.typography.bodySmall,
+                color = HarnessTokens.Colors.TextMuted,
+            )
+            fallback()
         }
     }
 }
@@ -579,8 +977,18 @@ private fun GitDiffFileCard(
  * on the line it belongs to while the text wraps instead of scrolling.
  */
 @Composable
-private fun GitUnifiedDiff(body: String, wrap: Boolean, wordDiffs: Boolean, hideImports: Boolean) {
-    if (wrap) GitWrappedUnifiedDiff(body, wordDiffs, hideImports) else GitUnifiedDiffScroll(body, wordDiffs, hideImports)
+private fun GitUnifiedDiff(
+    body: String,
+    wrap: Boolean,
+    wordDiffs: Boolean,
+    hideImports: Boolean,
+    highlight: GitDiffTextHighlight? = null,
+    revealLine: Int? = null,
+    revealNonce: Int = 0,
+    onRevealLine: (Float) -> Unit = {},
+) {
+    if (wrap) GitWrappedUnifiedDiff(body, wordDiffs, hideImports, highlight)
+    else GitUnifiedDiffScroll(body, wordDiffs, hideImports, highlight, revealLine, revealNonce, onRevealLine)
 }
 
 /**
@@ -592,24 +1000,52 @@ private fun GitUnifiedDiff(body: String, wrap: Boolean, wordDiffs: Boolean, hide
  * patch text keeps every `+`/`-`/space marker.
  */
 @Composable
-private fun GitUnifiedDiffScroll(body: String, wordDiffs: Boolean, hideImports: Boolean) {
+private fun GitUnifiedDiffScroll(
+    body: String,
+    wordDiffs: Boolean,
+    hideImports: Boolean,
+    highlight: GitDiffTextHighlight? = null,
+    revealLine: Int? = null,
+    revealNonce: Int = 0,
+    onRevealLine: (Float) -> Unit = {},
+) {
     val added = HarnessTokens.Colors.DiffAddedBackground
     val removed = HarnessTokens.Colors.DiffRemovedBackground
     val separator = HarnessTokens.Colors.BorderSubtle
     val muted = HarnessTokens.Colors.TextMuted
     val wordAdded = HarnessTokens.Colors.DiffAdded.copy(alpha = WORD_DIFF_EMPHASIS_ALPHA)
     val wordRemoved = HarnessTokens.Colors.DiffRemoved.copy(alpha = WORD_DIFF_EMPHASIS_ALPHA)
-    val lines = remember(body, hideImports) {
-        parseGitDiffLines(body).let { if (hideImports) gitDiffHiddenImportLines(it) else it }
+    val allLines = remember(body) { parseGitDiffLines(body) }
+    val lines = remember(allLines, hideImports) {
+        if (hideImports) gitDiffHiddenImportLines(allLines) else allLines
     }
     val wordSpans = remember(lines, wordDiffs) { if (wordDiffs) gitUnifiedWordDiff(lines) else emptyMap() }
-    val annotated = remember(body, added, removed, separator, muted, wordSpans, wordAdded, wordRemoved, hideImports) {
-        gitUnifiedDiffAnnotatedString(body, added, removed, separator, muted, wordSpans, wordAdded, wordRemoved, hideImports)
+    val annotated = remember(body, added, removed, separator, muted, wordSpans, wordAdded, wordRemoved,
+        hideImports, highlight) {
+        gitUnifiedDiffAnnotatedString(body, added, removed, separator, muted, wordSpans, wordAdded, wordRemoved,
+            hideImports, highlight)
     }
     val gutter = remember(lines, added, removed, separator) {
         gitDiffGutterAnnotatedString(lines, added, removed, separator)
     }
     val bodyStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var textTopInWindow by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(revealNonce, revealLine) {
+        val line = revealLine ?: return@LaunchedEffect
+        // The matched file may have just been expanded; wait (bounded) for its Text to be laid out.
+        var frames = 0
+        while ((textLayout == null || textTopInWindow == null) && frames++ < 10) withFrameNanos { }
+        val layout = textLayout ?: return@LaunchedEffect
+        val top = textTopInWindow ?: return@LaunchedEffect
+        // Hiding imports removes rows before the hit, so the layout line is the count of visible
+        // lines before it rather than its index in the expanded body.
+        val rendered = if (hideImports) gitDiffHiddenImportLines(allLines.take(line)).size
+        else line
+        if (rendered !in 0 until layout.lineCount) return@LaunchedEffect
+        withFrameNanos { }
+        onRevealLine(top + layout.getLineTop(rendered))
+    }
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         // Non-selectable gutter: rendered outside the SelectionContainer so it is never copied. Its
         // per-line background tints added/removed cells and `@@` separators like the body, and the
@@ -624,9 +1060,11 @@ private fun GitUnifiedDiffScroll(body: String, wordDiffs: Boolean, hideImports: 
             Text(
                 annotated,
                 Modifier.fillMaxWidth().testTag("git-diff-file-patch").horizontalScroll(rememberScrollState())
+                    .onGloballyPositioned { textTopInWindow = it.positionInWindow().y }
                     .padding(end = 10.dp),
                 style = bodyStyle,
                 color = HarnessTokens.Colors.Text,
+                onTextLayout = { textLayout = it },
             )
         }
     }
@@ -640,7 +1078,12 @@ private fun GitUnifiedDiffScroll(body: String, wordDiffs: Boolean, hideImports: 
  * the line text keeps every `+`/`-`/space marker and its per-line tint.
  */
 @Composable
-private fun GitWrappedUnifiedDiff(body: String, wordDiffs: Boolean, hideImports: Boolean) {
+private fun GitWrappedUnifiedDiff(
+    body: String,
+    wordDiffs: Boolean,
+    hideImports: Boolean,
+    highlight: GitDiffTextHighlight? = null,
+) {
     val added = HarnessTokens.Colors.DiffAddedBackground
     val removed = HarnessTokens.Colors.DiffRemovedBackground
     val separator = HarnessTokens.Colors.BorderSubtle
@@ -665,7 +1108,8 @@ private fun GitWrappedUnifiedDiff(body: String, wordDiffs: Boolean, hideImports:
                 SelectionContainer(Modifier.weight(1f)) {
                     Text(
                         gitDiffUnifiedLineAnnotatedString(line, added, removed, separator, muted,
-                            wordSpans[index], wordAdded, wordRemoved),
+                            wordSpans[index], wordAdded, wordRemoved)
+                            .withGitDiffSearchHighlight(highlight, index),
                         Modifier.testTag("git-diff-file-patch-line").padding(end = 10.dp),
                         style = bodyStyle,
                         color = HarnessTokens.Colors.Text,
@@ -691,14 +1135,54 @@ internal fun gitUnifiedDiffAnnotatedString(
     wordAddedBackground: Color = Color.Unspecified,
     wordRemovedBackground: Color = Color.Unspecified,
     hideImports: Boolean = false,
+    highlight: GitDiffTextHighlight? = null,
 ): AnnotatedString = buildAnnotatedString {
     val lines = parseGitDiffLines(body).let { if (hideImports) gitDiffHiddenImportLines(it) else it }
     lines.forEachIndexed { index, line ->
         if (index > 0) append('\n')
+        val lineStart = length
         val span = gitDiffLineSpan(line, addedBackground, removedBackground, separatorBackground, muted)
         val wordBackground = if (line.kind == GitDiffLineKind.Removed) wordRemovedBackground else wordAddedBackground
         appendWordDiffLine(line, span, wordDiffs[index], wordBackground)
+        val lineEnd = length
+        if (highlight != null && highlight.query.isNotBlank()) {
+            if (highlight.activeLine == index) {
+                addStyle(SpanStyle(background = highlight.activeHitBackground), lineStart, lineEnd)
+            }
+            val raw = gitDiffLineText(line)
+            var from = 0
+            while (true) {
+                val hit = raw.indexOf(highlight.query, from, ignoreCase = true)
+                if (hit < 0) break
+                addStyle(SpanStyle(background = highlight.hitBackground),
+                    lineStart + hit, lineStart + hit + highlight.query.length)
+                from = hit + highlight.query.length.coerceAtLeast(1)
+            }
+        }
     }
+}
+
+private const val HIT_ALPHA = 0.28f
+private const val ACTIVE_HIT_ALPHA = 0.48f
+
+/** Applies the search tint to one already-built wrapped line. */
+private fun AnnotatedString.withGitDiffSearchHighlight(
+    highlight: GitDiffTextHighlight?,
+    lineIndex: Int,
+): AnnotatedString {
+    if (highlight == null || highlight.query.isBlank()) return this
+    val active = highlight.activeLine == lineIndex
+    if (!active && !text.contains(highlight.query, ignoreCase = true)) return this
+    val builder = AnnotatedString.Builder(this)
+    if (active) builder.addStyle(SpanStyle(background = highlight.activeHitBackground), 0, text.length)
+    var from = 0
+    while (true) {
+        val hit = text.indexOf(highlight.query, from, ignoreCase = true)
+        if (hit < 0) break
+        builder.addStyle(SpanStyle(background = highlight.hitBackground), hit, hit + highlight.query.length)
+        from = hit + highlight.query.length.coerceAtLeast(1)
+    }
+    return builder.toAnnotatedString()
 }
 
 /** One body line's full patch text, marker included, so the selectable body keeps every character. */

@@ -64,6 +64,8 @@ import im.hikaru.harness.client.settings.WorktreeSettingsRepository
 import im.hikaru.harness.client.settings.DesktopWorktreeSettingsStore
 import im.hikaru.harness.client.settings.ShortcutsRepository
 import im.hikaru.harness.client.settings.DesktopShortcutsStore
+import im.hikaru.harness.client.shell.DesktopShellLayoutStore
+import im.hikaru.harness.client.shell.ShellLayoutRepository
 import im.hikaru.harness.desktop.window.desktopShortcutPlatform
 import kotlin.system.exitProcess
 
@@ -84,6 +86,10 @@ fun main(args: Array<String>) {
         DesktopWorktreeSettingsStore(resolveDesktopHarnessHome(options.home).directory.resolve("client-worktrees.json")),
     )
     runBlocking { worktreeSettings.load() }
+    val shellLayout = ShellLayoutRepository(
+        DesktopShellLayoutStore(resolveDesktopHarnessHome(options.home).directory.resolve("client-layout.json")),
+    )
+    runBlocking { shellLayout.load() }
     val shortcutPlatform = desktopShortcutPlatform()
     val shortcuts = ShortcutsRepository(
         DesktopShortcutsStore(resolveDesktopHarnessHome(options.home).directory.resolve("client-shortcuts.json"), shortcutPlatform),
@@ -276,6 +282,7 @@ fun main(args: Array<String>) {
                     modelSettingsRepository = modelSettings,
                     generalSettingsRepository = generalSettings,
                     worktreeSettingsRepository = worktreeSettings,
+                    shellLayoutRepository = shellLayout,
                     shortcutsRepository = shortcuts,
                     // The fused 44dp title strip belongs to the window: macOS draws the traffic
                     // lights over the rail column and the app titlebar row occupies the strip.

@@ -6,7 +6,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -18,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,6 +28,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +41,7 @@ import kotlinx.coroutines.launch
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.math.roundToInt
 
 @Composable
 internal fun ConversationViewport(
@@ -46,6 +53,8 @@ internal fun ConversationViewport(
     onEditMessage: ((Message) -> Unit)? = null,
     /** Streaming assistant tail; it is drawn after the settled history and never gets row actions. */
     live: List<Message> = emptyList(),
+    /** Opens a changed file on the Git page; a deleted file never offers it. */
+    onOpenInGit: ((path: String) -> Unit)? = null,
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -63,8 +72,14 @@ internal fun ConversationViewport(
     val toolResults = remember(messages) { toolResultIndex(messages) }
     // Settled-only maps stay cached while the tail grows; only this appended reference changes per frame.
     val shown = remember(messages, toolResults, live) { messages.filterNot { it.isFoldedToolResult(toolResults) } + live }
+    // Time markers are first-class rows so their height participates in both scrolling and the
+    // scrollbar document range. Streaming messages without a durable timestamp never create one.
+    // One zone for both grouping and the printed label, so a marker's day and its clock agree.
+    val zone = remember { TimeZone.currentSystemDefault() }
+    val timeline = remember(shown, zone) { conversationTimeline(shown, zone) }
     val liveIds = remember(live) { live.mapTo(mutableSetOf()) { it.id } }
     val lastTextMessage = remember(messages) { turnLastTextMessageIds(messages) }
+    val rowCount = timeline.size + (if (error != null) 1 else 0) + 1
     LaunchedEffect(list) {
         var wasScrolling = false
         snapshotFlow { list.isScrollInProgress to !list.canScrollForward }.collect { (scrolling, reachedBottom) ->
@@ -73,35 +88,62 @@ internal fun ConversationViewport(
             wasScrolling = scrolling
         }
     }
-    LaunchedEffect(shown.size, shown.lastOrNull()?.content, error, bottom) {
-        if (shown.isNotEmpty() && following) list.scrollToItem(shown.size + if (error != null) 1 else 0)
+    LaunchedEffect(rowCount, shown.lastOrNull()?.content, error, bottom) {
+        if (shown.isNotEmpty() && following) list.scrollToItem(rowCount - 1)
+    }
+    val scrollbarMetrics by remember {
+        derivedStateOf { conversationScrollbarMetrics(list, rowCount) }
     }
     Box(modifier.fillMaxWidth()) {
         LazyColumn(
             state = list,
+            // Codex reserves `scrollbar-gutter: stable both-edges` on the transcript, so the
+            // measured 11px gutter sits on both sides of the centred content column.
             modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp).semantics { contentDescription = "会话" },
             // The 12dp gap before the end anchor completes the measured 32dp transcript inset.
             contentPadding = PaddingValues(top = 32.dp, bottom = bottom + 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            items(shown, key = { it.id }) { message ->
-                val streaming = message.id in liveIds
-                Box(Modifier.widthIn(max = 768.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
-                    MessageCard(
-                        message = message,
-                        workedForMillis = workedFor[message.id],
-                        toolCalls = toolCalls,
-                        toolResults = toolResults,
-                        showActions = !streaming && message.id in lastTextMessage,
-                        onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
-                            ?.let { edit -> { edit(message) } },
-                        live = streaming,
-                    )
+            items(timeline.size, key = { timeline[it].key }) { position ->
+                when (val row = timeline[position]) {
+                    is ConversationTimelineRow.TimeMarkerRow ->
+                        ConversationTimeMarker(row.timestampMillis, row.anchorMessageId, zone)
+                    is ConversationTimelineRow.MessageRow -> {
+                        val message = row.message
+                        val streaming = message.id in liveIds
+                        Box(Modifier.widthIn(max = 768.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
+                            MessageCard(
+                                message = message,
+                                workedForMillis = workedFor[message.id],
+                                toolCalls = toolCalls,
+                                toolResults = toolResults,
+                                showActions = !streaming && message.id in lastTextMessage,
+                                onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
+                                    ?.let { edit -> { edit(message) } },
+                                live = streaming,
+                                onOpenInGit = onOpenInGit,
+                            )
+                        }
+                    }
                 }
             }
             error?.let { message -> item { ConversationErrorCard(message, onRetry) } }
             item(key = "conversation-end") { Spacer(Modifier.height(0.dp)) }
+        }
+        if (scrollbarMetrics.visible) {
+            HarnessOverlayScrollbar(
+                metrics = scrollbarMetrics,
+                modifier = Modifier.align(Alignment.CenterEnd).width(11.dp).fillMaxHeight(),
+                variant = HarnessScrollbarVariant.Arrowless,
+                onScrollToFraction = { fraction ->
+                    val target = (fraction * (list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)).roundToInt()
+                    scope.launch { list.animateScrollToItem(target) }
+                },
+                onScrollBy = { delta -> scope.launch { list.scrollBy(delta) } },
+                testTag = "conversation-scrollbar",
+                contentDescription = "会话滚动条",
+            )
         }
         if (!atBottom) {
             Box(Modifier.align(Alignment.BottomCenter).padding(bottom = bottom + 24.dp)
@@ -125,10 +167,13 @@ internal fun MessageCard(
     onEdit: (() -> Unit)? = null,
     /** True for the tail that is still arriving; its reasoning and labels stay in progress. */
     live: Boolean = false,
+    onOpenInGit: ((path: String) -> Unit)? = null,
 ) {
     val isHuman = message.role == MessageRole.USER && message.source == UserMessageSource
     val clipboard = LocalClipboardManager.current
     val text = message.content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
+    // Consecutive file changes form one card group; the first index owns the group's tag.
+    val fileChanges = remember(message.content) { fileChangeRuns(message.content) }
     BoxWithConstraints(Modifier.fillMaxWidth().semantics { testTag = "message:${message.id}" }) {
         val bubbleMaxWidth = maxWidth * 0.7f
         Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isHuman) Alignment.End else Alignment.Start) {
@@ -139,16 +184,22 @@ internal fun MessageCard(
                 Column(contents, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (!isHuman && workedForMillis != null) WorkedForHeader(workedForMillis, "message:${message.id}")
                     message.content.forEachIndexed { index, content ->
-                        MessageContentView(content, "message:${message.id}:content:$index", isHuman, toolCalls, toolResults, live)
+                        val changes = fileChanges[index]
+                        when {
+                            changes != null -> FileChangeCard(
+                                changes, "message:${message.id}:content:$index", onOpenInGit)
+                            // Every member after the run's first is drawn by that group card.
+                            content is FileChangeContent -> Unit
+                            else -> MessageContentView(content, "message:${message.id}:content:$index",
+                                isHuman, toolCalls, toolResults, live)
+                        }
                     }
                 }
             }
             if (isHuman) {
                 Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    message.timestampMillis?.let {
-                        HarnessText(messageTimeLabel(it), color = ConversationAppearance.tertiary,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp))
-                    }
+                    // The turn's clock lives in the timeline separator, not under the bubble: Codex
+                    // prints one `role="separator"` row per turn and no per-message time.
                     ConversationActionButton(ConversationGlyph.Copy, "复制消息", { clipboard.setText(AnnotatedString(text)) })
                     if (onEdit != null) ConversationActionButton(ConversationGlyph.Edit, "编辑消息", onEdit)
                 }
@@ -166,6 +217,100 @@ internal fun MessageCard(
 
 private fun isHumanMessage(message: Message): Boolean =
     message.role == MessageRole.USER && message.source == UserMessageSource
+
+/**
+ * One row of the rendered timeline: either a message slot or a Codex time separator.
+ *
+ * Codex prints one separator per turn, carrying the turn's first durable event time
+ * (`<div role="separator" aria-label="10月7日周三 1:02"><time datetime=…>`, 52px tall,
+ * centred on the transcript column). Measured live through CDP on 2026-10-23.
+ */
+internal sealed interface ConversationTimelineRow {
+    val key: String
+
+    data class MessageRow(val message: Message) : ConversationTimelineRow {
+        override val key: String get() = message.id
+    }
+
+    data class TimeMarkerRow(val anchorMessageId: String, val timestampMillis: Long) : ConversationTimelineRow {
+        override val key: String get() = "conversation-time:$anchorMessageId:$timestampMillis"
+    }
+}
+
+/**
+ * Inserts one separator before each turn's first row, carrying that turn's first durable time.
+ * Turns are delimited the same way as [turnWorkedFor] — a human message starts one, everything
+ * after it belongs to it — so a turn with no timestamp prints nothing rather than borrowing the
+ * previous turn's clock.
+ */
+internal fun conversationTimeline(
+    messages: List<Message>,
+    zone: TimeZone = TimeZone.currentSystemDefault(),
+): List<ConversationTimelineRow> {
+    val rows = mutableListOf<ConversationTimelineRow>()
+    var index = 0
+    while (index < messages.size) {
+        val head = messages[index]
+        // One turn: the human prompt plus every following non-human message.
+        var cursor = index + 1
+        while (cursor < messages.size && !isHumanMessage(messages[cursor])) cursor++
+        val anchor = messages.subList(index, cursor).firstNotNullOfOrNull { it.timestampMillis }
+        if (anchor != null) rows += ConversationTimelineRow.TimeMarkerRow(head.id, anchor)
+        for (position in index until cursor) rows += ConversationTimelineRow.MessageRow(messages[position])
+        index = cursor
+    }
+    return rows
+}
+
+/** `10月7日周三 1:02`, the label Codex puts in the separator's `aria-label`. */
+internal fun timeMarkerLabel(epochMillis: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String =
+    timeMarkerDateLabel(epochMillis, zone) + " " + timeMarkerClockLabel(epochMillis, zone)
+
+/** `10月7日周三`: the marker's leading, medium-weight span. */
+internal fun timeMarkerDateLabel(epochMillis: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String {
+    val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(zone)
+    // Codex abbreviates the weekday: `10月7日周三`, not the full `星期三`.
+    val weekday = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")[local.dayOfWeek.ordinal]
+    return "${local.monthNumber}月${local.day}日$weekday"
+}
+
+/** `1:02`: the marker's trailing, normal-weight span. */
+internal fun timeMarkerClockLabel(epochMillis: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String {
+    val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(zone)
+    return "${local.hour}:${local.minute.toString().padStart(2, '0')}"
+}
+
+/**
+ * Codex's conversation separator: `flex justify-center py-4` around a `text-sm leading-5`
+ * timestamp, i.e. a 52dp row whose 20dp line is centred between 16dp paddings. The date keeps
+ * `font-medium`; the clock stays normal weight. It is not selectable, and it does not join
+ * markdown copy.
+ */
+@Composable
+private fun ConversationTimeMarker(epochMillis: Long, anchorMessageId: String, zone: TimeZone) {
+    val label = timeMarkerLabel(epochMillis, zone)
+    val style = LocalHarnessContentTextStyle.current
+    Box(
+        // The semantics sit outside the padding so the tagged node is the separator row itself —
+        // the 52dp box Codex lays out — rather than the 20dp line inside it.
+        Modifier.fillMaxWidth().height(52.dp).clearAndSetSemantics {
+            contentDescription = label
+            testTag = "conversation-time-marker:$anchorMessageId"
+        }.padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            buildAnnotatedString {
+                withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(timeMarkerDateLabel(epochMillis, zone)) }
+                append(" ")
+                append(timeMarkerClockLabel(epochMillis, zone))
+            },
+            color = ConversationAppearance.tertiary,
+            maxLines = 1,
+            style = style.copy(fontSize = 13.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal),
+        )
+    }
+}
 
 /**
  * Live Codex prints one `用时 {duration}` line above the activity of a turn (`localConversation.workedFor`
@@ -240,6 +385,26 @@ private fun turnLastTextMessageIds(messages: List<Message>): Set<String> {
     return ids
 }
 
+private fun conversationScrollbarMetrics(state: LazyListState, itemCount: Int): HarnessScrollbarMetrics {
+    val layout = state.layoutInfo
+    val viewport = (layout.viewportEndOffset - layout.viewportStartOffset).coerceAtLeast(0)
+    val visible = layout.visibleItemsInfo
+    if (viewport <= 0 || itemCount <= 0 || visible.isEmpty()) {
+        return HarnessScrollbarMetrics(0f, 1f, visible = false)
+    }
+    val measuredExtent = visible.sumOf { it.size }.toFloat()
+    val averageItemExtent = (measuredExtent / visible.size).coerceAtLeast(1f)
+    val contentExtent = (itemCount * averageItemExtent).coerceAtLeast(viewport.toFloat())
+    val maxScroll = (contentExtent - viewport).coerceAtLeast(0f)
+    val first = visible.first()
+    val scrollOffset = (first.index * averageItemExtent - first.offset).coerceIn(0f, maxScroll)
+    return HarnessScrollbarMetrics(
+        positionFraction = if (maxScroll == 0f) 0f else scrollOffset / maxScroll,
+        thumbFraction = (viewport / contentExtent).coerceIn(0.05f, 1f),
+        visible = maxScroll > 0f,
+    )
+}
+
 private fun workedForLabel(millis: Long): String {
     val total = (millis / 1000).coerceAtLeast(1)
     val minutes = total / 60
@@ -259,12 +424,6 @@ private fun WorkedForHeader(millis: Long, tag: String) {
         HarnessText("用时 ${workedForLabel(millis)}", color = ConversationAppearance.tertiary, maxLines = 1,
             style = LocalHarnessContentTextStyle.current)
     }
-}
-
-private fun messageTimeLabel(epochMillis: Long): String {
-    val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(TimeZone.currentSystemDefault())
-    val day = listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")[local.dayOfWeek.ordinal]
-    return "$day${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
 }
 
 @Composable
@@ -303,7 +462,29 @@ private fun MessageContentView(
         is ToolResultContent -> ActivityDisclosure(toolResultLabel(toolCalls[content.toolCallId]), HarnessIconName.Host, tag) {
             content.content.forEachIndexed { i, child -> MessageContentView(child, "$tag:content:$i", toolCalls = toolCalls) }
         }
+        // Only reached when a file change is nested inside a disclosure; transcript rows are grouped
+        // by MessageCard before this composable sees them, so this card has no Git navigation.
+        is FileChangeContent -> FileChangeCard(listOf(content), "$tag:file-change")
     }
+}
+
+/** Maps each run of consecutive file changes to the run's files, keyed by the run's first index. */
+internal fun fileChangeRuns(contents: List<MessageContent>): Map<Int, List<FileChangeContent>> {
+    val runs = linkedMapOf<Int, List<FileChangeContent>>()
+    var index = 0
+    while (index < contents.size) {
+        if (contents[index] is FileChangeContent) {
+            val start = index
+            val files = mutableListOf<FileChangeContent>()
+            while (index < contents.size) {
+                val file = contents[index] as? FileChangeContent ?: break
+                files += file
+                index++
+            }
+            runs[start] = files
+        } else index++
+    }
+    return runs
 }
 
 private fun toolActivityLabel(call: ToolCallContent): String {

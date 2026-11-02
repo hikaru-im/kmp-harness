@@ -87,6 +87,92 @@ public data class ToolResultContent(
     init { require(toolCallId.isNotBlank()) }
 }
 
+/** How a file was changed in this turn; the card labels each kind instead of parsing the patch. */
+@Serializable
+public enum class FileChangeKind {
+    @SerialName("added")
+    ADDED,
+
+    @SerialName("modified")
+    MODIFIED,
+
+    @SerialName("deleted")
+    DELETED,
+
+    @SerialName("renamed")
+    RENAMED,
+}
+
+/**
+ * One file's share of a turn's change set, carried as content so the transcript can draw a diff card
+ * without reading Git. [patch] is a unified diff for this file; a producer that withholds an oversized
+ * body sets [truncated] and the card shows the summary alone.
+ */
+@Serializable
+@SerialName("file-change")
+public data class FileChangeContent(
+    val path: String,
+    val kind: FileChangeKind,
+    val added: Int,
+    val removed: Int,
+    val patch: String? = null,
+    val truncated: Boolean = false,
+    /** Source path for a rename; the card prints `previousPath → path` when present. */
+    val previousPath: String? = null,
+) : MessageContent {
+    init {
+        require(path.isNotBlank())
+        require(added >= 0 && removed >= 0)
+        require(previousPath == null || previousPath.isNotBlank())
+    }
+}
+
+/** What a pending approval lets the user choose; the Host offers only the choices it accepts. */
+@Serializable
+public enum class ApprovalChoice {
+    @SerialName("allow-once")
+    ALLOW_ONCE,
+
+    @SerialName("allow-session")
+    ALLOW_SESSION,
+
+    @SerialName("deny")
+    DENY,
+
+    @SerialName("cancel")
+    CANCEL,
+}
+
+/**
+ * One tool execution waiting for the user. [command] is the complete command (never abbreviated) so
+ * the card can show exactly what would run; [reason] explains why the Host asked.
+ */
+@Serializable
+public data class ApprovalRequest(
+    val id: String,
+    val sessionId: SessionId,
+    val toolName: String,
+    val command: String = "",
+    val reason: String? = null,
+    val choices: List<ApprovalChoice> = ApprovalChoice.entries.toList(),
+) {
+    init {
+        require(id.isNotBlank()) { "ApprovalRequest id must not be blank" }
+        require(toolName.isNotBlank()) { "ApprovalRequest toolName must not be blank" }
+        require(choices.isNotEmpty()) { "ApprovalRequest must offer at least one choice" }
+        require(choices.distinct().size == choices.size) { "ApprovalRequest choices must not repeat" }
+    }
+}
+
+/** The user's answer to one [ApprovalRequest]; a request id never belongs to another Session. */
+@Serializable
+public data class ApprovalDecision(
+    val requestId: String,
+    val choice: ApprovalChoice,
+) {
+    init { require(requestId.isNotBlank()) { "ApprovalDecision requestId must not be blank" } }
+}
+
 @Serializable
 public enum class MessageRole {
     @SerialName("user")
@@ -238,6 +324,13 @@ public interface SessionApi {
     public suspend fun history(id: SessionId): List<Message>
     public suspend fun prompt(id: SessionId, message: Message): SessionPrompt
     public suspend fun cancel(id: SessionId, keepInbox: Boolean = false)
+
+    /**
+     * Answers a pending approval. Optional until the Host exposes the respond endpoint: the default
+     * fails, which the controller reports on the card instead of pretending the tool ran.
+     */
+    public suspend fun respondApproval(id: SessionId, decision: ApprovalDecision): Unit =
+        error("Approval responses are unavailable")
 
     /** Creates a child conversation holding this one's history before [beforeMessageId]. */
     public suspend fun fork(parent: SessionId, beforeMessageId: String): SessionSummary =

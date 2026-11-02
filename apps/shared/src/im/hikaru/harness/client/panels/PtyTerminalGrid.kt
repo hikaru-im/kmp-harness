@@ -6,9 +6,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,7 +15,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
@@ -34,9 +30,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import im.hikaru.harness.client.connection.*
+import im.hikaru.harness.ui.foundation.HarnessOverlayScrollbar
+import im.hikaru.harness.ui.foundation.HarnessScrollbarMetrics
+import im.hikaru.harness.ui.foundation.HarnessScrollbarVariant
 import im.hikaru.harness.ui.foundation.HarnessTokens
 import im.hikaru.harness.ui.foundation.LocalHarnessCodeTextStyle
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 public data class PtyGlyph(val column: Int, val endColumn: Int, val text: String, val style: TerminalTextStyle)
 public data class PtyCell(val line: Int, val column: Int) : Comparable<PtyCell> {
@@ -223,10 +223,6 @@ public fun PtyTerminalGrid(
     val foreground = HarnessTokens.Colors.Text
     val background = HarnessTokens.Colors.Surface
     val accent = HarnessTokens.Colors.TextMuted
-    val scrollbarInteractions = remember(reading) { MutableInteractionSource() }
-    val scrollbarHovered by scrollbarInteractions.collectIsHoveredAsState()
-    var scrollbarActive by remember(reading) { mutableStateOf(false) }
-    val scrollbarThumb = if (scrollbarHovered || scrollbarActive) HarnessTokens.Colors.BorderStrong else HarnessTokens.Colors.Border
     val scroll = rememberScrollableState { reading.scrollPixels(it, rowHeight) }
     fun address(position: Offset): PtyCell = PtyCell(
         (reading.top + floor(position.y / rowHeight).toInt()).coerceIn(0, lines.lastIndex),
@@ -284,25 +280,20 @@ public fun PtyTerminalGrid(
                 drawRect(foreground.copy(alpha = 0.55f), Offset(cursor.column * cell, (cursor.line - reading.top) * rowHeight), Size(cell, rowHeight))
             }
         }
-        Canvas(Modifier.width(10.dp).fillMaxHeight().semantics { testTag = "pty-terminal-scrollbar" }
-            .hoverable(scrollbarInteractions)
-            .pointerInput(reading) {
-                // Observe press/release without consuming input from the existing drag/tap handlers.
-                try {
-                    awaitPointerEventScope {
-                        while (true) scrollbarActive = awaitPointerEvent(PointerEventPass.Initial).changes.any { it.pressed }
-                    }
-                } finally { scrollbarActive = false }
-            }
-            .pointerInput(reading) {
-                detectDragGestures(onDragStart = { reading.scrollbar(it.y / size.height.coerceAtLeast(1)) },
-                    onDrag = { change, _ -> reading.scrollbar(change.position.y / size.height.coerceAtLeast(1)); change.consume() })
-            }.pointerInput(reading) { detectTapGestures { reading.scrollbar(it.y / size.height.coerceAtLeast(1)) } }) {
-            drawRect(background)
-            val fraction = (reading.visibleRows.toFloat() / reading.total.coerceAtLeast(1)).coerceIn(0.05f, 1f)
-            val height = size.height * fraction
-            val y = if (reading.maxTop == 0) 0f else (size.height - height) * reading.top / reading.maxTop
-            drawRect(scrollbarThumb, Offset(0f, y), Size(size.width, height))
-        }
+        HarnessOverlayScrollbar(
+            metrics = HarnessScrollbarMetrics(
+                positionFraction = if (reading.maxTop == 0) 0f else reading.top.toFloat() / reading.maxTop,
+                thumbFraction = (reading.visibleRows.toFloat() / reading.total.coerceAtLeast(1)).coerceIn(0.05f, 1f),
+                // Keep the 10dp gutter even when the terminal has no scroll range; the old
+                // scrollbar reserved it unconditionally and viewport/font metrics depend on it.
+                visible = true,
+            ),
+            modifier = Modifier.width(10.dp).fillMaxHeight(),
+            variant = HarnessScrollbarVariant.Arrowless,
+            onScrollToFraction = reading::scrollbar,
+            onScrollBy = { delta -> reading.scrollLines((-delta / rowHeight).roundToInt()) },
+            testTag = "pty-terminal-scrollbar",
+            contentDescription = "终端滚动条",
+        )
     }
 }

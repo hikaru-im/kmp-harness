@@ -3,6 +3,8 @@ package im.hikaru.harness.client.panels
 import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.harness.client.connection.SessionId
 import im.hikaru.harness.client.connection.Message
+import im.hikaru.harness.client.connection.MessageRole
+import im.hikaru.harness.client.connection.TextContent
 import im.hikaru.harness.client.connection.BackgroundProcessLifecycle
 import im.hikaru.harness.client.connection.BackgroundInputState
 
@@ -148,6 +150,14 @@ public enum class ChildAgentStatus {
 
 public enum class ChildHistoryAvailability { Available, Unavailable }
 
+/** Real line counts from the child's diff. Absent means "no stats", never "zero changes". */
+public data class ChildDiffStats(val linesAdded: Int, val linesRemoved: Int) {
+    init {
+        require(linesAdded >= 0 && linesRemoved >= 0)
+        require(linesAdded + linesRemoved > 0)
+    }
+}
+
 /** Ancestor path is service verified, inclusive of parent and child, and cycle free. */
 public data class ChildAgentSummary(
     val key: ChildAgentKey,
@@ -158,11 +168,13 @@ public data class ChildAgentSummary(
     val displayName: String? = null,
     val objective: String? = null,
     val statusSummary: String? = null,
+    val lastAssistantMessage: String? = null,
     val startedAtEpochMillis: Long? = null,
     val lastAssistantAtEpochMillis: Long? = null,
     val recencyAtEpochMillis: Long? = null,
     val model: String? = null,
     val reasoningEffort: String? = null,
+    val diffStats: ChildDiffStats? = null,
 ) {
     init {
         require(verifiedAncestorPath.size >= 2)
@@ -170,13 +182,20 @@ public data class ChildAgentSummary(
         require(verifiedAncestorPath.last() == key.sessionId)
         require(verifiedAncestorPath.distinct().size == verifiedAncestorPath.size)
         require(listOfNotNull(startedAtEpochMillis, lastAssistantAtEpochMillis, recencyAtEpochMillis).all { it >= 0 })
+        require(lastAssistantMessage == null || lastAssistantMessage.isNotBlank())
     }
 
     public val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: key.sessionId.value
+
+    /** The final reply leads, as in Codex; the delegated objective and status text are fallbacks. */
     public val preview: String?
-        get() = objective?.trim()?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotBlank() }?.take(60)
+        get() = lastAssistantMessage?.let(::previewLine)
+            ?: objective?.let(::previewLine)
             ?: statusSummary?.takeIf { it.isNotBlank() }
 }
+
+private fun previewLine(text: String): String? =
+    text.trim().replace(Regex("\\s+"), " ").takeIf { it.isNotBlank() }?.take(60)
 
 public enum class SubagentOverviewCompleteness { Complete, LiveOnlyIncomplete }
 
@@ -239,6 +258,20 @@ public data class ChildAgentDetail(
         }
     }
 }
+
+/**
+ * The newest assistant text in typed history. Null means either typed history is unavailable or no
+ * assistant text exists; callers must state which instead of showing a compatibility transcript as
+ * if it were the agent's final reply.
+ */
+public val ChildAgentDetail.finalReply: String?
+    get() = typedMessages?.asReversed()?.firstNotNullOfOrNull { message ->
+        if (message.role != MessageRole.ASSISTANT) return@firstNotNullOfOrNull null
+        message.content.filterIsInstance<TextContent>()
+            .joinToString(separator = "\n") { it.text }
+            .trim()
+            .takeIf { it.isNotEmpty() }
+    }
 
 public enum class TerminalOperationKind { Input, Eof, Cancel }
 public enum class TerminalOperationOutcome { Applied, Rejected, Unknown }

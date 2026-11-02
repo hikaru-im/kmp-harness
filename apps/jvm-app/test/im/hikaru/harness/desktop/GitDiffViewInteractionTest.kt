@@ -89,12 +89,12 @@ class GitDiffViewInteractionTest {
     fun largeDiffStartsCollapsedAndEmptyDiffKeepsItsOwnState() {
         val f = GitWorktreesPageFixture()
         try {
-            f.backend.patch = "diff --git a/long.kt b/long.kt\n--- a/long.kt\n+++ b/long.kt\n@@ -1,500 +1,500 @@\n" +
-                (1..500).joinToString("\n") { "+line-$it" }
+            f.backend.patch = "diff --git a/long.kt b/long.kt\n--- a/long.kt\n+++ b/long.kt\n@@ -1,2001 +1,2001 @@\n" +
+                (1..2001).joinToString("\n") { "+line-$it" }
             f.git.refresh()
             runSkikoComposeUiTest(size = Size(1000f, 1200f)) {
                 setContent { HarnessTheme { SettingsGitPage(f.git) } }
-                onNodeWithTag("git-diff-summary").assertTextEquals("1 个文件变更 · +500 −0")
+                onNodeWithTag("git-diff-summary").assertTextEquals("1 个文件变更 · +2001 −0")
                 onAllNodesWithTag("git-diff-file-patch").assertCountEquals(0)
                 onAllNodesWithTag("git-diff-file")[0].assertTextContains("展开", substring = true)
                 runOnIdle { f.backend.patch = "" }

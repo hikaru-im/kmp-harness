@@ -5,6 +5,7 @@ import androidx.compose.ui.unit.dp
 import im.hikaru.harness.ui.foundation.HarnessIconName
 import im.hikaru.harness.client.scheduled.ScheduledTasksState
 
+@kotlinx.serialization.Serializable
 public enum class SidebarMode {
     Expanded,
     Collapsed,

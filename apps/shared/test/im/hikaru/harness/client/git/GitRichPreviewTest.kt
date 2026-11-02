@@ -19,14 +19,35 @@ class GitRichPreviewTest {
     }
 
     @Test
-    fun previewKindOnlySelectsMarkdownWhenTheToggleIsOnAndTheFileSurvives() {
+    fun previewKindSelectsEachRendererOnlyWhenTheToggleIsOnAndTheFileSurvives() {
         for (extension in GitMarkdownExtensions)
             assertEquals(GitDiffPreviewKind.Markdown, gitDiffPreviewKind("a.$extension", false, true), extension)
-        assertEquals(GitDiffPreviewKind.Diff, gitDiffPreviewKind("a.md", false, false))
-        assertEquals(GitDiffPreviewKind.Diff, gitDiffPreviewKind("a.md", true, true))
-        // The original also previews raster images, SVG and PDF; this Harness keeps their diff text.
-        for (path in listOf("shot.png", "icon.svg", "paper.pdf", "main.kt", "Makefile"))
+        for (extension in GitImageExtensions)
+            assertEquals(GitDiffPreviewKind.Image, gitDiffPreviewKind("a.$extension", false, true), extension)
+        for (extension in GitSvgExtensions)
+            assertEquals(GitDiffPreviewKind.Svg, gitDiffPreviewKind("a.$extension", false, true), extension)
+        for (extension in GitPdfExtensions)
+            assertEquals(GitDiffPreviewKind.Pdf, gitDiffPreviewKind("a.$extension", false, true), extension)
+        // Unsupported formats keep their diff text even with the toggle on.
+        for (path in listOf("main.kt", "Makefile", "notes.txt", "data.bin"))
             assertEquals(GitDiffPreviewKind.Diff, gitDiffPreviewKind(path, false, true), path)
+        // Toggle off, or a deletion (there is no working-tree file to read), always means diff.
+        for (path in listOf("a.md", "shot.png", "icon.svg", "paper.pdf")) {
+            assertEquals(GitDiffPreviewKind.Diff, gitDiffPreviewKind(path, false, false), path)
+            assertEquals(GitDiffPreviewKind.Diff, gitDiffPreviewKind(path, true, true), path)
+        }
+    }
+
+    @Test
+    fun binaryMimeTypeCoversOnlyTheFormatsTheHostReadsUndecoded() {
+        assertEquals("image/png", gitPreviewBinaryMimeType("docs/shot.png"))
+        assertEquals("image/jpeg", gitPreviewBinaryMimeType("Photo.JPG"))
+        assertEquals("image/gif", gitPreviewBinaryMimeType("a/b/anim.gif"))
+        assertEquals("image/svg+xml", gitPreviewBinaryMimeType("icon.SVG"))
+        assertEquals("application/pdf", gitPreviewBinaryMimeType("paper.pdf"))
+        assertNull(gitPreviewBinaryMimeType("readme.md"))
+        assertNull(gitPreviewBinaryMimeType("Main.kt"))
+        assertNull(gitPreviewBinaryMimeType("Makefile"))
     }
 
     @Test

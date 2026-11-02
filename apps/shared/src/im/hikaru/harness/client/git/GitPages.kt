@@ -18,6 +18,9 @@ import im.hikaru.harness.ui.foundation.*
 @Composable
 public fun SettingsGitPage(
     controller: GitController, modifier: Modifier = Modifier, directoryPicker: (@Composable () -> Unit)? = null,
+    /** One-shot path a transcript card asked to reveal; the page scrolls its file open once. */
+    revealPath: String? = null,
+    onRevealConsumed: () -> Unit = {},
 ) {
     val state by controller.state.collectAsState()
     Box(modifier) {
@@ -99,7 +102,10 @@ public fun SettingsGitPage(
                         onToggleLoadFullFiles = { controller.selectDiff(state.diffRequest.copy(loadFullFiles = it)) },
                         onRefresh = controller::refresh,
                         refreshDisabled = !state.pageCanRead,
-                        copyGitApplyCommandDisabled = !state.pageCanRead)
+                        copyGitApplyCommandDisabled = !state.pageCanRead,
+                        contextExpansionAllowed = state.diffRequest.source != GitDiffSource.Index,
+                        revealPath = revealPath,
+                        onRevealConsumed = onRevealConsumed)
                 } else {
                     ReadResult(state.diff, "尚未读取 Diff。") { diff ->
                         if (diff.patch.isEmpty()) HarnessText("所选比较没有差异。", Modifier.testTag("git-diff-empty"))
@@ -110,7 +116,10 @@ public fun SettingsGitPage(
                             onToggleLoadFullFiles = { controller.selectDiff(state.diffRequest.copy(loadFullFiles = it)) },
                             onRefresh = controller::refresh,
                             refreshDisabled = !state.pageCanRead,
-                            copyGitApplyCommandDisabled = !state.pageCanRead)
+                            copyGitApplyCommandDisabled = !state.pageCanRead,
+                            contextExpansionAllowed = state.diffRequest.source != GitDiffSource.Index,
+                            revealPath = revealPath,
+                            onRevealConsumed = onRevealConsumed)
                     }
                 }
             }

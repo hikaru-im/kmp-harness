@@ -55,6 +55,7 @@ import im.hikaru.harness.llm.ToolMessageSource
 import im.hikaru.harness.llm.UserMessageSource
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.client.connection.Connection
+import im.hikaru.harness.client.connection.FileChangeContent
 import im.hikaru.harness.client.connection.HostApi
 import im.hikaru.harness.client.connection.AgentOptions as ClientAgentOptions
 import im.hikaru.harness.client.connection.CreateSessionOptions as ClientCreateSessionOptions
@@ -357,6 +358,8 @@ private fun toCoreContent(content: MessageContent): im.hikaru.harness.llm.Conten
                 content = content.content.map(::toCoreContent),
                 isError = content.isError,
             )
+        // A file-change card is transcript-only evidence; it is never part of a prompt the model sees.
+        is FileChangeContent -> error("File-change content is display-only")
     }
 
 private class LocalSessionPrompt(

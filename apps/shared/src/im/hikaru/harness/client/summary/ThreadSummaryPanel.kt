@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,6 +29,7 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import im.hikaru.harness.client.git.GitDiffStats
+import im.hikaru.harness.client.panels.ChildDiffStats
 import im.hikaru.harness.client.scheduling.ScheduledTask
 import im.hikaru.harness.client.scheduling.scheduledSummaryCadence
 import im.hikaru.harness.ui.foundation.HarnessIcon
@@ -38,10 +40,12 @@ import im.hikaru.harness.ui.foundation.HarnessText
 import im.hikaru.harness.ui.foundation.HarnessTokens
 
 /**
- * Thread summary island. The Environment section is a read-only projection of real local Git reads:
- * the current branch, the uncommitted-to-HEAD +/- counts, and the tracked-change file count. It never
- * opens a shell, stages, checks out or invents numbers. Null consumers hide their row rather than
- * drawing a dead control.
+ * Thread summary island. Sections follow Codex `thread-summary-panel-sections.tsx`: automation, the
+ * Git environment summary, plan, outputs, side chats, background agents, background tasks and
+ * sources. The Environment section is a read-only projection of real local Git reads: the current
+ * branch, the uncommitted-to-HEAD +/- counts, and the tracked-change file count. It never opens a
+ * shell, stages, checks out or invents numbers. Null consumers hide their row rather than drawing a
+ * dead control, and a section with no real data source stays hidden instead of fabricating rows.
  */
 @Composable
 public fun ThreadSummaryPanel(
@@ -67,7 +71,20 @@ public fun ThreadSummaryPanel(
     scheduledError: Boolean = false,
     onOpenScheduled: ((String) -> Unit)? = null,
     onRetryScheduled: (() -> Unit)? = null,
+    /** The conversation's plan document; null hides the Plan section. */
+    plan: ThreadSummaryPlan? = null,
+    /** Artifacts the turn produced. The section shows its empty state when this is empty. */
+    outputs: List<ThreadSummaryOutput> = emptyList(),
+    sideChats: List<ThreadSummarySideChat> = emptyList(),
+    /** Tool and web sources. The section always renders and shows its empty state when this is empty. */
+    sources: List<ThreadSummarySource> = emptyList(),
+    onOpenSideChat: ((ThreadSummarySideChat) -> Unit)? = null,
+    onOpenSource: ((ThreadSummarySource) -> Unit)? = null,
+    /** Hoist this to keep expansion across panel close/open; defaults to panel-local memory. */
+    sectionState: ThreadSummarySectionState? = null,
+    autoCollapseDelayMillis: Long = ThreadSummarySectionAutoCollapseDelayMillis,
 ) {
+    val sections = sectionState ?: remember { ThreadSummarySectionState() }
     Column(
         modifier
             .fillMaxSize()
@@ -101,13 +118,43 @@ public fun ThreadSummaryPanel(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One),
         ) {
+            // Codex `thread-summary-panel-sections.tsx` order: automation, git summary, plan,
+            // outputs, side chats, background agents, background tasks, sources.
+            if (scheduledTasks.isNotEmpty() || scheduledLoading || scheduledError) {
+                ScheduledSection(
+                    tasks = scheduledTasks,
+                    loading = scheduledLoading,
+                    error = scheduledError,
+                    onOpen = onOpenScheduled,
+                    onRetry = onRetryScheduled,
+                    state = sections,
+                    autoCollapseDelayMillis = autoCollapseDelayMillis,
+                )
+            }
             when (load) {
                 is ThreadSummaryLoad.Ready -> EnvironmentSection(load.environment, onOpenReview)
                 ThreadSummaryLoad.Loading -> SummaryMessage("正在读取本机 Git 状态…", "thread-summary-loading")
                 is ThreadSummaryLoad.Unavailable -> SummaryMessage(load.reason, "thread-summary-unavailable")
             }
+            plan?.let { PlanSection(it, sections, autoCollapseDelayMillis) }
+            // Codex renders outputs instead of the Git summary for a conversation without a Git
+            // workspace; the harness only knows that case as an unavailable Git read.
+            if (load is ThreadSummaryLoad.Unavailable) {
+                OutputsSection(outputs, sections, autoCollapseDelayMillis)
+            }
+            if (sideChats.isNotEmpty()) {
+                SideChatsSection(sideChats, onOpenSideChat, sections, autoCollapseDelayMillis)
+            }
             if (subagents.isNotEmpty()) {
-                ActivitySection(ThreadSummarySubagentsTitle, "subagents", subagents, onOpenActivity)
+                ActivitySection(
+                    title = ThreadSummarySubagentsTitle,
+                    slug = "subagents",
+                    items = subagents,
+                    onOpen = onOpenActivity,
+                    state = sections,
+                    autoCollapse = subagents.none { it.running },
+                    autoCollapseDelayMillis = autoCollapseDelayMillis,
+                )
             }
             if (processes.isNotEmpty()) {
                 ActivitySection(
@@ -117,20 +164,23 @@ public fun ThreadSummaryPanel(
                     onOpen = onOpenActivity,
                     stopping = processesStopping,
                     onStop = onStopProcesses,
+                    state = sections,
+                    autoCollapse = processes.none { it.running },
+                    autoCollapseDelayMillis = autoCollapseDelayMillis,
+                    footer = processesNotice?.let { notice ->
+                        {
+                            HarnessText(
+                                notice,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .semantics { testTag = "thread-summary-processes-notice" },
+                                color = HarnessTokens.Colors.TextMuted,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    },
                 )
-                processesNotice?.let {
-                    HarnessText(
-                        it,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            .semantics { testTag = "thread-summary-processes-notice" },
-                        color = HarnessTokens.Colors.TextMuted,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
             }
-            if (scheduledTasks.isNotEmpty() || scheduledLoading || scheduledError) {
-                ScheduledSection(scheduledTasks, scheduledLoading, scheduledError, onOpenScheduled, onRetryScheduled)
-            }
+            SourcesSection(sources, onOpenSource, sections, autoCollapseDelayMillis)
         }
     }
 }
@@ -148,52 +198,207 @@ private fun ScheduledSection(
     error: Boolean,
     onOpen: ((String) -> Unit)?,
     onRetry: (() -> Unit)?,
+    state: ThreadSummarySectionState,
+    autoCollapseDelayMillis: Long,
 ) {
     if (loading && tasks.isEmpty() && !error) {
         SummaryMessage("正在读取定时任务…", "thread-summary-scheduled-loading")
         return
     }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
-            .semantics(mergeDescendants = true) { testTag = "thread-summary-section-scheduled" },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+    ThreadSummarySection(
+        sectionKey = "scheduled",
+        title = ThreadSummaryScheduledTitle,
+        state = state,
+        count = tasks.size,
+        autoCollapseDelayMillis = autoCollapseDelayMillis,
+    ) {
+        tasks.forEach { task ->
+            SummaryRow(
+                title = task.name,
+                leading = {
+                    HarnessIcon(HarnessIconName.Clock, tint = HarnessTokens.Colors.TextMuted, size = 14.dp)
+                },
+                trailing = {
+                    HarnessText(
+                        scheduledSummaryCadence(task),
+                        color = HarnessTokens.Colors.TextMuted,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                },
+                testTag = "thread-summary-scheduled-" + task.id,
+                onClick = onOpen?.let { open -> { open(task.id) } },
+            )
+        }
+        if (error) {
+            SummaryRow(
+                title = ThreadSummaryScheduledRetryLabel,
+                leading = {
+                    HarnessIcon(HarnessIconName.Refresh, tint = HarnessTokens.Colors.TextMuted, size = 14.dp)
+                },
+                testTag = "thread-summary-scheduled-retry",
+                onClick = onRetry,
+            )
+        }
+    }
+}
+
+/** The plan document Codex's `plan-summary-card` renders inside its own summary section. */
+@Composable
+private fun PlanSection(
+    plan: ThreadSummaryPlan,
+    state: ThreadSummarySectionState,
+    autoCollapseDelayMillis: Long,
+) {
+    ThreadSummarySection(
+        sectionKey = "plan",
+        title = ThreadSummaryPlanTitle,
+        state = state,
+        autoCollapseDelayMillis = autoCollapseDelayMillis,
     ) {
         HarnessText(
-            ThreadSummaryScheduledTitle,
-            color = HarnessTokens.Colors.TextMuted,
-            style = MaterialTheme.typography.labelMedium,
+            plan.title,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                .semantics { testTag = "thread-summary-plan-title" },
+            style = MaterialTheme.typography.bodyMedium,
         )
-        Spacer(Modifier.weight(1f))
         HarnessText(
-            tasks.size.toString(),
-            modifier = Modifier.semantics { testTag = "thread-summary-section-scheduled-count" },
+            plan.content,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                .semantics { testTag = "thread-summary-plan-content" },
             color = HarnessTokens.Colors.TextMuted,
             style = MaterialTheme.typography.labelMedium,
+            maxLines = 8,
         )
     }
-    tasks.forEach { task ->
-        SummaryRow(
-            title = task.name,
-            leading = { HarnessIcon(HarnessIconName.Clock, tint = HarnessTokens.Colors.TextMuted, size = 14.dp) },
-            trailing = {
-                HarnessText(
-                    scheduledSummaryCadence(task),
-                    color = HarnessTokens.Colors.TextMuted,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            },
-            testTag = "thread-summary-scheduled-" + task.id,
-            onClick = onOpen?.let { open -> { open(task.id) } },
-        )
+}
+
+/**
+ * Output artifacts. Codex shows this section only for a conversation without a Git summary
+ * (`outputsSection` is rendered when `!isGitWorkspace`), and its list owns the `暂无产物` empty state.
+ */
+@Composable
+private fun OutputsSection(
+    outputs: List<ThreadSummaryOutput>,
+    state: ThreadSummarySectionState,
+    autoCollapseDelayMillis: Long,
+) {
+    ThreadSummarySection(
+        sectionKey = "artifacts",
+        title = ThreadSummaryOutputsTitle,
+        state = state,
+        count = outputs.size,
+        autoCollapseDelayMillis = autoCollapseDelayMillis,
+    ) {
+        if (outputs.isEmpty()) {
+            HarnessText(
+                ThreadSummaryOutputsEmpty,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    .semantics { testTag = "thread-summary-outputs-empty" },
+                color = HarnessTokens.Colors.TextMuted,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        outputs.forEach { output ->
+            SummaryRow(
+                title = output.name,
+                leading = {
+                    HarnessIcon(HarnessIconName.Folder, tint = HarnessTokens.Colors.TextMuted, size = 14.dp)
+                },
+                trailing = output.target?.takeIf { it != output.name }?.let { target ->
+                    {
+                        HarnessText(
+                            target,
+                            color = HarnessTokens.Colors.TextMuted,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                    }
+                },
+                testTag = "thread-summary-output-" + output.id,
+            )
+        }
     }
-    if (error) {
-        SummaryRow(
-            title = ThreadSummaryScheduledRetryLabel,
-            leading = { HarnessIcon(HarnessIconName.Refresh, tint = HarnessTokens.Colors.TextMuted, size = 14.dp) },
-            testTag = "thread-summary-scheduled-retry",
-            onClick = onRetry,
-        )
+}
+
+@Composable
+private fun SideChatsSection(
+    sideChats: List<ThreadSummarySideChat>,
+    onOpen: ((ThreadSummarySideChat) -> Unit)?,
+    state: ThreadSummarySectionState,
+    autoCollapseDelayMillis: Long,
+) {
+    ThreadSummarySection(
+        sectionKey = "side-chats",
+        title = ThreadSummarySideChatsTitle,
+        state = state,
+        count = sideChats.size,
+        autoCollapseDelayMillis = autoCollapseDelayMillis,
+    ) {
+        sideChats.forEach { sideChat ->
+            SummaryRow(
+                title = sideChat.title,
+                leading = {
+                    HarnessIcon(
+                        if (sideChat.inProgress) HarnessIconName.Clock else HarnessIconName.ChatBubble,
+                        tint = HarnessTokens.Colors.TextMuted,
+                        size = 14.dp,
+                    )
+                },
+                testTag = "thread-summary-side-chat-" + sideChat.tabId,
+                onClick = onOpen?.let { open -> { open(sideChat) } },
+            )
+        }
+    }
+}
+
+/**
+ * Tool and web sources. Codex always renders this section and lets the row list own the `暂无来源`
+ * empty state (`thread-summary-source-rows.tsx`).
+ */
+@Composable
+private fun SourcesSection(
+    sources: List<ThreadSummarySource>,
+    onOpen: ((ThreadSummarySource) -> Unit)?,
+    state: ThreadSummarySectionState,
+    autoCollapseDelayMillis: Long,
+) {
+    ThreadSummarySection(
+        sectionKey = "sources",
+        title = ThreadSummarySourcesTitle,
+        state = state,
+        count = sources.size,
+        autoCollapseDelayMillis = autoCollapseDelayMillis,
+        isLast = true,
+    ) {
+        if (sources.isEmpty()) {
+            HarnessText(
+                ThreadSummarySourcesEmpty,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    .semantics { testTag = "thread-summary-sources-empty" },
+                color = HarnessTokens.Colors.TextMuted,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        sources.forEach { source ->
+            SummaryRow(
+                title = source.name,
+                leading = {
+                    HarnessIcon(HarnessIconName.ExternalLink, tint = HarnessTokens.Colors.TextMuted, size = 14.dp)
+                },
+                trailing = source.detail?.let { detail ->
+                    {
+                        HarnessText(
+                            detail,
+                            color = HarnessTokens.Colors.TextMuted,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                    }
+                },
+                testTag = "thread-summary-source-" + source.id,
+                onClick = onOpen?.let { open -> { open(source) } },
+            )
+        }
     }
 }
 
@@ -203,25 +408,24 @@ private fun ActivitySection(
     slug: String,
     items: List<ThreadSummaryActivity>,
     onOpen: (ThreadSummaryActivity) -> Unit,
+    state: ThreadSummarySectionState,
     stopping: Boolean = false,
     onStop: (() -> Unit)? = null,
+    autoCollapse: Boolean = false,
+    autoCollapseDelayMillis: Long = ThreadSummarySectionAutoCollapseDelayMillis,
+    footer: (@Composable () -> Unit)? = null,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
-            .semantics(mergeDescendants = true) { testTag = "thread-summary-section-$slug" },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+    ThreadSummarySection(
+        sectionKey = slug,
+        title = title,
+        state = state,
+        count = items.size,
+        autoCollapse = autoCollapse,
+        autoCollapseDelayMillis = autoCollapseDelayMillis,
     ) {
-        HarnessText(title, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.labelMedium)
-        Spacer(Modifier.weight(1f))
-        HarnessText(
-            items.size.toString(),
-            modifier = Modifier.semantics { testTag = "thread-summary-section-$slug-count" },
-            color = HarnessTokens.Colors.TextMuted,
-            style = MaterialTheme.typography.labelMedium,
-        )
+        items.forEach { item -> ActivityRow(item, onOpen, stopping, onStop) }
+        footer?.invoke()
     }
-    items.forEach { item -> ActivityRow(item, onOpen, stopping, onStop) }
 }
 
 @Composable
@@ -242,13 +446,23 @@ private fun ActivityRow(
                     size = 14.dp,
                 )
             },
-            trailing = item.meta?.let { meta ->
+            trailing = if (item.meta == null && item.diffStats == null) null else {
                 {
-                    HarnessText(
-                        meta,
-                        color = if (item.running) HarnessTokens.Colors.Success else HarnessTokens.Colors.TextMuted,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        item.meta?.let { meta ->
+                            HarnessText(
+                                meta,
+                                color = if (item.running) HarnessTokens.Colors.Success else HarnessTokens.Colors.TextMuted,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                        item.diffStats?.let { stats ->
+                            DiffStatsBadge(stats, "thread-summary-$slug-${item.id}-stats")
+                        }
+                    }
                 }
             },
             testTag = "thread-summary-$slug-${item.id}",
@@ -311,14 +525,22 @@ private fun ChangesRow(stats: GitDiffStats?, loading: Boolean, onOpenReview: (()
 }
 
 @Composable
-private fun DiffStatsBadge(stats: GitDiffStats) {
+private fun DiffStatsBadge(stats: GitDiffStats) =
+    DiffStatsBadge(stats.additions, stats.deletions, "thread-summary-changes-stats")
+
+@Composable
+private fun DiffStatsBadge(stats: ChildDiffStats, tag: String) =
+    DiffStatsBadge(stats.linesAdded, stats.linesRemoved, tag)
+
+@Composable
+private fun DiffStatsBadge(additions: Int, deletions: Int, tag: String) {
     Row(
-        modifier = Modifier.semantics { testTag = "thread-summary-changes-stats" },
+        modifier = Modifier.semantics { testTag = tag },
         horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HarnessText("+" + stats.additions, color = HarnessTokens.Colors.Success, style = MaterialTheme.typography.labelMedium)
-        HarnessText("−" + stats.deletions, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.labelMedium)
+        HarnessText("+" + additions, color = HarnessTokens.Colors.Success, style = MaterialTheme.typography.labelMedium)
+        HarnessText("−" + deletions, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.labelMedium)
     }
 }
 

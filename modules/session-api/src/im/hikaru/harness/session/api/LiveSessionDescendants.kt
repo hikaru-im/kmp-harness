@@ -4,9 +4,12 @@ import im.hikaru.harness.agent.Agent
 import im.hikaru.harness.agent.AgentRegistry
 import im.hikaru.harness.agent.AgentStatus
 import im.hikaru.harness.llm.Message
+import im.hikaru.harness.llm.MessageRole
+import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.session.Session
 import im.hikaru.harness.session.SessionId
 import im.hikaru.harness.session.SessionOrigin
+import kotlinx.coroutines.CancellationException
 
 /** Finite live reads, with identity rechecks after any history suspension. Not a lifecycle service. */
 internal class LiveSessionDescendants(
@@ -22,6 +25,15 @@ internal class LiveSessionDescendants(
         val children = verified.map { (child, proof) ->
             val entry = snapshot.getValue(child)
             val options = entry.agent.options
+            // The final reply only enriches the row; a history read failure must not hide the
+            // child from the overview. Cancellation still propagates.
+            val finalReply = try {
+                lastAssistantReply(readMessages(entry.session))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                null
+            }
             SessionDescendant(
                 child = child,
                 parentSession = checkNotNull(entry.session.header.parentSession),
@@ -34,6 +46,8 @@ internal class LiveSessionDescendants(
                 provider = options.provider,
                 model = options.model,
                 reasoningEffort = options.reasoningEffort?.value,
+                lastAssistantMessage = finalReply?.text,
+                lastAssistantAtEpochMillis = finalReply?.timestampMillis,
             )
         }
         requireCurrent(listOf(root) + verified.flatMap { it.second.entries })
@@ -98,6 +112,17 @@ internal class LiveSessionDescendants(
         }
     }
 
+    /** The newest assistant text: reasoning-only and tool-only turns are not a final reply. */
+    private fun lastAssistantReply(messages: List<Message>): FinalReply? =
+        messages.asReversed().firstNotNullOfOrNull { message ->
+            if (message.role != MessageRole.ASSISTANT) return@firstNotNullOfOrNull null
+            val text = message.content.filterIsInstance<TextBlock>()
+                .joinToString(separator = "\n") { it.text }
+                .trim()
+            if (text.isEmpty()) null else FinalReply(text, message.timestampMillis)
+        }
+
     private data class Entry(val agent: Agent, val session: Session)
     private data class Proof(val path: List<SessionId>, val entries: List<Entry>)
+    private data class FinalReply(val text: String, val timestampMillis: Long?)
 }

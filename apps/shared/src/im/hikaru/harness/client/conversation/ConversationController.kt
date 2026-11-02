@@ -54,6 +54,13 @@ public data class ConversationError(
     val retry: ConversationRetry?,
 )
 
+/** One approval the Host is waiting on, with either an in-flight response or the last failure. */
+public data class PendingApproval(
+    val request: ApprovalRequest,
+    val responding: Boolean = false,
+    val error: String? = null,
+)
+
 public data class ConversationState(
     val host: ConversationHostScope? = null,
     val connected: Boolean = false,
@@ -74,6 +81,8 @@ public data class ConversationState(
     val managingSessionId: SessionId? = null,
     val managementError: String? = null,
     val editing: ConversationEdit? = null,
+    /** Approvals only ever belong to the selected Session; a Host never sends another one's. */
+    val approvals: List<PendingApproval> = emptyList(),
 ) {
     public val canSubmit: Boolean get() = connected && host != null && draft.isNotBlank() &&
         action == ConversationAction.Idle && !cancelling && sessions.firstOrNull { it.id == selectedSessionId }?.archived != true
@@ -103,6 +112,10 @@ public interface ConversationOperations {
         connection.session.cancel(id, keepInbox = keepInbox)
     public suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
         connection.session.fork(parent, beforeMessageId)
+
+    /** Fails today unless the connection exposes the Host's approval respond endpoint. */
+    public suspend fun respondApproval(connection: Connection, id: SessionId, decision: ApprovalDecision): Unit =
+        connection.session.respondApproval(id, decision)
 }
 
 public object RealConversationOperations : ConversationOperations {
@@ -114,6 +127,8 @@ public object RealConversationOperations : ConversationOperations {
     override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) = connection.session.cancel(id, keepInbox = keepInbox)
     override suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
         connection.session.fork(parent, beforeMessageId)
+    override suspend fun respondApproval(connection: Connection, id: SessionId, decision: ApprovalDecision) =
+        connection.session.respondApproval(id, decision)
 }
 
 /** Flows and callbacks belong to the captured connection, never an owner.currentConnection getter. */
@@ -238,6 +253,8 @@ public class ConversationController(
                 .firstOrNull { it.id == id }?.let { if (it.running) ConversationRunState.Running else ConversationRunState.Idle }
                 ?: ConversationRunState.Unknown,
             cancelling = false, lastAcceptedReceipt = null, errors = emptyMap(), editing = null,
+            // An approval addresses one Session's tool call; a different transcript never inherits it.
+            approvals = emptyList(),
         )
         replaceStream()
         if (wasLoadingList) refreshSessions()
@@ -655,6 +672,43 @@ public class ConversationController(
         }
     }
 
+    /**
+     * Sends one decision. The card leaves only after the Host accepts it; a transport failure keeps
+     * the request visible and retryable, and a late answer can never touch another Session.
+     */
+    public fun respondApproval(requestId: String, choice: ApprovalChoice): Job? {
+        val current = state.value
+        val pending = current.approvals.firstOrNull { it.request.id == requestId } ?: return null
+        if (pending.responding || choice !in pending.request.choices) return null
+        val fence = capture() ?: return null
+        val id = fence.selected ?: return null
+        if (pending.request.sessionId != id) return null
+        mutateApproval(requestId) { it.copy(responding = true, error = null) }
+        return work.launch {
+            try {
+                operations.respondApproval(fence.connection, id, ApprovalDecision(requestId, choice))
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Throwable) {
+                if (valid(fence)) mutateApproval(requestId) {
+                    it.copy(responding = false, error = "无法提交审批决定，请重试。")
+                }
+                return@launch
+            }
+            if (!valid(fence)) return@launch
+            val latest = state.value
+            mutableState.value = latest.copy(approvals = latest.approvals.filterNot { it.request.id == requestId })
+        }
+    }
+
+    private inline fun mutateApproval(requestId: String, update: (PendingApproval) -> PendingApproval) {
+        val current = state.value
+        val index = current.approvals.indexOfFirst { it.request.id == requestId }
+        if (index < 0) return
+        val approvals = current.approvals.toMutableList()
+        approvals[index] = update(approvals[index])
+        mutableState.value = current.copy(approvals = approvals)
+    }
+
     public fun cancel(): Job? {
         if (!state.value.canCancel) return null
         val fence = capture() ?: return null
@@ -795,9 +849,34 @@ public class ConversationController(
             LiveSessionEventNames.TURN_END -> {
                 liveFold.reset()
                 publishLive(immediate = true)
+                // A finished turn cannot still be waiting on a decision; never leave a dead card.
+                if (state.value.approvals.isNotEmpty()) mutableState.value = state.value.copy(approvals = emptyList())
                 scheduleReconcile(fence)
             }
+
+            LiveSessionEventNames.APPROVAL_REQUESTED -> {
+                val request = LiveApprovalEventCodec.requested(event) ?: return
+                // The request id belongs to the Session in its payload, not just the stream it arrived on.
+                if (request.sessionId.value != id.value) return
+                acceptApproval(request)
+            }
+
+            LiveSessionEventNames.APPROVAL_RESOLVED -> {
+                val requestId = LiveApprovalEventCodec.resolved(event) ?: return
+                val current = state.value
+                if (current.approvals.none { it.request.id == requestId }) return
+                mutableState.value = current.copy(approvals = current.approvals.filterNot { it.request.id == requestId })
+            }
         }
+    }
+
+    /** Adds a newly requested approval; a repeated request id replaces the stale copy in place. */
+    private fun acceptApproval(request: ApprovalRequest) {
+        val current = state.value
+        val index = current.approvals.indexOfFirst { it.request.id == request.id }
+        val approvals = current.approvals.toMutableList()
+        if (index >= 0) approvals[index] = PendingApproval(request) else approvals += PendingApproval(request)
+        mutableState.value = current.copy(approvals = approvals)
     }
 
     /** Appends a durable Session message; IDs make the Host snapshot and the stream converge. */
@@ -856,6 +935,9 @@ public class ConversationController(
         livePublishJob?.cancel()
         livePublishJob = null
         mutableLive.value = LiveTranscript(state.value.selectedSessionId)
+        // A replaced or gapped stream can no longer vouch for what the Host is waiting on. Dropping
+        // the card is the deny-on-disconnect rule: nothing may run from an unobservable request.
+        if (state.value.approvals.isNotEmpty()) mutableState.value = state.value.copy(approvals = emptyList())
     }
 
     private fun start(register: (Job) -> Unit, block: suspend () -> Unit): Job {

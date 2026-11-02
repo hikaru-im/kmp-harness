@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import im.hikaru.harness.client.conversation.ConversationDataPhase
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.client.conversation.LiveTranscript
+import im.hikaru.harness.client.connection.ApprovalChoice
 import im.hikaru.harness.client.connection.Message
 import im.hikaru.harness.ui.foundation.*
 import kotlinx.coroutines.flow.StateFlow
@@ -185,9 +186,11 @@ public fun LiveThreadPane(
     live: StateFlow<LiveTranscript>,
     onRetry: () -> Unit,
     onEditMessage: ((Message) -> Unit)? = null,
+    onApprovalChoice: (requestId: String, choice: ApprovalChoice) -> Unit = { _, _ -> },
+    onOpenInGit: ((path: String) -> Unit)? = null,
 ) {
     val transcript by live.collectAsState()
-    LiveThreadSurface(state, transcript, onRetry, onEditMessage)
+    LiveThreadSurface(state, transcript, onRetry, onEditMessage, onApprovalChoice, onOpenInGit)
 }
 
 /** Timeline only. The app owns the selected route, controller and separate shared composer. */
@@ -197,6 +200,8 @@ public fun LiveThreadSurface(
     live: LiveTranscript = LiveTranscript(),
     onRetry: () -> Unit,
     onEditMessage: ((Message) -> Unit)? = null,
+    onApprovalChoice: (requestId: String, choice: ApprovalChoice) -> Unit = { _, _ -> },
+    onOpenInGit: ((path: String) -> Unit)? = null,
 ) {
     val liveMessages = live.messages.takeIf { it.isNotEmpty() }?.takeIf { live.sessionId == state.selectedSessionId }.orEmpty()
     Column(Modifier.fillMaxSize().padding(HarnessTokens.Spacing.Four).semantics { testTag = "live-thread" },
@@ -218,7 +223,8 @@ public fun LiveThreadSurface(
         if (state.history.isNotEmpty() || liveMessages.isNotEmpty()) {
             key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {
                 ConversationViewport(state.history, Modifier.weight(1f).semantics { testTag = "live-thread-timeline" },
-                    live = liveMessages, onEditMessage = onEditMessage?.takeIf { state.canEdit })
+                    live = liveMessages, onEditMessage = onEditMessage?.takeIf { state.canEdit },
+                    onOpenInGit = onOpenInGit)
             }
         } else {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -229,6 +235,9 @@ public fun LiveThreadSurface(
                 }
             }
         }
+        // Codex pins the pending-request panel directly above the composer; here the composer is a
+        // separate surface, so the panel closes the thread column instead.
+        ApprovalPanel(state.approvals, state.connected, onApprovalChoice)
     }
 }
 

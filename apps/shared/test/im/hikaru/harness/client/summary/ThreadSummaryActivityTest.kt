@@ -8,6 +8,7 @@ import im.hikaru.harness.client.panels.BackgroundTerminalSummary
 import im.hikaru.harness.client.panels.ChildAgentKey
 import im.hikaru.harness.client.panels.ChildAgentStatus
 import im.hikaru.harness.client.panels.ChildAgentSummary
+import im.hikaru.harness.client.panels.ChildDiffStats
 import im.hikaru.harness.client.panels.ChildHistoryAvailability
 import im.hikaru.harness.client.panels.PanelLoad
 import im.hikaru.harness.client.panels.PanelUnavailableReason
@@ -30,7 +31,7 @@ class ThreadSummaryActivityTest {
     @Test
     fun runningChildrenLeadThenRecencyAndCarryTheOriginalLabels() {
         val done = child("done", ChildAgentStatus.Done, recency = 900) // recent but finished
-        val active = child("active", ChildAgentStatus.Active, recency = 100)
+        val active = child("active", ChildAgentStatus.Active, recency = 100, diffStats = ChildDiffStats(5, 1))
         val waiting = child("waiting", ChildAgentStatus.Waiting, recency = 200)
         val unknown = child("unknown", ChildAgentStatus.Unknown, recency = 950)
         val rows = threadSummarySubagents(PanelLoad.Ready(scope, SubagentOverview(scope, listOf(done, active, waiting, unknown))))
@@ -42,6 +43,8 @@ class ThreadSummaryActivityTest {
         assertNull(rows[3].meta)
         assertTrue(rows[0].running && rows[1].running)
         assertFalse(rows[2].running || rows[3].running)
+        assertEquals(ChildDiffStats(5, 1), rows[1].diffStats)
+        assertNull(rows[0].diffStats)
     }
 
     @Test
@@ -81,6 +84,7 @@ class ThreadSummaryActivityTest {
         status: ChildAgentStatus,
         recency: Long? = null,
         displayName: String? = null,
+        diffStats: ChildDiffStats? = null,
     ): ChildAgentSummary = ChildAgentSummary(
         key = ChildAgentKey(scope, SessionId(id)),
         verifiedAncestorPath = listOf(scope.conversationId, SessionId(id)),
@@ -89,6 +93,7 @@ class ThreadSummaryActivityTest {
         historyAvailability = ChildHistoryAvailability.Available,
         displayName = displayName,
         recencyAtEpochMillis = recency,
+        diffStats = diffStats,
     )
 
     private fun terminal(id: String, command: String?, lifecycle: BackgroundProcessLifecycle): BackgroundTerminalSummary =

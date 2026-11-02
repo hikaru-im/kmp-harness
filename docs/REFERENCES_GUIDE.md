@@ -8,6 +8,9 @@
 | --- | --- | --- |
 | `references/deepseek-harness` | `https://github.com/deepseek-ai/deepseek-harness.git` | `master` |
 | `references/cordis` | `https://github.com/cordiverse/cordis.git` | `main` |
+| `references/decode-codex` | `https://github.com/JimLiu/decode-codex.git` | `main` |
+
+`references/decode-codex` 是 OpenAI Codex 桌面版 bundle 的反混淆参考副本，包含 `ref/`（原始 asar 解包）和 `restored/`（还原后的 TS/TSX）。它没有 LICENSE，仅用于阅读其 skill 组织方式和 Codex 客户端实现结构，不要复制或再分发其中的还原代码。仓库体积较大，建议用 `--depth 1` 浅克隆。
 
 ## 更新参考仓库
 
@@ -39,6 +42,7 @@
 mkdir -p references
 git clone https://github.com/deepseek-ai/deepseek-harness.git references/deepseek-harness
 git clone https://github.com/cordiverse/cordis.git references/cordis
+git clone --depth 1 https://github.com/JimLiu/decode-codex.git references/decode-codex
 ```
 
 如果只需要其中一个参考项目，只克隆对应目录即可。删除本地参考仓库不会影响主仓库；之后重新执行上面的 `git clone` 就能恢复。
