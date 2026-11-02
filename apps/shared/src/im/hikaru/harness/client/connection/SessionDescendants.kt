@@ -11,6 +11,15 @@ public enum class DescendantCoverage { LIVE_REGISTRY }
 @Serializable
 public enum class DescendantStatus { RUNNING, UNKNOWN }
 
+/** Real line counts for a child's changes; absent when the Host has no turn diff to report. */
+@Serializable
+public data class SessionDiffStats(val linesAdded: Int, val linesRemoved: Int) {
+    init {
+        require(linesAdded >= 0 && linesRemoved >= 0)
+        require(linesAdded + linesRemoved > 0)
+    }
+}
+
 @Serializable
 public data class SessionDescendant(
     val child: SessionId,
@@ -22,6 +31,9 @@ public data class SessionDescendant(
     val model: String? = null,
     val reasoningEffort: String? = null,
     val objective: String? = null,
+    val lastAssistantMessage: String? = null,
+    val lastAssistantAtEpochMillis: Long? = null,
+    val diffStats: SessionDiffStats? = null,
 ) {
     init {
         require(verifiedAncestorPath.size >= 2)
@@ -29,6 +41,8 @@ public data class SessionDescendant(
         require(verifiedAncestorPath[verifiedAncestorPath.lastIndex - 1] == parentSession)
         require(verifiedAncestorPath.distinct().size == verifiedAncestorPath.size)
         require(startedAtEpochMillis == null || startedAtEpochMillis >= 0)
+        require(lastAssistantMessage == null || lastAssistantMessage.isNotBlank())
+        require(lastAssistantAtEpochMillis == null || lastAssistantAtEpochMillis >= 0)
     }
 }
 

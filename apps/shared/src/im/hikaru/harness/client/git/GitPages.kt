@@ -99,7 +99,8 @@ public fun SettingsGitPage(
                         onToggleLoadFullFiles = { controller.selectDiff(state.diffRequest.copy(loadFullFiles = it)) },
                         onRefresh = controller::refresh,
                         refreshDisabled = !state.pageCanRead,
-                        copyGitApplyCommandDisabled = !state.pageCanRead)
+                        copyGitApplyCommandDisabled = !state.pageCanRead,
+                        contextExpansionAllowed = state.diffRequest.source != GitDiffSource.Index)
                 } else {
                     ReadResult(state.diff, "尚未读取 Diff。") { diff ->
                         if (diff.patch.isEmpty()) HarnessText("所选比较没有差异。", Modifier.testTag("git-diff-empty"))
@@ -110,7 +111,8 @@ public fun SettingsGitPage(
                             onToggleLoadFullFiles = { controller.selectDiff(state.diffRequest.copy(loadFullFiles = it)) },
                             onRefresh = controller::refresh,
                             refreshDisabled = !state.pageCanRead,
-                            copyGitApplyCommandDisabled = !state.pageCanRead)
+                            copyGitApplyCommandDisabled = !state.pageCanRead,
+                            contextExpansionAllowed = state.diffRequest.source != GitDiffSource.Index)
                     }
                 }
             }

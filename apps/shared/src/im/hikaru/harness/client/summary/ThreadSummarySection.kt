@@ -74,6 +74,15 @@ public class ThreadSummarySectionState(
     /** The explicit expansion choice for [sectionKey], or null when the caller's default applies. */
     public fun persistedExpanded(sectionKey: String): Boolean? = expandedValues[sectionKey]
 
+    /** Applies a durable document once it loads. Restoring never re-persists the same values. */
+    public fun restore(expanded: Map<String, Boolean>) {
+        expandedValues.clear()
+        expandedValues.putAll(expanded)
+    }
+
+    /** Snapshot for a durable store; auto-collapse state is intentionally excluded. */
+    public fun snapshot(): Map<String, Boolean> = expandedValues.toMap()
+
     public fun isExpanded(sectionKey: String, defaultCollapsed: Boolean = false): Boolean =
         persistedExpanded(sectionKey) ?: !defaultCollapsed
 

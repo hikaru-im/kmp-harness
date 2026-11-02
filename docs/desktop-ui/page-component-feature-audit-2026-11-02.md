@@ -300,11 +300,11 @@
 | 仓库/分支控制 | `GitPages.kt` `RepositoryControls`、`BranchCheckoutForm` | `git/git-branch-switcher.tsx`、`review/review-source-controls.tsx`、`review-header.tsx` | ◐ | 选择仓库/worktree、刷新、切换分支有；无分支搜索列表、无 source control 面板 |
 | 工作区状态 | `GitPages.kt` 状态卡（暂存/未暂存/未跟踪、变更列表） | `review/changed-files-panel.tsx`、`review/review-file-tree.tsx` | ◐ | 有计数与变更行；无文件树、无按目录分组 |
 | Diff 工具栏 | `GitPageComponents.kt` `GitDiffView`、`GitDiffLayoutSelector`、`GitDiffRichPreviewToggle`、`GitDiffOptionsMenu` | `review/review-options-toolbar.tsx`、`review-options-menu-compact.tsx` | ✅ | 布局、富预览、换行、展开全部、隐藏空白、加载完整文件、词级 diff、隐藏 imports、复制 apply、刷新 |
-| 文件卡头 | `GitPageComponents.kt` `GitDiffFileCard` | `review/review-diff-card.tsx` | ✅ | 路径、状态、+/−、展开/收起；无面包屑、文件间跳转、打开文件 tab |
-| Diff 正文 | `GitDiffLayout.kt`、`GitDiffLines.kt`、`GitWordDiff.kt` | `review/file-diff.tsx`、`file-change-gutter.ts`、`diff-column-line-number.ts` | ◐ | unified/split/Auto、词级 diff、gutter 都有；无 blame gutter、上下文展开、选区摘要 |
+| 文件卡头 | `GitPageComponents.kt` `GitDiffFileCard` | `review/review-diff-card.tsx` | ✅ | 路径、状态、+/−、展开/收起；R4 起吸顶并显示命中数；无面包屑、文件间跳转、打开文件 tab |
+| Diff 正文 | `GitDiffLayout.kt`、`GitDiffLines.kt`、`GitWordDiff.kt`、`GitDiffReading.kt` | `review/file-diff.tsx`、`file-change-gutter.ts`、`diff-column-line-number.ts` | ◐ | unified/split/Auto、词级 diff、gutter、R4 上下文展开都有；无 blame gutter、选区摘要 |
 | 富预览 | `GitPageComponents.kt` `GitBinaryPreview`、`GitPreviewDecoding.kt` | `review/file-source-rich-preview.tsx`、`file-source-side-panel.tsx` | ✅ | image/SVG（JVM/iOS）、PDF（仅 JVM）；未知与删除回落 diff |
-| 大 diff 横幅 | 无 | `review/large-diff-banner.tsx` | ○ | 没有单文件模式切换 |
-| Diff 搜索 | 无 | `review/diff-search-adapter.ts`、`diff-search-controller-runtime.ts`、`diff-find-highlight.ts` | ○ | 无查找栏与命中高亮 |
+| 大 diff 横幅 | `GitPageComponents.kt` `GitDiffLargeBannerCopy`、`GitDiffReading.kt` `gitDiffOpensByDefault` | `review/large-diff-banner.tsx`、`review/editor-diff-page.tsx` | ✅ | R4：restored 的 25 文件 / 2000 变更行阈值（含边界）；超限显示横幅并每次只展开一个文件 |
+| Diff 搜索 | `GitPageComponents.kt` `GitDiffSearchBar`、`GitDiffReading.kt` `findGitDiffMatches` | `review/diff-search-adapter.ts`、`diff-search-controller-runtime.ts`、`diff-find-highlight.ts` | ✅ | R4：不区分大小写字面搜索、命中计数、上下跳转、自动展开命中文件并滚动到行、正文高亮；500 条上限 |
 | 行内评论 / apply / revert | 无 | `review/review-comment-utils.ts`、`patch-action-runner.ts`、`apply-review-patch.ts`、`revert-confirm-dialog.tsx` | ○ | 只能复制 apply 命令，不能在 UI 内执行 |
 | 提交表单 | `GitPages.kt` `CommitForm`、`CommitOutcome` | `review/commit-command-menu.tsx`、`git-action-*` | ◐ | 仅 index-only 提交；无 amend、push、PR、hooks、签名（`GitModels.kt` 注释明确） |
 | Pull request 页 | 无 | `review/pull-requests-page-current.tsx`、`derive-pull-request-status.ts` | ○ | 无 PR 列表/详情/创建 |
@@ -321,8 +321,8 @@
 | 复制 apply 命令 | `GitDiffApply.kt` `gitApplyCommand`、`GitDiffOptionsMenu` | `apply-review-patch.ts` | ✅ | 只复制命令，不执行 |
 | 工具栏状态持久化 | `GitPageComponents.kt` 内全部 `remember` | `review/review-persistent-settings.ts` | ○ | 布局/富预览/换行/词级/隐藏 imports 重启后重置 |
 | 词级 diff / 隐藏空白 / 隐藏 imports / 加载完整文件 | `GitWordDiff.kt`、`GitDiffImports.kt`、`GitDiffView` 参数 | `review/review-options-toolbar.tsx` | ✅ | 均有定向测试 |
-| 大 diff 单文件模式 | 无 | `large-diff-banner.tsx`、`review-diff-metrics.ts` | ○ | 无阈值与单文件切换 |
-| Diff 内搜索/跳转 | 无 | `diff-search-*`、`review-search-controller.tsx`、`review-file-navigation.ts` | ○ | 无 |
+| 大 diff 单文件模式 | `GitDiffReading.kt` `gitDiffOpensByDefault`；`GitDiffView` `largeDiff` | `large-diff-banner.tsx`、`review-diff-metrics.ts` | ✅ | R4：25/2000 阈值，超限横幅与单文件模式；阈值可注入 |
+| Diff 内搜索/跳转 | `GitDiffReading.kt` `findGitDiffMatches`；`GitDiffSearchBar` | `diff-search-*`、`review-search-controller.tsx`、`review-file-navigation.ts` | ✅ | R4：查找栏、命中计数、上/下一个、命中文件自动展开并逐行定位 |
 | 行内评论/应用补丁/还原 | 无 | `review-comment-utils.ts`、`patch-action-runner.ts`、`revert-confirm-dialog.tsx` | ○ | 无 |
 | Push / Pull / PR / 合并 | 无 | `git-workflow-push-runner.ts`、`git-workflow-pull-request-runner.ts`、`git-pull-request-mutation.ts` | ○ | `GitModels.kt` 明确本期只做 index-only |
 
@@ -342,13 +342,13 @@
 | 从 hotkey window 初始化 worktree | 无 | `worktree/hotkey-window-worktree-init-page.tsx` | ○ | 无 hotkey window |
 | 新建会话时的 worktree 选择 | `ManagedWorktreeController` 关联会话 | `worktree/pending-worktree-conversation-ui.tsx` | ◐ | 有托管与关联；无 pending worktree 的会话 UI |
 
-**Git 结论**：diff 阅读的工具栏、布局、词级 diff、富预览、apply 命令复制，以及 Worktrees 的托管/保护/归档恢复已对齐。缺口按影响：① 无 diff 搜索、大 diff 单文件模式、行内评论/应用补丁/还原；② 无 push/pull/PR 工作流与 PR 页；③ 工具栏状态不持久化；④ 无文件树/变更面板与文件间跳转。
+**Git 结论**：diff 阅读的工具栏、布局、词级 diff、富预览、apply 命令复制、R4 的吸顶文件头/上下文展开/大 diff 单文件模式/搜索跳转，以及 Worktrees 的托管/保护/归档恢复已对齐。缺口按影响：① 无行内评论/应用补丁/还原与 blame gutter；② 无 push/pull/PR 工作流与 PR 页；③ 工具栏状态不持久化（G1b）；④ 无文件树/变更面板与文件间跳转。
 
 ## 四、跨页面能力
 
 | 能力 | Kotlin 证据 | restored 证据 | 状态 | 说明 |
 | --- | --- | --- | --- | --- |
-| 页内查找 | 无落点（`rg "FindBar\|查找\|FindInPage"` 只命中快捷键保留说明） | `find/`（23 个文件） | ○ | 对话与 diff 都没有查找栏；快捷键模型把查找组合键列为保留 |
+| 页内查找 | diff：`GitDiffSearchBar`；对话页仍无落点 | `find/`（23 个文件） | ◐ | R4 已有 diff 内查找；对话页无查找栏；快捷键模型仍把查找组合键列为保留 |
 | 全局快捷键窗口 | 无落点 | `hotkey-window/`（4 个文件） | ○ | 只有应用内快捷键（`client/settings/Shortcuts.kt`） |
 | 快捷聊天 | 无落点 | `quick-chat/` | ○ | 未提供任何入口 |
 | 系统通知 | 无落点（`rg "NotificationService\|系统通知"` 无命中） | `notifications/` | ○ | 定时任务完成/失败不会发系统通知 |
@@ -364,15 +364,15 @@
 
 | # | 缺口 | 页面 | 对应任务 |
 | --- | --- | --- | --- |
-| 1 | 审批交互完全缺失：只能选权限档位，没有逐命令审批卡/事件 | 对话页 | 未列入 R1–R9，建议单独立项 |
-| 2 | 会话内 diff 卡缺失：对话里看不到文件改动 | 对话页 | 未列入，建议并入审批/Review 任务 |
-| 3 | 布局状态全部不持久化：navigator 宽度/模式、pinned rail、tab 布局、diff 工具栏、滚动位置 | 外壳 / Git | 未列入，建议单独立项（存储已有基础设施） |
+| 1 | 审批交互完全缺失：只能选权限档位，没有逐命令审批卡/事件 | 对话页 | G2 / Kaneo #17 |
+| 2 | 会话内 diff 卡缺失：对话里看不到文件改动 | 对话页 | G3 / Kaneo #42 |
+| 3 | 布局状态全部不持久化：navigator 宽度/模式、pinned rail、tab 布局、diff 工具栏、滚动位置 | 外壳 / Git | G1 / Kaneo #41 |
 
 ### P1 — 主路径能用，但能力明显不完整
 
 | # | 缺口 | 页面 | 对应任务 |
 | --- | --- | --- | --- |
-| 4 | Diff 无搜索、无大 diff 单文件模式、无上下文展开、无 blame | Git | R4 |
+| 4 | ~~Diff 无搜索、无大 diff 单文件模式、无上下文展开~~；仍无 blame | Git | R4（搜索/横幅/上下文已完成，blame 移出） |
 | 5 | 无行内评论 / 应用补丁 / 还原 | Git | R5 |
 | 6 | 设置 General 13 行禁用；缺 15+ 子页（Agent/Usage/MCP/Hooks/Cloud/Environments 等） | 设置 | 部分归 R6/R7，其余未列入 |
 | 7 | Connections 无 SSH/WSL、登录/登出、设备授权、重启连接 | 设置 | 未列入 |
@@ -400,6 +400,8 @@
 3. **新立项：审批交互 + 会话内 diff 卡**：这是对话页与 Codex 差距最大的一处，且 R5 的行内评论依赖 diff 渲染。
 4. **R6 / R7（MCP、hooks/scripts）**：插件页从“只读清单”走向可用。
 5. **R8 / R9**：终端与像素对照作为收口。
+
+逐项拆分、依赖、验收与 Kaneo 映射见 [缺口逐项实施计划](gap-implementation-plan-2026-11-02.md)。
 
 ### 核对边界
 

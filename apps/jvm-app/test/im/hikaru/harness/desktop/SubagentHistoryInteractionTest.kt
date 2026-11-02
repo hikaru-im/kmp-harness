@@ -263,14 +263,28 @@ class SubagentHistoryInteractionTest {
         assertNull(detail.typedMessages)
         onNodeWithText("Legacy raw content without invented typed source", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithText("工具", useUnmergedTree = true).assertExists()
+        onNodeWithTag("subagent-detail-final-reply", true).assertExists()
+        onNodeWithText("最终回复不可用").assertIsDisplayed()
         onAllNodes(SemanticsMatcher("Typed cards") {
             it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("message:") == true
         }, true).assertCountEquals(0)
         runOnIdle { state = state.copy(detail = PanelLoad.Ready(scope, detail.copy(entries = emptyList(), typedMessages = emptyList()))) }
         settle()
         onNodeWithText("没有消息").assertIsDisplayed()
+        onNodeWithText("尚无最终回复").assertIsDisplayed()
         onNodeWithText("Legacy raw content without invented typed source", useUnmergedTree = true).assertDoesNotExist()
         onNodeWithText("FORBIDDEN COMPOSER").assertDoesNotExist()
+        runOnIdle {
+            state = state.copy(detail = PanelLoad.Ready(scope, detail.copy(
+                entries = listOf(ChildTranscriptEntry("final", ChildTranscriptRole.Assistant, "FINAL-REPLY")),
+                typedMessages = listOf(Message(
+                    "final", MessageRole.ASSISTANT, listOf(TextContent("FINAL-REPLY")),
+                    ModelMessageSource("provider", "model"),
+                )),
+            )))
+        }
+        settle()
+        onNodeWithTag("subagent-detail-final-reply-text", true).assertTextEquals("FINAL-REPLY")
         onAllNodes(SemanticsMatcher("No editable history") { it.config.contains(SemanticsActions.SetText) }, true).assertCountEquals(0)
         runOnIdle { assertNull(state.interactiveDetail) }
     }

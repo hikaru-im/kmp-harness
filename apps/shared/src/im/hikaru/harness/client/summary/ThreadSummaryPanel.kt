@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import im.hikaru.harness.client.git.GitDiffStats
+import im.hikaru.harness.client.panels.ChildDiffStats
 import im.hikaru.harness.client.scheduling.ScheduledTask
 import im.hikaru.harness.client.scheduling.scheduledSummaryCadence
 import im.hikaru.harness.ui.foundation.HarnessIcon
@@ -445,13 +446,23 @@ private fun ActivityRow(
                     size = 14.dp,
                 )
             },
-            trailing = item.meta?.let { meta ->
+            trailing = if (item.meta == null && item.diffStats == null) null else {
                 {
-                    HarnessText(
-                        meta,
-                        color = if (item.running) HarnessTokens.Colors.Success else HarnessTokens.Colors.TextMuted,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        item.meta?.let { meta ->
+                            HarnessText(
+                                meta,
+                                color = if (item.running) HarnessTokens.Colors.Success else HarnessTokens.Colors.TextMuted,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                        item.diffStats?.let { stats ->
+                            DiffStatsBadge(stats, "thread-summary-$slug-${item.id}-stats")
+                        }
+                    }
                 }
             },
             testTag = "thread-summary-$slug-${item.id}",
@@ -514,14 +525,22 @@ private fun ChangesRow(stats: GitDiffStats?, loading: Boolean, onOpenReview: (()
 }
 
 @Composable
-private fun DiffStatsBadge(stats: GitDiffStats) {
+private fun DiffStatsBadge(stats: GitDiffStats) =
+    DiffStatsBadge(stats.additions, stats.deletions, "thread-summary-changes-stats")
+
+@Composable
+private fun DiffStatsBadge(stats: ChildDiffStats, tag: String) =
+    DiffStatsBadge(stats.linesAdded, stats.linesRemoved, tag)
+
+@Composable
+private fun DiffStatsBadge(additions: Int, deletions: Int, tag: String) {
     Row(
-        modifier = Modifier.semantics { testTag = "thread-summary-changes-stats" },
+        modifier = Modifier.semantics { testTag = tag },
         horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HarnessText("+" + stats.additions, color = HarnessTokens.Colors.Success, style = MaterialTheme.typography.labelMedium)
-        HarnessText("−" + stats.deletions, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.labelMedium)
+        HarnessText("+" + additions, color = HarnessTokens.Colors.Success, style = MaterialTheme.typography.labelMedium)
+        HarnessText("−" + deletions, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.labelMedium)
     }
 }
 

@@ -102,6 +102,7 @@ import im.hikaru.harness.client.git.ManagedWorktreeChatArchiveReceipt
 import im.hikaru.harness.client.git.SettingsGitPage
 import im.hikaru.harness.client.git.WorktreesPage
 import im.hikaru.harness.client.summary.ThreadSummaryPanel
+import im.hikaru.harness.client.summary.ThreadSummarySectionExpandedStatePrefix
 import im.hikaru.harness.client.summary.ThreadSummarySectionState
 import im.hikaru.harness.client.summary.ThreadSummaryActivity
 import im.hikaru.harness.client.summary.ThreadSummaryActivityController
@@ -114,6 +115,7 @@ import im.hikaru.harness.ui.slot.UiSnapshot
 import im.hikaru.harness.ui.slot.UiSnapshotProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import im.hikaru.contracts.harness.relay.RelayEvent
@@ -140,6 +142,8 @@ import im.hikaru.harness.client.shell.AccountMenuState
 import im.hikaru.harness.client.shell.ConnectionIndicatorState
 import im.hikaru.harness.client.shell.SidebarState
 import im.hikaru.harness.client.shell.SidebarMode
+import im.hikaru.harness.client.shell.ShellLayoutRepository
+import im.hikaru.harness.client.shell.ShellLayoutSettings
 import im.hikaru.harness.client.page.SettingsGeneralPage
 import im.hikaru.harness.client.page.SettingsAppearancePage
 import im.hikaru.harness.client.page.SettingsModelsPage
@@ -265,6 +269,7 @@ public fun HarnessApp(
     modelSettingsRepository: ModelSettingsRepository? = null,
     generalSettingsRepository: GeneralSettingsRepository? = null,
     worktreeSettingsRepository: WorktreeSettingsRepository? = null,
+    shellLayoutRepository: ShellLayoutRepository? = null,
     shortcutsRepository: ShortcutsRepository? = null,
     installedPluginRepository: InstalledPluginRepository = UnavailablePluginRepository,
     remoteStatus: RemoteConnectionStatus? = null,
@@ -337,12 +342,56 @@ public fun HarnessApp(
     // The thread summary island is separate from the tabbed context panel; it survives tab changes
     // but is only drawn on a Thread page.
     var summaryPanelOpen by remember { mutableStateOf(false) }
-    // Section expansion survives closing the island. A durable store is not wired yet; the panel
-    // state takes a persist callback when one exists.
-    val summarySectionState = remember { ThreadSummarySectionState() }
+    // Section expansion survives closing the island and restarts; store the raw section key, because
+    // ThreadSummarySectionState looks up by key while the persist callback receives the prefixed one.
+    var summaryExpandedSections by remember { mutableStateOf(emptyMap<String, Boolean>()) }
+    val summarySectionState = remember {
+        ThreadSummarySectionState(
+            persist = { preferenceKey, expanded ->
+                val sectionKey = preferenceKey.removePrefix(ThreadSummarySectionExpandedStatePrefix)
+                summaryExpandedSections = summaryExpandedSections + (sectionKey to expanded)
+            },
+        )
+    }
     // The Workspace Navigator is user-resizable; the drag writes this preference and the shell
     // clamps it (navigatorResizeWidth) before laying out (navigatorWidth).
     var navigatorWidth by remember { mutableStateOf(NavigatorPreferredWidth) }
+    val shellLayout = shellLayoutRepository ?: remember { ShellLayoutRepository() }
+    val shellLayoutState by shellLayout.state.collectAsState()
+    // main.kt loads the durable document before the first frame; tests may hand in a preloaded one.
+    LaunchedEffect(shellLayout) { if (!shellLayout.state.value.loaded) shellLayout.load() }
+    var layoutRestored by remember { mutableStateOf(false) }
+    LaunchedEffect(shellLayoutState.loaded) {
+        if (shellLayoutState.loaded && !layoutRestored) {
+            val saved = shellLayoutState.settings
+            navigatorMode = saved.navigatorMode
+            navigatorWidth = saved.navigatorWidth.dp
+            pinnedRailDestinations = saved.pinnedRailDestinations
+            summaryExpandedSections = saved.summaryExpandedSections
+            summarySectionState.restore(saved.summaryExpandedSections)
+            layoutRestored = true
+        }
+    }
+    // A drag updates navigatorWidth on every pointer move; this effect restarts until the user
+    // stops, so the document is written once per settled change instead of once per frame.
+    LaunchedEffect(
+        layoutRestored,
+        navigatorMode,
+        navigatorWidth,
+        pinnedRailDestinations,
+        summaryExpandedSections,
+    ) {
+        if (!layoutRestored) return@LaunchedEffect
+        delay(350)
+        shellLayout.save(
+            ShellLayoutSettings(
+                navigatorMode = navigatorMode,
+                navigatorWidth = navigatorWidth.value,
+                pinnedRailDestinations = pinnedRailDestinations,
+                summaryExpandedSections = summaryExpandedSections,
+            ),
+        )
+    }
     var pendingPage by remember { mutableStateOf<PageId?>(null) }
     val descriptionRepository = remember(connection) { connection?.let(::ConnectionDescriptionRepository) }
     // A new connection must start with its own unverified description, never the prior collector value.

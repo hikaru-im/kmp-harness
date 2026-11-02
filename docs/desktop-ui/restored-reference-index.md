@@ -32,10 +32,10 @@
 | # | 区域 | restored | Kotlin | 状态 | 主要缺口 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 会话时间线 | `conversations/`（478） | `client/conversation/`、`client/app/` | ◐ | 搜索、fork UI、resume 错误恢复、虚拟化列表、分隔线、patch 失败对话框 |
-| 2 | 摘要面板 | `conversations/local-conversation-thread-parts/thread-summary-*` | `client/summary/` | ◐ | R1 已补小节顺序、autoCollapse 与三种 mode；展开状态落盘待设置存储接入，plan/artifacts/side-chat 数据源尚缺 |
-| 3 | 子 Agent / 后台任务 | `conversations/background-*`、`subagent-activity-*` | `client/panels/ThreadPanels*` | ◐ | 最终回复节、diffStats 徽标、autoCollapse |
+| 2 | 摘要面板 | `conversations/local-conversation-thread-parts/thread-summary-*` | `client/summary/` | ◐ | R1 已补小节顺序、autoCollapse 与三种 mode；G1 已接线展开状态落盘，plan/artifacts/side-chat 数据源尚缺 |
+| 3 | 子 Agent / 后台任务 | `conversations/background-*`、`subagent-activity-*` | `client/panels/ThreadPanels*` | ◐ | R2 已补最终回复节、diffStats 徽标与 autoCollapse；diffStats 仍无 Host turn-diff 生产方 |
 | 4 | Composer | `composer/`（205） | `client/app/ConversationComposer*` | ◐ | 附件、@mention、slash/命令键位、文件上下文监听 |
-| 5 | Git / Diff / Review | `review/`（146）、`git/`（17）、`worktree/`（12） | `client/git/` | ◐ | R3 已补 image/SVG/PDF 预览；余 sticky、上下文展开、diff 搜索、行内评论、大 diff 横幅、blame |
+| 5 | Git / Diff / Review | `review/`（146）、`git/`（17）、`worktree/`（12） | `client/git/` | ◐ | R3 已补 image/SVG/PDF 预览；R4 已补 sticky、上下文展开、diff 搜索、大 diff 横幅；余行内评论、apply/revert、blame |
 | 6 | 插件 / MCP / Skills | `plugins/`（111） | `client/plugins/`、`modules/bundle/desktop/` | ◐ | MCP 真实连接/授权、MCP App 宿主、hooks 写入/启停、scripts 生命周期、目录型 apps |
 | 7 | 定时任务 | `automations/`（37）、`automation/`（30） | `client/scheduled/`、`client/scheduling/` | ◐ | 触发条件（triggers）；应用退出后执行明确不做 |
 | 8 | 终端 | `terminal/`（16） | `client/panels/PtyTerminal*`、`TerminalTextInputBridge` | ◐ | 链接处理、原生窗口组合、远端链路 |
@@ -142,9 +142,9 @@
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
 | typed 历史复用 MessageCard | ✅ | 计划记录 R1 59/59 |
-| 最终回复节 | ○ | restored `background-summary.ts`、`subagent-activity-*` |
-| diffStats 徽标 | ○ | 同上 |
-| autoCollapse | ○ | 与 R1 共用原语 |
+| 最终回复节 | ✅ | 详情节按 `subagents.panel.response`；Host 从子会话 typed 消息读取最新 assistant 文本，无数据时显式 unavailable；R2 验证 |
+| diffStats 徽标 | ◐ | 摘要面板行徽标与协议字段已就绪，数字只来自 Host 真实 stats；当前 Host 无 turn-diff 生产方，故不显示 |
+| autoCollapse | ✅ | 与 R1 共用原语，摘要面板子智能体小节已接线 |
 
 ### 4. Composer
 
@@ -210,11 +210,11 @@
 | 词级 diff、隐藏空白、隐藏 imports、加载完整文件 | ✅ | `GitWordDiff.kt`、`GitDiffView` 参数 |
 | markdown 富预览 | ✅ | `GitRichPreview.kt` 的 `GitDiffPreviewKind.Markdown` |
 | image / SVG / PDF 预览 | ✅ | R3：`GitDiffPreviewKind.Image/Svg/Pdf` + `GitPreviewDecoding.kt`；PDF 仅 JVM 渲染，Android/iOS 回落 diff |
-| sticky 文件头 | ○ | `GitPageComponents.kt:260` 只是注释描述原版；无 sticky modifier |
-| 上下文展开 | ○ | 无 `expandContext` / context lines 实现 |
-| diff 内搜索 | ○ | 无 `diff-search-*` 对应 |
+| sticky 文件头 | ✅ | R4：`GitDiffFileCard` 用 `ScrollState` + `graphicsLayer translationY` 吸顶，并由下一个文件头顶出 |
+| 上下文展开 | ✅ | R4：`GitDiffReading.kt` 解析 hunk/gap，按 hunk 展开 20 行并重算 `@@` 头；暂存区 diff 与删除文件禁用 |
+| diff 内搜索 | ✅ | R4：`findGitDiffMatches` + `GitDiffSearchBar`；计数、上下跳转、命中文件自动展开并定位到行 |
 | 行内评论 / apply patch | ○ | 无 `InlineComment` / `ReviewComment` 落点 |
-| 大 diff 横幅 | ○ | 无 `large-diff-banner` 对应 |
+| 大 diff 横幅 | ✅ | R4：`GitDiffLargeBannerCopy` 与 restored 阈值 25 文件 / 2000 变更行 |
 | blame gutter | ○ | 无 `file-blame-gutter` 对应 |
 
 ### 6. 插件 / MCP / Skills
@@ -404,5 +404,6 @@ R0 审计发现两处需要修正 [restored-code-task-plan-2026-11-02.md](restor
 - R3：已完成（image / SVG / PDF 富预览；PDF 仅 JVM 渲染）。
 - 页面级核对：已完成，见 [逐页面 · 逐组件 · 逐功能核对](page-component-feature-audit-2026-11-02.md)；P0 缺口为审批交互、对话内 diff 卡片、布局状态持久化。
 - R6：按第 6 节接入 MCP 连接/授权，先把「能力名读取」升级为「服务可用」。
-- R4/R8：按第四节修正后的范围执行。
+- R4：已完成（sticky、上下文展开、大 diff 横幅与单文件模式、diff 内搜索；blame 明确移出 R4）。
+- R8：按第四节修正后的范围执行。
 - 本索引随实现推进更新；状态变化以源码和验证记录为准，不以计划文字为准。

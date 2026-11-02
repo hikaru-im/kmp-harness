@@ -13,6 +13,18 @@ public enum class DescendantCoverage { LIVE_REGISTRY }
 @Serializable
 public enum class DescendantStatus { RUNNING, UNKNOWN }
 
+/**
+ * Line counts for changes a child produced. It exists only when the child has a real turn diff;
+ * callers must not synthesize zeroes for "unknown".
+ */
+@Serializable
+public data class SessionDiffStats(val linesAdded: Int, val linesRemoved: Int) {
+    init {
+        require(linesAdded >= 0 && linesRemoved >= 0)
+        require(linesAdded + linesRemoved > 0) { "Empty diff stats must be absent, not zero" }
+    }
+}
+
 @Serializable
 public data class SessionDescendant(
     val child: SessionId,
@@ -24,6 +36,11 @@ public data class SessionDescendant(
     val model: String? = null,
     val reasoningEffort: String? = null,
     val objective: String? = null,
+    /** The newest assistant text, raw and untruncated; null when no assistant text exists. */
+    val lastAssistantMessage: String? = null,
+    val lastAssistantAtEpochMillis: Long? = null,
+    /** Supplied only by a Host that records the child's real turn diff. */
+    val diffStats: SessionDiffStats? = null,
 ) {
     init {
         require(verifiedAncestorPath.size >= 2)
@@ -31,6 +48,8 @@ public data class SessionDescendant(
         require(verifiedAncestorPath[verifiedAncestorPath.lastIndex - 1] == parentSession)
         require(verifiedAncestorPath.distinct().size == verifiedAncestorPath.size)
         require(startedAtEpochMillis == null || startedAtEpochMillis >= 0)
+        require(lastAssistantMessage == null || lastAssistantMessage.isNotBlank())
+        require(lastAssistantAtEpochMillis == null || lastAssistantAtEpochMillis >= 0)
     }
 }
 

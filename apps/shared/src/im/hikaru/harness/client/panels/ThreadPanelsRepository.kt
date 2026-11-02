@@ -227,10 +227,17 @@ public class ConnectionThreadPanelsRepository : ThreadPanelsRepository {
                         canInteract = false,
                         historyAvailability = ChildHistoryAvailability.Available,
                         objective = descendant.objective,
+                        lastAssistantMessage = descendant.lastAssistantMessage,
                         startedAtEpochMillis = descendant.startedAtEpochMillis,
-                        recencyAtEpochMillis = descendant.startedAtEpochMillis,
+                        lastAssistantAtEpochMillis = descendant.lastAssistantAtEpochMillis,
+                        // A missing started time must not be replaced with "now" for ordering.
+                        recencyAtEpochMillis = descendant.lastAssistantAtEpochMillis
+                            ?: descendant.startedAtEpochMillis,
                         model = descendant.model,
                         reasoningEffort = descendant.reasoningEffort,
+                        diffStats = descendant.diffStats?.let {
+                            ChildDiffStats(it.linesAdded, it.linesRemoved)
+                        },
                     )
                 }
                 PanelLoad.Ready(

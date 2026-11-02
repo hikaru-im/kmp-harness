@@ -11,6 +11,7 @@ import im.hikaru.harness.client.summary.ThreadSummaryPanel
 import im.hikaru.harness.client.summary.ThreadSummaryProcessesTitle
 import im.hikaru.harness.client.summary.ThreadSummaryRunningLabel
 import im.hikaru.harness.client.summary.ThreadSummaryStopAllLabel
+import im.hikaru.harness.client.panels.ChildDiffStats
 import im.hikaru.harness.client.summary.ThreadSummarySubagentsTitle
 import im.hikaru.harness.ui.foundation.HarnessTheme
 import kotlin.test.*
@@ -24,7 +25,8 @@ class ThreadSummaryActivityPanelInteractionTest {
     @Test
     fun activitySectionsRenderRowsWithoutAGitServiceAndReportPickedRows() {
         val subagents = listOf(
-            ThreadSummaryActivity(ThreadSummaryActivityKind.Subagent, "child-1", "Reviewer", ThreadSummaryRunningLabel, running = true),
+            ThreadSummaryActivity(ThreadSummaryActivityKind.Subagent, "child-1", "Reviewer", ThreadSummaryRunningLabel,
+                running = true, diffStats = ChildDiffStats(linesAdded = 12, linesRemoved = 3)),
             ThreadSummaryActivity(ThreadSummaryActivityKind.Subagent, "child-2", "child-2"),
         )
         val processes = listOf(
@@ -52,7 +54,12 @@ class ThreadSummaryActivityPanelInteractionTest {
             onNodeWithTag("thread-summary-section-subagents-count", useUnmergedTree = true).assertTextEquals("2")
             onNodeWithTag("thread-summary-subagent-child-1").assertTextContains("Reviewer", substring = true)
             onNodeWithTag("thread-summary-subagent-child-1").assertTextContains(ThreadSummaryRunningLabel, substring = true)
+            onNodeWithTag("thread-summary-subagent-child-1-stats", useUnmergedTree = true)
+                .onChildren().filterToOne(hasText("+12")).assertExists()
+            onNodeWithTag("thread-summary-subagent-child-1-stats", useUnmergedTree = true)
+                .onChildren().filterToOne(hasText("−3")).assertExists()
             onNodeWithTag("thread-summary-subagent-child-2").assertTextContains("child-2", substring = true)
+            onNodeWithTag("thread-summary-subagent-child-2-stats", useUnmergedTree = true).assertDoesNotExist()
             onNodeWithTag("thread-summary-section-processes").assertTextContains(ThreadSummaryProcessesTitle, substring = true)
             onNodeWithTag("thread-summary-section-processes-count", useUnmergedTree = true).assertTextEquals("2")
             onNodeWithTag("thread-summary-process-p1").assertTextContains("npm run dev", substring = true)

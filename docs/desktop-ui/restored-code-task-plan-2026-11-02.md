@@ -96,6 +96,13 @@
 
 **验收**：有真实 typed 历史和无数据两种路径的 interaction test；徽标数字来自真实 diff stats。
 
+**R2 执行记录（2026-11-02）**
+- **最终回复节**：`ChildDetailPanel` 在「委派的任务」后新增「最终回复」节；数据来自子会话 typed 历史中最新的 assistant 文本（`ChildAgentDetail.finalReply`）。typed 历史缺失时显示「最终回复不可用」，有历史但无 assistant 文本时显示「尚无最终回复」，兼容 transcript 不会被当成最终回复。
+- **列表预览**：`SessionDescendant` 增加 `lastAssistantMessage` / `lastAssistantAtEpochMillis`，Host 从子会话消息中提取最新 assistant 文本（跳过 reasoning-only），`ChildAgentSummary.preview` 改为最终回复优先，其次 objective / statusSummary；读取失败不隐藏子会话，取消仍传播。
+- **diffStats**：`ChildDiffStats` → `ThreadSummaryActivity.diffStats` → 摘要面板行 `+N −N` 徽标；协议两侧增加可选 `diffStats`，只接受 Host 提供的真实非零 stats。当前 Host 没有 turn-diff 生产方，因此生产环境不显示徽标，不做本地估算。
+- **autoCollapse**：摘要面板子智能体小节沿用 R1 已接线的原语。
+- **验证**：`ThreadPanelsStateTest`、`ConnectionThreadPanelsRepositoryTest`、`ThreadSummaryActivityTest` 所在的 shared 全模块 **629/629**；`SessionDescendantsContractTest` **7/7**（含读取失败与取消路径）；`SessionDescendantsGatewayTest` **2/2**；`SubagentHistoryInteractionTest` + `ThreadSummaryActivityPanelInteractionTest` **16/16**；`ThreadPanelsInteractionTest` + `ThreadSummaryPanelInteractionTest` **30/30**。
+
 ---
 
 ### R3 — Git 富预览 image / SVG / PDF（P0）
@@ -139,6 +146,16 @@
 **交付**：sticky 文件头；按 hunk 展开上下文；大 diff 横幅与“加载完整文件”；diff 内搜索与命中跳转。布局选择已存在，不重复实现。
 
 **验收**：每种能力独立 interaction test；大 diff 用固定阈值 fixture，记录首帧与滚动性能指标。
+
+**R4 执行记录（2026-11-02）**
+
+- **阈值与单文件模式**：`GitDiffReading.kt` 的 `GitDiffAutoOpenMaxFiles = 25`、`GitDiffAutoOpenMaxChangedLines = 2000` 取自 restored `editor-diff-page.tsx`（边界含等号），`GitDiffView` 接收可注入参数。超过任一阈值显示 `GitDiffLargeBannerCopy` 横幅，并改为同一时间只展开一个文件；`large-diff-banner.tsx` 本身没有阈值常量，复用自动展开阈值的选择写在源码注释里。
+- **sticky 文件头**：不走 `LazyColumn`，保持每个文件正文仍是**一整段可选中的文本**。`ScrollState.value` + `derivedStateOf` 计算吸顶位移，`graphicsLayer { translationY }` 平移标题、`zIndex` 盖住正文，下一个文件头到达时把它顶出。
+- **上下文展开**：`parseGitDiffHunks` / `gitDiffContextGaps` / `gitDiffExpandedBody` / `gitDiffExpandedLineIndex` 全部是纯函数；按 hunk 读取工作树文本，每次展开 20 行，重算 `@@` 起止与计数。暂存区 diff 不展开（工作树可能不同于索引），删除文件不展开；读取失败显示 controller 的 unavailable 原因而非伪造上下文。
+- **diff 内搜索**：`findGitDiffMatches` 做不区分大小写的字面匹配（含 `@@` 头），500 条上限并标记截断。查找栏显示 `当前/总数`，上/下一个循环；命中文件自动展开，unified 布局用 `TextLayoutResult.getLineTop` 精确滚动到行，split/换行布局回退到卡片顶部；正文用 token 背景色高亮命中与当前命中，文件头显示命中数。
+- **验证**：`GitDiffReadingTest` **7/7**；shared git 包 **141/141**；`GitDiffReadingInteractionTest` **8/8**（阈值与横幅、单文件切换、吸顶、搜索计数/跳转/自动展开、上下文展开、工作树不可读、暂存区禁用、性能指标）；`GitDiffViewInteractionTest` + 富预览 + 二进制预览 + `GitPageInteractionTest` + `WorktreePageInteractionTest` **39/39**。
+- **性能指标**：25 文件 / 2000 变更行的边界 fixture（全部默认展开）在多轮运行中首帧 **216–471ms**、连续 10 次滚轮 **650–818ms**（约 65–82ms/次），数字随同进程已跑过的 UI 测试数变化；测试只保留宽松上限（首帧 15s、10 次滚动 20s）防止灾难性回归，不把本机数字当基准。
+- **未做 / 移出**：blame gutter 需要 `git blame` 解析与 gutter 渲染，明确移出 R4；行内评论、apply/revert 留给 R5；工具栏状态持久化归 G1b；diff 虚拟化不引入（正文要保持可选中的单段文本），因此 restored 的 `diff-virtualization-metrics.ts` 只作为阈值参考，未照搬。
 
 ---
 
@@ -242,3 +259,5 @@
 ## 六、跟踪
 
 对应 Kaneo `kmp-harness` 项目的 R0–R9 任务；每项完成后在本文件追加“实际交付/验证结果”，并以 `docs/desktop-ui/replication-plan-2026-10-07.md` 文末「最新同步」为权威状态。
+
+逐页面核对后的缺口逐项计划见 [gap-implementation-plan-2026-11-02.md](gap-implementation-plan-2026-11-02.md)，含 G1–G15 与 Kaneo #41–#53；R2、R4–R9 的增量以该文件第三节为准。

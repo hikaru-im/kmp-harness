@@ -19,6 +19,8 @@ class ConnectionThreadPanelsRepositoryTest {
             verifiedAncestorPath = listOf(fixture.owner.parentSessionId, direct.child, grandchildId),
             status = DescendantStatus.UNKNOWN, startedAtEpochMillis = 23,
             model = "real-model", reasoningEffort = "high", objective = "real objective",
+            lastAssistantMessage = "final result", lastAssistantAtEpochMillis = 42,
+            diffStats = SessionDiffStats(linesAdded = 7, linesRemoved = 2),
         )
         fixture.descendants = SessionDescendantsResult.Available(fixture.owner.parentSessionId, listOf(direct, grandchild))
         val ready = ConnectionThreadPanelsRepository().readOverview(fixture.owner) as PanelLoad.Ready
@@ -33,7 +35,10 @@ class ConnectionThreadPanelsRepositoryTest {
         assertEquals("high", unknown.reasoningEffort)
         assertEquals("real objective", unknown.objective)
         assertEquals(23L, unknown.startedAtEpochMillis)
-        assertNull(unknown.lastAssistantAtEpochMillis)
+        assertEquals("final result", unknown.lastAssistantMessage)
+        assertEquals(42L, unknown.lastAssistantAtEpochMillis)
+        assertEquals("final result", unknown.preview)
+        assertEquals(ChildDiffStats(linesAdded = 7, linesRemoved = 2), unknown.diffStats)
         assertTrue(ready.value.children(SubagentSection.Done).isEmpty())
         assertTrue(ready.value.children.all { !it.canInteract })
     }

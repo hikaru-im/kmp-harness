@@ -1,7 +1,13 @@
 package im.hikaru.harness.client.panels
 
 import im.hikaru.contracts.harness.identity.HostId
+import im.hikaru.harness.client.connection.Message
+import im.hikaru.harness.client.connection.MessageRole
+import im.hikaru.harness.client.connection.ModelMessageSource
+import im.hikaru.harness.client.connection.ReasoningContent
 import im.hikaru.harness.client.connection.SessionId
+import im.hikaru.harness.client.connection.TextContent
+import im.hikaru.harness.client.connection.UserMessageSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -211,6 +217,43 @@ class ThreadPanelsStateTest {
         assertFailsWith<IllegalArgumentException> { SubagentOverview(scope, listOf(row, row)) }
         assertFailsWith<IllegalArgumentException> { ThreadPanelsState(scope, detail = PanelLoad.Ready(scope, ChildAgentDetail(row.key, emptyList(), false))) }
         assertEquals("some objective", row.copy(objective = "  some   objective  ").preview)
+        assertEquals(
+            "final reply",
+            row.copy(objective = "some objective", lastAssistantMessage = "  final   reply  ").preview,
+        )
+        assertFailsWith<IllegalArgumentException> { ChildDiffStats(0, 0) }
+        assertFailsWith<IllegalArgumentException> { ChildDiffStats(-1, 2) }
+    }
+
+    @Test
+    fun finalReplyUsesTheNewestAssistantTextAndStaysUnavailableWithoutTypedHistory() {
+        val key = ChildAgentKey(scope, SessionId("child"))
+        val messages = listOf(
+            Message("user", MessageRole.USER, listOf(TextContent("task")), UserMessageSource),
+            Message(
+                "assistant",
+                MessageRole.ASSISTANT,
+                listOf(ReasoningContent("thinking"), TextContent("first reply")),
+                ModelMessageSource("p", "m"),
+            ),
+            Message(
+                "assistant-2",
+                MessageRole.ASSISTANT,
+                listOf(TextContent("  final\nreply  ")),
+                ModelMessageSource("p", "m"),
+            ),
+        )
+        val entries = messages.map { message ->
+            ChildTranscriptEntry(
+                message.id,
+                if (message.role == MessageRole.ASSISTANT) ChildTranscriptRole.Assistant else ChildTranscriptRole.User,
+                "",
+            )
+        }
+
+        assertEquals("final\nreply", ChildAgentDetail(key, entries, false, messages).finalReply)
+        assertNull(ChildAgentDetail(key, entries, false).finalReply)
+        assertNull(ChildAgentDetail(key, entries.take(1), false, messages.take(1)).finalReply)
     }
 
     private fun overview(rows: List<ChildAgentSummary>): ThreadPanelsState =

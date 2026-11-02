@@ -424,6 +424,11 @@ private fun DetailSection(title: String, tag: String, body: @Composable () -> Un
 }
 
 @Composable
+private fun MutedDetailText(text: String) {
+    HarnessText(text, style = panelTextStyle(), color = HarnessTokens.Colors.TextMuted)
+}
+
+@Composable
 private fun ChildRows(rows: List<ChildAgentSummary>, onAction: (ThreadPanelAction) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         rows.forEach { row -> key(row.key) {
@@ -486,6 +491,23 @@ private fun ChildDetailPanel(
             DetailSection("状态", "subagent-detail-status") { HarnessText(summary.status.label, style = panelTextStyle()) }
             if (delegatedTask != null) DetailSection("委派的任务", "subagent-detail-task") {
                 HarnessText(delegatedTask, style = panelTextStyle())
+            }
+            // Codex `subagents.panel.response`: only real typed history can supply it. A
+            // compatibility transcript is never presented as the agent's final reply.
+            DetailSection("最终回复", "subagent-detail-final-reply") {
+                val load = state.detail
+                val detail = (load as? PanelLoad.Ready)?.value?.takeIf { it.key == summary.key }
+                val finalReply = detail?.finalReply
+                when {
+                    load is PanelLoad.Loading -> MutedDetailText("正在加载最终回复…")
+                    detail == null || detail.typedMessages == null -> MutedDetailText("最终回复不可用")
+                    finalReply == null -> MutedDetailText("尚无最终回复")
+                    else -> HarnessText(
+                        finalReply,
+                        Modifier.semantics { testTag = "subagent-detail-final-reply-text" },
+                        style = panelTextStyle(),
+                    )
+                }
             }
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {

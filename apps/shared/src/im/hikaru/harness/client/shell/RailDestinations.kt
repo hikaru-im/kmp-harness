@@ -3,6 +3,7 @@ package im.hikaru.harness.client.shell
 import im.hikaru.harness.ui.foundation.HarnessIconName
 
 /** App-level destinations rendered by the fixed rail. They are independent from workspace pages. */
+@kotlinx.serialization.Serializable
 public enum class RailDestination {
     Home,
     Scheduled,

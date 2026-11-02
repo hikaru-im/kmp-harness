@@ -2,8 +2,10 @@ package im.hikaru.harness.session.api
 
 import im.hikaru.harness.agent.*
 import im.hikaru.harness.llm.Message
+import im.hikaru.harness.llm.ReasoningBlock
 import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.TextBlock
+import im.hikaru.harness.llm.createAssistantMessage
 import im.hikaru.harness.llm.createUserMessage
 import im.hikaru.harness.runtime.Context
 import im.hikaru.harness.runtime.Runtime
@@ -15,6 +17,71 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class SessionDescendantsContractTest {
+    @Test
+    fun descendantsExposeOnlyTheNewestAssistantTextAsTheFinalReply() = runTest {
+        val fixture = fixture()
+        fixture.create("root")
+        val child = fixture.create("child", "root")
+        val session = (child.agent as TestAgent).session
+        session.append(
+            SessionEventKeys.UserMessage,
+            UserMessageEvent(1, createUserMessage(listOf(TextBlock("task")))),
+        )
+        session.append(
+            SessionEventKeys.AssistantMessage,
+            AssistantMessageEvent(
+                turn = 1,
+                step = 1,
+                message = createAssistantMessage(listOf(ReasoningBlock("thinking only")), "test", "model")
+                    .copy(timestampMillis = 10),
+            ),
+        )
+        session.append(
+            SessionEventKeys.AssistantMessage,
+            AssistantMessageEvent(
+                turn = 1,
+                step = 2,
+                message = createAssistantMessage(listOf(TextBlock("first")), "test", "model")
+                    .copy(timestampMillis = 20),
+            ),
+        )
+        session.append(
+            SessionEventKeys.AssistantMessage,
+            AssistantMessageEvent(
+                turn = 1,
+                step = 3,
+                message = createAssistantMessage(listOf(TextBlock("  final\nanswer  ")), "test", "model")
+                    .copy(timestampMillis = 30),
+            ),
+        )
+
+        val result = assertIs<SessionDescendantsResult.Available>(fixture.api.descendants(id("root")))
+
+        val listed = result.children.single()
+        assertEquals("final\nanswer", listed.lastAssistantMessage)
+        assertEquals(session.deriveMessages().last().timestampMillis, listed.lastAssistantAtEpochMillis)
+        assertNull(listed.diffStats, "No Host turn-diff producer may invent stats")
+    }
+
+    @Test
+    fun anOptionalFinalReplyReadFailureDoesNotHideTheChildButCancellationPropagates() = runTest {
+        val fixture = fixture()
+        try {
+            fixture.create("root")
+            fixture.create("child", "root")
+            val failing = LiveSessionDescendants(fixture.runtime.context.agents) { throw IllegalStateException("no history") }
+
+            val listed = assertIs<SessionDescendantsResult.Available>(failing.descendants(id("root"))).children.single()
+            assertNull(listed.lastAssistantMessage)
+
+            val cancelled = CancellationException("cancelled")
+            val cancelling = LiveSessionDescendants(fixture.runtime.context.agents) { throw cancelled }
+            assertSame(cancelled, assertFailsWith<CancellationException> { cancelling.descendants(id("root")) })
+        } finally {
+            fixture.runtime.context.dispose()
+        }
+    }
+
     @Test
     fun onlyVerifiedSubagentChainsInTheSameLiveRegistryAreListed() = runTest {
         val fixture = fixture()
