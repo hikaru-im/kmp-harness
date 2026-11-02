@@ -5,6 +5,9 @@ import im.hikaru.harness.agent.AgentArchiveBegin
 import im.hikaru.harness.agent.AgentId
 import im.hikaru.harness.agent.AgentOptions
 import im.hikaru.harness.agent.agents
+import im.hikaru.harness.llm.LlmCallConfig
+import im.hikaru.harness.llm.ReasoningModeId
+import im.hikaru.harness.llm.ReasoningOptions
 import im.hikaru.harness.session.*
 import im.hikaru.harness.session.persistence.*
 import java.nio.file.Files
@@ -288,6 +291,10 @@ class DesktopWorktreeChatArchiveIntegrationTest {
         // Give the chat its own durable model origin so restore needs no settings lookup.
         handle.agent.session.append(SessionEventKeys.RequestContext,
             RequestContextEvent(1, 1, SessionRequestContext("hist", "hist-model")))
+        val callConfig = LlmCallConfig("hist", "hist-model", maxTokens = 4096,
+            reasoning = ReasoningOptions(mode = ReasoningModeId.ENABLED, budgetTokens = 1024))
+        handle.agent.session.append(SessionEventKeys.RequestHeader,
+            RequestHeaderEvent(1, 1, EpochHeader(callConfig, reason = EpochReason.INITIAL)))
         f.context.persistence.flush(handle.agent.session)
         val before = handle.agent.session.events()
         val service = DesktopWorktreeChatRestoreService(f.context)
@@ -307,6 +314,7 @@ class DesktopWorktreeChatArchiveIntegrationTest {
         // Exact durable history: nothing repaired, flushed or appended by the restore.
         assertEquals(before, restored.session.events())
         assertEquals("hist", restored.session.requestContext()?.provider)
+        assertEquals(callConfig, restored.options.requireCallConfig())
         handle.dispose()
     }
 

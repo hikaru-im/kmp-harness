@@ -25,6 +25,7 @@ internal class ModelUiBackend : ModelSettingsBackend {
     var writes = 0
     var retries = 0
     var discoveries = 0
+    var draftDiscoveries = 0
     var snapshot = ModelSettingsSnapshot(
         providers = listOf(ConfigurableProvider("openai", "OpenAI", ProviderConfiguration("openai", "OpenAI", credentialName = "MODEL_UI_TEST_KEY", modelIds = listOf("model-a", "model-b")),
             active = true, credentialWritable = true, canRemove = true,
@@ -32,6 +33,19 @@ internal class ModelUiBackend : ModelSettingsBackend {
         protocols = listOf(ModelProtocol("openai-chat-completions", "Chat Completions"), ModelProtocol("openai-responses", "Responses")),
         available = true, writable = true, canAddProvider = true, unavailableReason = null,
     )
+    override suspend fun setModelEnabled(providerId: String, modelId: String, enabled: Boolean, expectedRevision: Long) {
+        check(expectedRevision == snapshot.revision)
+        snapshot = snapshot.copy(revision = snapshot.revision + 1, providers = snapshot.providers.map {
+            if (it.id != providerId) it else it.copy(disabledModelIds = if (enabled) it.disabledModelIds - modelId else it.disabledModelIds + modelId,
+                selectedModelId = if (!enabled && it.selectedModelId == modelId) null else it.selectedModelId)
+        })
+    }
+    override suspend fun selectModel(providerId: String, modelId: String, expectedRevision: Long) {
+        check(expectedRevision == snapshot.revision)
+        snapshot = snapshot.copy(revision = snapshot.revision + 1, providers = snapshot.providers.map {
+            it.copy(selectedModelId = modelId.takeIf { _ -> it.id == providerId })
+        })
+    }
     override suspend fun read(): ModelSettingsSnapshot = snapshot
     override suspend fun save(configuration: ProviderConfiguration, expectedRevision: Long) {
         if (expectedRevision != snapshot.revision) throw ProviderRevisionConflict()
@@ -60,21 +74,98 @@ internal class ModelUiBackend : ModelSettingsBackend {
             if (it.id == providerId) it.copy(models = listOf(ProviderModel("remote-model", "Remote Model"))) else it
         })
     }
+
+    override suspend fun discoverDraft(configuration: ProviderConfiguration, apiKey: String): ModelDiscoveryResult {
+        draftDiscoveries++
+        assertEquals("fixture-plugin-key", apiKey)
+        assertEquals("fixture-vendor", configuration.vendor)
+        return ModelDiscoveryResult(listOf(ProviderModel("remote-chat", "Discovered Chat")), "fixture-catalog", true)
+    }
 }
 
 @OptIn(ExperimentalTestApi::class)
 class ModelSettingsInteractionTest {
+    @Test
+    fun switchDoesNotSelectRowAndDisablingSelectedModelClearsDefault() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        backend.snapshot = backend.snapshot.copy(providers = backend.snapshot.providers.map {
+            it.copy(models = listOf(ProviderModel("model-a", "GPT-6 Astra"), ProviderModel("model-b", "Gemini4")))
+        })
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-edit-openai").performClick()
+        onNodeWithTag("models-select-openai-model-a").performScrollTo().performClick()
+        onNodeWithTag("models-select-openai-model-a").assertIsSelected()
+        onNodeWithTag("models-select-openai-model-b").performScrollTo()
+        captureDialog(onRoot().captureToImage(), "model-management-selected.png")
+        onNodeWithTag("models-enabled-openai-model-a").performScrollTo().performClick()
+        onNodeWithTag("models-enabled-openai-model-a").assertIsOff()
+        onNodeWithTag("models-select-openai-model-a").assertIsNotSelected()
+        onNodeWithTag("models-enabled-openai-model-a").performClick()
+        onNodeWithTag("models-enabled-openai-model-a").assertIsOn()
+        onNodeWithTag("models-select-openai-model-a").assertIsNotSelected()
+        runOnIdle { assertNull(backend.snapshot.providers.single().selectedModelId) }
+    }
+
+    @Test
+    fun pluginKeyDiscoverySavesWholeCatalogWithoutModelSelection() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        onNodeWithTag("provider-editor-id").assertDoesNotExist()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+        onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+        runOnIdle { assertEquals(1, backend.draftDiscoveries); assertEquals(0, backend.writes); assertTrue(backend.keys.isEmpty()) }
+        onNodeWithText("Discovered Chat").performScrollTo().assertExists()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        runOnIdle {
+            val saved = requireNotNull(repository.state.value.confirmedProviderConfiguration)
+            assertEquals("fixture-vendor", saved.vendor)
+            assertEquals("https://fixture.test/v1", saved.baseUrl)
+            assertNull(saved.modelIds)
+            assertEquals("fixture-plugin-key", backend.keys[saved.credentialName])
+            assertFalse(repository.state.value.toString().contains("fixture-plugin-key"))
+            assertEquals(1, backend.writes)
+        }
+        onNodeWithTag("provider-editor-save").assertDoesNotExist()
+    }
+
+    @Test
+    fun changedConnectionCanBeSavedPendingDiscovery() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+        onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+        onNodeWithText("Discovered Chat").assertExists()
+        onNodeWithTag("provider-editor-advanced").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-base-url").performScrollTo().performTextReplacement("https://second.test/v1")
+        onNodeWithTag("provider-editor-discovered-model").assertDoesNotExist()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        runOnIdle { assertEquals(1, backend.writes); assertNull(repository.state.value.confirmedProviderConfiguration?.modelIds) }
+    }
+
+    private fun pluginBackend(): ModelUiBackend = ModelUiBackend().also { backend ->
+        backend.snapshot = backend.snapshot.copy(providers = emptyList(), plugins = listOf(ProviderPlugin(
+            "fixture-vendor", "Fixture Vendor", listOf("openai-chat-completions"),
+            endpoints = listOf(ProviderEndpointProfile("default", "Default", "https://fixture.test/v1", "openai-chat-completions")),
+            supportsDiscovery = true, inferenceSupported = true,
+        )))
+    }
+
     @Test
     fun discoveryButtonLoadsServerModelsAndShowsFeedback() = runComposeUiTest {
         val backend = ModelUiBackend()
         backend.snapshot = backend.snapshot.copy(providers = backend.snapshot.providers.map { it.copy(credentialConfigured = true) })
         val repository = loaded(backend)
         setContent { OwnedModels(repository) }
-        onNodeWithTag("models-discover-openai").performClick()
+        onNodeWithTag("models-edit-openai").performClick()
+        onNodeWithTag("models-discover-openai").performScrollTo().performClick()
         runOnIdle { assertEquals(1, backend.discoveries) }
-        onNodeWithText("服务端模型列表已获取并保存；生效结果见下方状态。").assertExists()
-        onNodeWithTag("models-view-openai").performClick()
-        onNodeWithText("Remote Model").assertExists()
+        onNodeWithText("模型目录已更新；来源与生效结果见下方状态。").performScrollTo().assertExists()
+        onAllNodesWithText("Remote Model").assertCountEquals(1)
     }
 
     @Test
@@ -86,27 +177,28 @@ class ModelSettingsInteractionTest {
         val repository = loaded(backend)
         setContent { OwnedModels(repository) }
         onNodeWithText("新配置未生效，沿用上次配置").assertExists()
-        onNodeWithTag("models-refresh").performClick()
+        onNodeWithTag("models-edit-openai").performClick()
+        onNodeWithTag("models-refresh").performScrollTo().performClick()
         runOnIdle { assertEquals(0, backend.retries) }
-        onNodeWithTag("models-retry-openai").performClick()
-        onNodeWithText("已生效").assertExists()
+        onNodeWithTag("models-retry-openai").performScrollTo().performClick()
+        onNodeWithText("已生效").performScrollTo().assertExists()
         onNodeWithTag("models-retry-openai").assertDoesNotExist()
         runOnIdle { assertEquals(1, backend.retries) }
     }
 
     @Test
-    fun missingReferenceCannotBeSavedAndCredentialEditorCannotRenameBinding() = runComposeUiTest {
+    fun missingCredentialReferenceCannotBeSavedAndApiKeyLivesInEditor() = runComposeUiTest {
         val backend = ModelUiBackend()
         val repository = loaded(backend)
         setContent { OwnedModels(repository) }
         onNodeWithTag("models-edit-openai").performClick()
         onNodeWithTag("provider-editor-credential").performScrollTo().performTextReplacement("")
-        onNodeWithTag("provider-editor-save").performClick()
-        onNodeWithText("请填写凭据引用名称").assertExists()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithText("请填写凭据引用名称").performScrollTo().assertExists()
         runOnIdle { assertEquals(0, backend.writes) }
-        onNodeWithText("取消").performClick()
-        onNodeWithTag("models-credential-openai").performClick()
-        onNodeWithText("凭据引用：MODEL_UI_TEST_KEY（如需更换，请编辑 Provider）").assertExists()
+        onNodeWithTag("provider-editor-cancel").performScrollTo().performClick()
+        onNodeWithTag("models-edit-openai").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().assertExists()
         onNodeWithTag("credential-editor-name").assertDoesNotExist()
     }
 
@@ -117,8 +209,9 @@ class ModelSettingsInteractionTest {
         onNodeWithTag("settings-row-models").performClick()
         onNodeWithTag("settings-models-title").assertIsDisplayed()
         onNodeWithTag("models-provider-openai").assertExists()
+        onNodeWithTag("models-edit-openai").performClick()
         onNodeWithTag("models-search").performTextInput("missing")
-        onNodeWithTag("models-empty").assertIsDisplayed()
+        onNodeWithTag("models-empty").performScrollTo().assertIsDisplayed()
         onNodeWithTag("models-search").performTextClearance()
         onNodeWithTag("models-provider-openai").assertExists()
         onNodeWithTag("settings-row-general").performClick()
@@ -132,18 +225,18 @@ class ModelSettingsInteractionTest {
         val repository = loaded(backend)
         setContent { OwnedModels(repository) }
         onNodeWithTag("models-edit-openai").performClick()
-        onNodeWithTag("provider-editor-name").performTextReplacement("Edited provider")
+        onNodeWithTag("provider-editor-name").performScrollTo().performTextReplacement("Edited provider")
         onNodeWithTag("provider-editor-request-timeout").performScrollTo().performTextReplacement("-1")
-        onNodeWithTag("provider-editor-save").performClick()
-        onNodeWithTag("provider-editor-error").assertIsDisplayed()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-error").performScrollTo().assertIsDisplayed()
         runOnIdle { assertEquals(0, backend.writes) }
-        onNodeWithTag("provider-editor-request-timeout").performTextReplacement("5000")
+        onNodeWithTag("provider-editor-request-timeout").performScrollTo().performTextReplacement("5000")
         onNodeWithTag("provider-editor-models").performScrollTo().assertTextEquals("model-a\nmodel-b")
         runOnIdle { backend.failWrite = true }
-        onNodeWithTag("provider-editor-save").performClick()
-        onNodeWithTag("provider-editor-name").assertExists()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-name").performScrollTo().assertExists()
         runOnIdle { assertEquals("OpenAI", repository.state.value.snapshot.providers.single().displayName); backend.failWrite = false }
-        onNodeWithTag("provider-editor-save").performClick()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
         onNodeWithTag("provider-editor-name").assertDoesNotExist()
         runOnIdle {
             val actual = repository.state.value.snapshot.providers.single().configuration!!
@@ -159,16 +252,16 @@ class ModelSettingsInteractionTest {
         val repository = loaded(backend)
         setContent { OwnedModels(repository) }
         onNodeWithTag("models-edit-openai").performClick()
-        onNodeWithTag("provider-editor-name").performTextReplacement("Unsaved draft")
+        onNodeWithTag("provider-editor-name").performScrollTo().performTextReplacement("Unsaved draft")
         runOnIdle { backend.snapshot = backend.snapshot.copy(revision = 1, providers = backend.snapshot.providers.map { it.copy(displayName = "External name", configuration = it.configuration!!.copy(displayName = "External name")) }) }
-        onNodeWithTag("provider-editor-save").performClick()
-        onNodeWithTag("provider-editor-error").assertIsDisplayed()
-        onNodeWithTag("provider-editor-refresh").performClick()
-        onNodeWithTag("provider-editor-name").assertTextEquals("Unsaved draft")
-        onNodeWithTag("provider-editor-reload").performClick()
-        onNodeWithTag("provider-editor-name").assertTextEquals("External name")
-        onNodeWithTag("provider-editor-name").performTextReplacement("Reviewed name")
-        onNodeWithTag("provider-editor-save").performClick()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-error").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("provider-editor-refresh").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-name").performScrollTo().assertTextEquals("Unsaved draft")
+        onNodeWithTag("provider-editor-reload").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-name").performScrollTo().assertTextEquals("External name")
+        onNodeWithTag("provider-editor-name").performScrollTo().performTextReplacement("Reviewed name")
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
         onNodeWithTag("provider-editor-name").assertDoesNotExist()
         runOnIdle { assertEquals("Reviewed name", repository.state.value.snapshot.providers.single().displayName) }
     }
@@ -178,15 +271,16 @@ class ModelSettingsInteractionTest {
         val backend = ModelUiBackend()
         val repository = loaded(backend)
         setContent { OwnedModels(repository) }
-        onNodeWithTag("models-credential-openai").performClick()
+        onNodeWithTag("models-edit-openai").performClick()
         val syntheticValue = "fixture-password-value"
-        onNodeWithTag("credential-editor-value").performTextReplacement(syntheticValue)
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement(syntheticValue)
         runOnIdle { backend.failWrite = true }
-        onNodeWithTag("credential-editor-save").performClick()
-        onNodeWithTag("credential-editor-error").assertIsDisplayed()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-error").performScrollTo().assertIsDisplayed()
         runOnIdle { assertFalse(repository.state.value.toString().contains(syntheticValue)); backend.failWrite = false }
-        onNodeWithTag("credential-editor-save").performClick()
-        onNodeWithTag("credential-editor-value").assertDoesNotExist()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().assertExists()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-api-key").assertDoesNotExist()
         runOnIdle { assertEquals(syntheticValue, backend.keys["MODEL_UI_TEST_KEY"]); assertFalse(repository.state.value.toString().contains(syntheticValue)) }
     }
 
@@ -204,29 +298,42 @@ class ModelSettingsInteractionTest {
     }
 
     @Test
-    fun compactEditorAndModelDetailsAreReadableAndCaptureDialogs() {
+    fun providerRowsAndInlineEditorAreReadableAndCaptureLayouts() {
         listOf("light" to HarnessThemeMode.Light, "dark" to HarnessThemeMode.Dark).forEach { (slug, mode) ->
             runSkikoComposeUiTest(size = Size(600f, 800f)) {
                 val repository = loaded(ModelUiBackend())
                 setContent { OwnedModels(repository, mode) }
-                onNodeWithTag("models-view-openai").performScrollTo().performClick()
-                onNodeWithText("上下文容量：8192").assertIsDisplayed()
-                onNodeWithText("推理档位：low / high").assertIsDisplayed()
-                captureDialog(onNode(isDialog()).captureToImage(), "models-detail-" + slug + ".png")
-                onNodeWithText("关闭").performClick()
-                onNodeWithTag("models-new-provider").performScrollTo().performClick()
-                onNodeWithTag("provider-editor-id").assertIsDisplayed()
-                captureDialog(onNode(isDialog()).captureToImage(), "models-editor-top-" + slug + ".png")
+                captureDialog(onRoot().captureToImage(), "models-providers-" + slug + ".png")
+                onNodeWithTag("models-edit-openai").performScrollTo().performClick()
+                onNodeWithText("上下文容量：8192", substring = true).performScrollTo().assertIsDisplayed()
+                onNodeWithText("推理档位：low / high", substring = true).assertIsDisplayed()
+                captureDialog(onRoot().captureToImage(), "models-editor-" + slug + ".png")
                 onNodeWithTag("provider-editor-models").performScrollTo().assertIsDisplayed()
-                onNodeWithTag("provider-editor-save").assertIsDisplayed()
-                captureDialog(onNode(isDialog()).captureToImage(), "models-editor-" + slug + ".png")
-                onNodeWithText("取消").performClick()
-                onNodeWithTag("models-credential-openai").performScrollTo().performClick()
-                onNodeWithTag("credential-editor-value").assertIsDisplayed()
-                onNodeWithTag("credential-editor-save").assertIsDisplayed()
-                captureDialog(onNode(isDialog()).captureToImage(), "models-credential-" + slug + ".png")
+                onNodeWithTag("provider-editor-save").performScrollTo().assertIsDisplayed()
+                captureDialog(onRoot().captureToImage(), "models-editor-advanced-" + slug + ".png")
+                onNodeWithTag("provider-editor-cancel").performScrollTo().performClick()
+                onNodeWithTag("models-new-provider").performScrollTo().performClick()
+                onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+                onNodeWithTag("provider-editor-id").performScrollTo().assertIsDisplayed()
+                captureDialog(onRoot().captureToImage(), "models-add-provider-" + slug + ".png")
             }
         }
+    }
+
+    @Test
+    fun providerRowsKeepOnlyOneInlineEditorOpen() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        backend.snapshot = backend.snapshot.copy(
+            providers = backend.snapshot.providers + ConfigurableProvider("second", "Second", canRemove = true),
+        )
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-edit-openai").performClick()
+        onAllNodesWithTag("provider-editor-name").assertCountEquals(1)
+        onNodeWithTag("models-edit-second").performScrollTo().performClick()
+        onAllNodesWithTag("provider-editor-name").assertCountEquals(1)
+        onNodeWithTag("provider-editor-cancel").performScrollTo().performClick()
+        onAllNodesWithTag("provider-editor-name").assertCountEquals(0)
     }
 
     @Test
@@ -267,12 +374,16 @@ class ModelSettingsInteractionTest {
                 { id, revision -> scope.launch { repository.remove(id, revision) } },
                 { name, value -> scope.launch { repository.setCredential(name, value) } },
                 { scope.launch { repository.retryApplication() } },
-                { id, revision -> scope.launch { repository.discoverModels(id, revision) } })
+                { id, revision -> scope.launch { repository.discoverModels(id, revision) } },
+                { config, key -> repository.discoverDraft(config, key) },
+                { config, key, revision -> scope.launch { repository.saveWithCredential(config, key, revision) } },
+                { provider, model, enabled, revision -> scope.launch { repository.setModelEnabled(provider, model, enabled, revision) } },
+                { provider, model, revision -> scope.launch { repository.selectModel(provider, model, revision) } })
         }
     }
 
     private fun captureDialog(bitmap: androidx.compose.ui.graphics.ImageBitmap, name: String) {
-        val root = File("/Volumes/Data/IdeaProjects/kmp-harness/docs/desktop-ui/captures/models").apply { mkdirs() }
+        val root = File("build/test-captures/models").apply { mkdirs() }
         Image.makeFromBitmap(bitmap.asSkiaBitmap()).use { image -> File(root, name).writeBytes(requireNotNull(image.encodeToData(EncodedImageFormat.PNG)).bytes) }
     }
 }

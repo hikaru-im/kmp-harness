@@ -14,6 +14,8 @@
 - [infrastructure-plugins.md](infrastructure-plugins.md)：logger、timer 和 include。
 - [modules/llm/README.md](../modules/llm/README.md)：provider-neutral LLM 词汇、Adapter 注册与流式调用语义。
 - [modules/llm-koog/README.md](../modules/llm-koog/README.md)：Koog Adapter 边界、生命周期与分步实现路线。
+- [model-provider-capability-matrix-2026-10-21.md](model-provider-capability-matrix-2026-10-21.md)：七家模型厂商的思考参数、模型发现接口与官方来源。
+- [model-provider-unification-plan.md](model-provider-unification-plan.md)：统一思考协议、厂商连接隔离、模型发现与现有代码改造方案（提案）。
 - [session-agent-loop-plan.md](session-agent-loop-plan.md)：Session、Agent、AgentLoop 的模块边界、阶段任务与验收标准。
 - [session-s1-plan.md](session-s1-plan.md)：Session S1 对齐 DSH 的数据格式、原子提交、Store 事务和实施拆分。
 - [harness-host-api.md](harness-host-api.md)：Host、RuoYi Relay、配置所有权、DSH API 对照与实施顺序。

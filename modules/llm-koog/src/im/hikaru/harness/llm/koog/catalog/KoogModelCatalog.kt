@@ -14,7 +14,11 @@ fun KoogLlmSettings.resolveRoutes(
     require(installedByApi.size == installedRoutes.size) {
         "Installed Koog protocol templates must not contain duplicate ids"
     }
-    return providers.values.map { settings ->
+    return providers.values.filterNot { settings ->
+        (settings.catalogManaged && !settings.catalogMatchesConnection() && settings.models.isNullOrEmpty()) ||
+        settings.catalogMatchesConnection() && settings.discoveredCatalog != null &&
+            settings.discoveredCatalog.models.isEmpty() && settings.retainedModels.isEmpty() && settings.models.isNullOrEmpty()
+    }.map { settings ->
         settings.resolveRoute(installedByApi)
     }
 }
@@ -36,8 +40,13 @@ private fun KoogProviderSettings.resolveRoute(
         }
     }
 
+    val catalog = discoveredCatalog?.takeIf { catalogMatchesConnection() }
+    val discoveredEntries = catalog?.let { (it.models + retainedModels).distinctBy { model -> model.id } }.orEmpty()
     val entries =
-        if (models.isNullOrEmpty()) {
+        if (catalog != null) {
+            (models.orEmpty() + discoveredEntries.map { modelOverrides[it.id]?.withId(it.id) ?: KoogModelProfile(id = it.id) }).distinctBy { it.id }
+        } else if (models.isNullOrEmpty()) {
+            require(vendor == null || vendor == "openai") { "Provider '$provider' requires a selected model catalog" }
             defaultTemplate.models.map { model ->
                 modelOverrides[model.model.id]?.withId(model.model.id)
                     ?: KoogModelProfile(
@@ -55,7 +64,7 @@ private fun KoogProviderSettings.resolveRoute(
         val modelApi = defaultApi
         val template = defaultTemplate
         resolveModel(
-            installed = template.models.firstOrNull { model -> model.model.id == entry.id },
+            installed = template.models.firstOrNull { model -> model.model.id == entry.id && (vendor == null || vendor == "openai") },
             template = template.customModelTemplate,
             entry = entry,
         ).copy(api = modelApi)
@@ -66,6 +75,9 @@ private fun KoogProviderSettings.resolveRoute(
         models = resolved,
         api = defaultApi,
         customModelTemplate = defaultTemplate.customModelTemplate.detachedCopy(),
+        vendor = vendor ?: "openai",
+        serviceVariant = serviceVariant,
+        apiVersion = apiVersion,
     )
 }
 
@@ -75,9 +87,11 @@ private fun KoogProviderSettings.resolveModel(
     entry: KoogModelProfile,
 ): KoogModelRoute {
     val custom = installed == null
+    val discovered = discoveredCatalog?.takeIf { catalogMatchesConnection() }?.let { (it.models + retainedModels).firstOrNull { model -> model.id == entry.id } }
     val sourceModel = installed?.model ?: template
     val input =
         entry.input?.takeIf(List<ModelModality>::isNotEmpty)
+            ?: discovered?.inputModalities
             ?: installed?.inputModalities
             ?: defaultInput
             ?: listOf(ModelModality.TEXT)
@@ -98,14 +112,15 @@ private fun KoogProviderSettings.resolveModel(
         }
     val contextWindow =
         entry.contextWindow
+            ?: discovered?.contextWindow
             ?: installed?.model?.contextLength
             ?: defaultContextWindow
-            ?: DEFAULT_CONTEXT_WINDOW
     val maxOutputTokens =
-        entry.maxTokens
+        entry.maxOutputTokens
+            ?: discovered?.maxOutputTokens
+            ?: entry.maxTokens
             ?: installed?.model?.maxOutputTokens
             ?: defaultMaxTokens
-            ?: DEFAULT_MAX_TOKENS
     val capabilities =
         sourceModel.capabilities
             .orEmpty()
@@ -133,11 +148,13 @@ private fun KoogProviderSettings.resolveModel(
                 contextLength = contextWindow,
                 maxOutputTokens = maxOutputTokens,
             ),
-        name = entry.name ?: installed?.name ?: entry.id,
-        description = entry.description ?: installed?.description,
+        name = entry.name ?: discovered?.name ?: installed?.name ?: entry.id,
+        description = entry.description ?: discovered?.description ?: installed?.description,
         inputModalities = input.toList(),
         defaultMaxTokens = entry.maxTokens ?: installed?.defaultMaxTokens,
         reasoning = reasoning,
+        reasoningCapabilities = discovered?.reasoningCapabilities,
+        metadata = discovered?.metadata ?: kotlinx.serialization.json.JsonObject(emptyMap()),
     )
 }
 
@@ -147,8 +164,13 @@ private fun String.displayName(): String =
             word.replaceFirstChar { character -> character.uppercase() }
         }
 
+fun KoogProviderSettings.catalogMatchesConnection(): Boolean {
+    val binding = discoveredCatalogConnection ?: return false
+    return binding.provider == provider && binding.vendor == (vendor ?: "openai") &&
+        binding.api == api && binding.baseUrl.trimEnd('/') == baseUrl?.trimEnd('/') &&
+        binding.serviceVariant == serviceVariant && binding.region == region && binding.workspace == workspace &&
+        binding.credentialRef == credential?.name && binding.apiVersion == apiVersion
+}
+
 private fun LLModel.detachedCopy(): LLModel =
     copy(capabilities = capabilities?.toList())
-
-private const val DEFAULT_CONTEXT_WINDOW: Long = 262_144L
-private const val DEFAULT_MAX_TOKENS: Long = 32_768L

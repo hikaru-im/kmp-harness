@@ -1,24 +1,19 @@
 package im.hikaru.harness.llm.koog
 
-import ai.koog.prompt.executor.model.PromptExecutor
+import im.hikaru.harness.llm.LlmAdapter
+import im.hikaru.harness.runtime.effect.Disposable
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Creates a Provider client generation from one immutable settings snapshot. */
-fun interface KoogGenerationFactory {
-    suspend fun create(
-        settings: KoogLlmSettings,
-        routes: List<KoogProviderRoute>,
-    ): PromptExecutor
-}
-
 /** Keeps a retired executor alive until every prepared or in-flight call releases its lease. */
 internal class KoogLlmGeneration(
-    val adapter: KoogLlmAdapter,
-    private val executor: PromptExecutor,
+    val adapter: LlmAdapter,
+    private val resource: Disposable,
     val routes: List<KoogProviderRoute>,
+    private val mutex: Mutex = Mutex(),
 ) {
-    private val mutex = Mutex()
     private var leases = 0
     private var retired = false
     private var closed = false
@@ -30,7 +25,7 @@ internal class KoogLlmGeneration(
             KoogGenerationLease(this)
         }
 
-    suspend fun retire() {
+    suspend fun retire() = withContext(NonCancellable) {
         closeIfIdle(
             mutex.withLock {
                 retired = true
@@ -49,28 +44,31 @@ internal class KoogLlmGeneration(
         )
     }
 
-    private fun closeLocked(): PromptExecutor? {
+    private fun closeLocked(): Disposable? {
         if (closed) return null
         closed = true
-        return executor
+        return resource
     }
 
-    private fun closeIfIdle(executorToClose: PromptExecutor?) {
-        executorToClose?.close()
+    private suspend fun closeIfIdle(executorToClose: Disposable?) {
+        executorToClose?.dispose()
     }
 
     class KoogGenerationLease internal constructor(
         private val generation: KoogLlmGeneration,
     ) {
         private var released = false
+        private val releaseMutex = Mutex()
 
-        val adapter: KoogLlmAdapter
+        val adapter: LlmAdapter
             get() = generation.adapter
 
-        suspend fun release() {
-            if (!released) {
-                released = true
-                generation.release()
+        suspend fun release() = withContext(NonCancellable) {
+            releaseMutex.withLock {
+                if (!released) {
+                    released = true
+                    generation.release()
+                }
             }
         }
     }

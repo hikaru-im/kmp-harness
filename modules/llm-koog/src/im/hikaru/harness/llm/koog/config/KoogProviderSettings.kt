@@ -42,6 +42,20 @@ data class KoogProviderSettings(
     val defaultMaxTokens: Long? = null,
     /** Input fallback for configured models absent from the installed catalog. */
     val defaultInput: List<im.hikaru.harness.llm.ModelModality>? = null,
+    /** Omission preserves the legacy OpenAI semantics; never infer this from a URL or key. */
+    val vendor: String? = null,
+    val serviceVariant: String? = null,
+    val region: String? = null,
+    val workspace: String? = null,
+    val apiVersion: String? = null,
+    val discoveredCatalog: im.hikaru.harness.llm.LlmCatalogSnapshot? = null,
+    val discoveredCatalogConnection: im.hikaru.harness.llm.LlmProviderConnection? = null,
+    /** Picker preferences never restrict the runtime catalog. */
+    val disabledModelIds: Set<String> = emptySet(),
+    val catalogManaged: Boolean = false,
+    val selectedModelId: String? = null,
+    val catalogUpdatedAt: String? = null,
+    val retainedModels: List<im.hikaru.harness.llm.LlmDiscoveredModel> = emptyList(),
 ) {
     init {
         require(provider.isNotBlank()) {
@@ -52,6 +66,9 @@ data class KoogProviderSettings(
         }
         require(api == null || api.isNotBlank()) {
             "Koog provider api must not be blank"
+        }
+        listOf(vendor, serviceVariant, region, workspace, apiVersion).forEach { value ->
+            require(value == null || value.isNotBlank()) { "Koog connection identity fields must not be blank" }
         }
         require(baseUrl == null || baseUrl.isNotBlank()) {
             "Koog provider base URL must not be blank"
@@ -67,6 +84,9 @@ data class KoogProviderSettings(
         }
         require(models == null || models.map(KoogModelProfile::id).distinct().size == models.size) {
             "Koog provider models must not contain duplicate ids"
+        }
+        require(modelOverrides.isEmpty() || models.isNullOrEmpty()) {
+            "Koog provider '$provider' cannot set modelOverrides beside a non-empty models list"
         }
         require(modelOverrides.keys.all(String::isNotBlank)) {
             "Koog provider model override ids must not be blank"

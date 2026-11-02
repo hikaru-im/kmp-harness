@@ -3,8 +3,12 @@ package im.hikaru.harness.llm.koog
 import im.hikaru.harness.llm.ModelModality
 import im.hikaru.harness.llm.ReasoningEffortId
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
+import im.hikaru.harness.llm.LlmCatalogSnapshot
+import im.hikaru.harness.llm.LlmProviderConnection
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -49,6 +53,8 @@ internal object KoogLlmSettingsJsonCodec {
                 "requestTimeoutMillis", "connectTimeoutMillis", "socketTimeoutMillis",
                 "models", "modelOverrides", "defaultContextWindow", "defaultMaxTokens",
                 "defaultInput",
+                "vendor", "serviceVariant", "region", "workspace", "apiVersion", "discoveredCatalog", "discoveredCatalogConnection",
+                "disabledModelIds", "selectedModelId", "catalogUpdatedAt", "retainedModels", "catalogManaged",
             )
         require(value.keys.all(allowed::contains)) { "Koog provider '$id' contains unknown fields" }
         val provider = value.string("provider") ?: id
@@ -83,17 +89,30 @@ internal object KoogLlmSettingsJsonCodec {
             defaultContextWindow = value.long("defaultContextWindow"),
             defaultMaxTokens = value.long("defaultMaxTokens"),
             defaultInput = value.modalities("defaultInput"),
+            catalogManaged = (value["catalogManaged"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            disabledModelIds = value["disabledModelIds"]?.jsonArray?.map { it.stringValue("disabledModelIds") }?.toSet().orEmpty(),
+            selectedModelId = value.string("selectedModelId"),
+            catalogUpdatedAt = value.string("catalogUpdatedAt"),
+            retainedModels = value["retainedModels"]?.jsonArray?.map { Json.decodeFromJsonElement(im.hikaru.harness.llm.LlmDiscoveredModel.serializer(), it) }.orEmpty(),
+            vendor = value.string("vendor"),
+            serviceVariant = value.string("serviceVariant"),
+            region = value.string("region"),
+            workspace = value.string("workspace"),
+            apiVersion = value.string("apiVersion"),
+            discoveredCatalog = value["discoveredCatalog"]?.takeUnless { it is JsonNull }?.let { Json.decodeFromJsonElement(LlmCatalogSnapshot.serializer(), it) },
+            discoveredCatalogConnection = value["discoveredCatalogConnection"]?.takeUnless { it is JsonNull }?.let { Json.decodeFromJsonElement(LlmProviderConnection.serializer(), it) },
         )
     }
 
     private fun parseModelProfile(element: JsonElement): KoogModelProfile {
         val value = element.jsonObject
-        require(value.keys.all { it in setOf("id", "name", "description", "contextWindow", "maxTokens", "input", "reasoningEfforts", "defaultReasoningEffort") }) {
+        require(value.keys.all { it in setOf("id", "name", "description", "contextWindow", "maxTokens", "maxOutputTokens", "input", "reasoningEfforts", "defaultReasoningEffort") }) {
             "Koog model entry contains unknown fields"
         }
         val id = value.string("id") ?: error("Koog model entry must contain id")
         return KoogModelProfile(
             id = id,
+            maxOutputTokens = value.long("maxOutputTokens"),
             name = value.string("name"),
             description = value.string("description"),
             contextWindow = value.long("contextWindow"),
@@ -162,11 +181,24 @@ internal object KoogLlmSettingsJsonCodec {
             defaultContextWindow?.let { put("defaultContextWindow", it) }
             defaultMaxTokens?.let { put("defaultMaxTokens", it) }
             defaultInput?.let { put("defaultInput", it.toJson()) }
+            put("catalogManaged", catalogManaged)
+            put("disabledModelIds", JsonArray(disabledModelIds.map(::JsonPrimitive)))
+            selectedModelId?.let { put("selectedModelId", it) }
+            catalogUpdatedAt?.let { put("catalogUpdatedAt", it) }
+            put("retainedModels", JsonArray(retainedModels.map { Json.encodeToJsonElement(im.hikaru.harness.llm.LlmDiscoveredModel.serializer(), it) }))
+            vendor?.let { put("vendor", it) }
+            serviceVariant?.let { put("serviceVariant", it) }
+            region?.let { put("region", it) }
+            workspace?.let { put("workspace", it) }
+            apiVersion?.let { put("apiVersion", it) }
+            discoveredCatalog?.let { put("discoveredCatalog", Json.encodeToJsonElement(LlmCatalogSnapshot.serializer(), it)) }
+            discoveredCatalogConnection?.let { put("discoveredCatalogConnection", Json.encodeToJsonElement(LlmProviderConnection.serializer(), it)) }
         }
 
     private fun KoogModelProfile.toJson(): JsonObject =
         buildJsonObject {
             put("id", id)
+            maxOutputTokens?.let { put("maxOutputTokens", it) }
             writeModelFields(
                 name,
                 description,
@@ -236,13 +268,13 @@ internal object KoogLlmSettingsJsonCodec {
         }
 
     private fun JsonObject.string(key: String): String? =
-        this[key]?.let { element ->
+        this[key]?.takeUnless { it is JsonNull }?.let { element ->
             (element as? JsonPrimitive)?.takeIf { it.isString }?.content
                 ?: error("Setting '$key' must be a string")
         }
 
     private fun JsonObject.long(key: String): Long? =
-        this[key]?.let { element ->
+        this[key]?.takeUnless { it is JsonNull }?.let { element ->
             (element as? JsonPrimitive)?.longOrNull
                 ?: error("Setting '$key' must be an integer")
         }
