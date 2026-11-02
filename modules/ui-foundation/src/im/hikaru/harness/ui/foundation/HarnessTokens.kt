@@ -158,6 +158,21 @@ public data class HarnessColors(
      * `bg-background-primary-ghost-hover/50`: half of the 5.5% ghost-hover wash, i.e. ~2.75% ink.
      */
     public val CurrentRowBackground: Color get() = Text.copy(alpha = 0.0275f)
+
+    /**
+     * Scrollbar thumb at rest. Codex styles the platform's own thin scrollbar rather than drawing
+     * one: the live page reports `scrollbar-color: rgba(26,28,31,.078) transparent` for the
+     * sidebar and transcript (`--color-border`, measured through CDP on 2026-10-23), with no
+     * painted track. Keep it distinct from [Border]: the measured ink is about half of that
+     * token's alpha, so reusing [Border] would draw a visibly darker thumb.
+     */
+    public val ScrollbarThumb: Color get() = ChromeText.copy(alpha = 0.078f)
+
+    /**
+     * Scrollbar thumb while hovered or dragged: `--color-border-strong`, measured live as
+     * `rgba(26,28,31,.117)` over the light transcript.
+     */
+    public val ScrollbarThumbStrong: Color get() = ChromeText.copy(alpha = 0.117f)
     public val UserMessageBackground: Color get() = lerp(Canvas, Accent, if (Canvas.luminance() < 0.5f) 0.20f else 0.10f)
 }
 

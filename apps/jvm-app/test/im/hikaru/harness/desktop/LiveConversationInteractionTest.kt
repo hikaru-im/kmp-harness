@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.test.*
@@ -332,6 +333,78 @@ class LiveConversationInteractionTest {
     }
 
     @Test
+    fun codexPrintsOneTimeSeparatorPerTurnInsteadOfAPerMessageTimestamp() = runSkikoComposeUiTest(size = Size(600f, 900f)) {
+        setContent { HarnessTheme { LiveThreadSurface(
+            readyState().copy(selectedSessionId = SessionId("thread"), history = timedHistory(),
+                historyPhase = ConversationDataPhase.Ready),
+            onRetry = { error("No retry expected") }) } }
+        val marker = onNodeWithTag("conversation-time-marker:user-1").assertExists().getUnclippedBoundsInRoot()
+        // Codex's separator: a 52dp row (16dp padding either side of a 20dp line), centred on the
+        // transcript column, whose accessible label is the `10月7日周三 1:02` form.
+        assertEquals(52f, (marker.bottom - marker.top).value, 0.5f)
+        val label = onNodeWithTag("conversation-time-marker:user-1")
+            .fetchSemanticsNode().config[SemanticsProperties.ContentDescription].single()
+        assertTrue(MARKER_LABEL.matches(label), "Separator label was $label")
+        // One separator per turn: the turn's own messages carry none, and the next day adds exactly
+        // one more.
+        onNodeWithTag("conversation-time-marker:user-2").assertExists()
+        onNodeWithTag("conversation-time-marker:user-3").assertExists()
+        onAllNodes(hasTestTagPrefix("conversation-time-marker:")).assertCountEquals(3)
+        onNodeWithTag("message:user-1").assertExists()
+        // The separator shares the message column's centre, so the ticks read as one axis.
+        val column = onNodeWithTag("message:assistant-1").getUnclippedBoundsInRoot()
+        assertEquals((column.left + column.right).value / 2f, (marker.left + marker.right).value / 2f, 1f)
+    }
+
+    @Test
+    fun streamingTailNeverFabricatesASeparatorAndTheSettledTurnSuppliesIt() = runSkikoComposeUiTest(size = Size(600f, 900f)) {
+        val session = SessionId("thread")
+        val settled = Message("user-1", MessageRole.USER, listOf(TextContent("Actual question")),
+            UserMessageSource, FIRST_TURN_MILLIS)
+        var live by mutableStateOf(LiveTranscript(session, listOf(
+            Message("live:1:1", MessageRole.ASSISTANT, listOf(TextContent("Streaming answer")),
+                ModelMessageSource("test", "model")))))
+        setContent { HarnessTheme { LiveThreadSurface(
+            readyState().copy(selectedSessionId = session, history = listOf(settled),
+                historyPhase = ConversationDataPhase.Ready),
+            live = live, onRetry = { error("No retry expected") }) } }
+        // The tail has no durable timestamp, so it adds rows without inventing a date for them.
+        onNodeWithTag("conversation-time-marker:user-1").assertExists()
+        onAllNodes(hasTestTagPrefix("conversation-time-marker:")).assertCountEquals(1)
+        runOnIdle { live = LiveTranscript(session, emptyList()) }
+        waitForIdle()
+        onNodeWithTag("conversation-time-marker:user-1").assertExists()
+        onAllNodes(hasTestTagPrefix("conversation-time-marker:")).assertCountEquals(1)
+    }
+
+    @Test
+    fun timeSeparatorsKeepIndexScrollingAndBottomFollowIntact() = runSkikoComposeUiTest(size = Size(420f, 600f)) {
+        val messages = (0..24).flatMap { index ->
+            listOf(
+                Message("long-$index", MessageRole.USER, listOf(TextContent("Actual message $index " + "unbroken".repeat(100))),
+                    UserMessageSource, FIRST_TURN_MILLIS + index * 60_000L),
+                Message("long-reply-$index", MessageRole.ASSISTANT, listOf(TextContent("Reply $index")),
+                    ModelMessageSource("test", "model"), FIRST_TURN_MILLIS + index * 60_000L + 1_000L),
+            )
+        }
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            LiveThreadSurface(readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
+                onRetry = { error("No retry expected") })
+        } }
+        // Marker rows are part of the document, so the index of the final message shifts by one per
+        // preceding turn; scrolling still reaches it and the timeline is still pinned to the bottom.
+        val lastIndex = messages.size + 24
+        onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(lastIndex)
+        val last = onNodeWithText("Reply 24").assertExists().getUnclippedBoundsInRoot()
+        val root = onNodeWithTag("live-thread").getUnclippedBoundsInRoot()
+        assertTrue(last.left >= root.left && last.right <= root.right)
+        // Scrolling back up finds the separator rows themselves, so they are real timeline items
+        // rather than decoration pinned to a message.
+        onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(0)
+        onNodeWithTag("conversation-time-marker:long-0").assertExists()
+    }
+
+    @Test
     fun streamingTailJoinsTheTimelineAndLeavesWhenItSettles() = runSkikoComposeUiTest(size = Size(420f, 600f)) {
         val session = SessionId("thread")
         val settled = Message("user", MessageRole.USER, listOf(TextContent("Actual question")), UserMessageSource)
@@ -418,10 +491,40 @@ class LiveConversationInteractionTest {
             host = ConversationHostScope(HostId("ui-test-host"), 1, null), connected = true,
             listPhase = ConversationDataPhase.Ready, historyPhase = ConversationDataPhase.Empty,
             runState = ConversationRunState.Idle, draft = draft)
+        // Fixed instants, never the wall clock: the separator label must be reproducible. The two
+        // 2026-10-07 turns are 43 minutes apart, exactly like the live reference's 1:02/1:45 pair.
+        const val FIRST_TURN_MILLIS = 1_791_364_500_000L
+        const val SECOND_TURN_MILLIS = FIRST_TURN_MILLIS + 43 * 60_000L
+        const val NEXT_DAY_TURN_MILLIS = 1_791_453_600_000L
+
         fun typedHistory() = listOf(
             Message("user", MessageRole.USER, listOf(TextContent("Actual user question")), UserMessageSource),
             Message("assistant", MessageRole.ASSISTANT, listOf(TextContent("Actual assistant text"),
                 ReasoningContent("Actual typed reasoning"), ToolCallContent("call-1", "test_tool", "{\"actual\":true}"),
                 ToolResultContent("call-1", listOf(TextContent("Actual tool output")))), ModelMessageSource("test", "model")))
+
+        /** Three turns over two local days: two separators on one date, one across the boundary. */
+        fun timedHistory() = listOf(
+            Message("user-1", MessageRole.USER, listOf(TextContent("第一天第一个问题")), UserMessageSource, FIRST_TURN_MILLIS),
+            Message("assistant-1", MessageRole.ASSISTANT, listOf(TextContent("第一天第一个回答")),
+                ModelMessageSource("test", "model"), FIRST_TURN_MILLIS + 1_000L),
+            Message("user-2", MessageRole.USER, listOf(TextContent("第一天第二个问题")), UserMessageSource, SECOND_TURN_MILLIS),
+            Message("assistant-2", MessageRole.ASSISTANT, listOf(TextContent("第一天第二个回答")),
+                ModelMessageSource("test", "model"), SECOND_TURN_MILLIS + 1_000L),
+            Message("user-3", MessageRole.USER, listOf(TextContent("第二天的问题")), UserMessageSource, NEXT_DAY_TURN_MILLIS),
+            Message("assistant-3", MessageRole.ASSISTANT, listOf(TextContent("第二天的回答")),
+                ModelMessageSource("test", "model"), NEXT_DAY_TURN_MILLIS + 1_000L),
+        )
+
+        /**
+         * Codex's `10月7日周三 1:02` label, matched by shape rather than by recomputing it, so the
+         * assertion stays honest without pinning the host's timezone.
+         */
+        val MARKER_LABEL = Regex("""^\d{1,2}月\d{1,2}日周[一二三四五六日] \d{1,2}:\d{2}$""")
+
+        fun hasTestTagPrefix(prefix: String) =
+            SemanticsMatcher("TestTag starts with $prefix") { node ->
+                node.config.getOrNull(SemanticsProperties.TestTag)?.startsWith(prefix) == true
+            }
     }
 }

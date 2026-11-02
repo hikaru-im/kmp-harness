@@ -1216,6 +1216,7 @@ private val NavigatorScrim: Color = Color.Black.copy(alpha = 0.32f)
  * Text column of a navigator row: the row inset plus an icon box and its gap, so a project's children
  * align under the project name and a recent title or a section label aligns under a project glyph.
  */
+private val NavigatorScrollbarGutter: Dp = 11.dp
 private val NavigatorTextIndent: Dp =
     HarnessTokens.Control.NavigatorPaddingX + HarnessTokens.Control.NavigatorIcon + HarnessTokens.Spacing.Two
 
@@ -1291,16 +1292,28 @@ private fun WorkspaceNavigator(
             ) {
                 SidebarNewChatRow(onClick = onNewTask)
             }
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        // Section rows stop 11px short of the pane edge: Codex reserves that strip for
-                        // its scrollbar, while the header and New chat row keep the full width.
-                        .padding(start = HarnessTokens.Control.NavigatorPaddingX, end = HarnessTokens.Control.NavigatorPaddingX + 11.dp)
-                        .verticalScroll(rememberScrollState()),
+            val scrollState = rememberScrollState()
+            val scrollbarMetrics by remember {
+                derivedStateOf {
+                    harnessScrollbarMetrics(
+                        value = scrollState.value,
+                        maxValue = scrollState.maxValue,
+                        viewportSize = scrollState.viewportSize,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().weight(1f),
             ) {
+                Column(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            // Section rows stop short of the pane edge: Codex reserves that strip for
+                            // its scrollbar, while the header and New chat row keep the full width.
+                            .padding(start = HarnessTokens.Control.NavigatorPaddingX)
+                            .verticalScroll(scrollState),
+                ) {
                 val visibleProjects =
                     projectNodes.filter { project ->
                         query.isEmpty() ||
@@ -1406,6 +1419,20 @@ private fun WorkspaceNavigator(
                     SidebarHint("没有找到匹配的项目或会话")
                 }
                 Spacer(Modifier.height(HarnessTokens.Spacing.Two))
+                }
+                HarnessOverlayScrollbar(
+                    metrics = scrollbarMetrics,
+                    modifier = Modifier.width(NavigatorScrollbarGutter).fillMaxHeight(),
+                    variant = HarnessScrollbarVariant.Arrowless,
+                    onScrollToFraction = { fraction ->
+                        scrollState.dispatchRawDelta(
+                            fraction.coerceIn(0f, 1f) * scrollState.maxValue - scrollState.value,
+                        )
+                    },
+                    onScrollBy = scrollState::dispatchRawDelta,
+                    testTag = "workspace-navigator-scrollbar",
+                    contentDescription = "工作区导航滚动条",
+                )
             }
         }
     }
@@ -1473,14 +1500,26 @@ private fun SettingsNavigatorSearch(value: String, onValueChange: (String) -> Un
 @Composable
 private fun ColumnScope.SettingsNavigatorGroups(state: SettingsNavigatorState, onSelect: (SettingsNavItem) -> Unit) {
     val groups = settingsNavigatorGroups(state)
-    Column(
-        modifier =
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = HarnessTokens.Control.NavigatorPaddingX),
+    val scrollState = rememberScrollState()
+    val scrollbarMetrics by remember {
+        derivedStateOf {
+            harnessScrollbarMetrics(
+                value = scrollState.value,
+                maxValue = scrollState.maxValue,
+                viewportSize = scrollState.viewportSize,
+            )
+        }
+    }
+    Row(
+        modifier = Modifier.weight(1f).fillMaxWidth(),
     ) {
+        Column(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = HarnessTokens.Control.NavigatorPaddingX),
+        ) {
         Spacer(Modifier.height(HarnessTokens.Spacing.Two))
         if (groups.isEmpty()) {
             SidebarHint("没有匹配的设置")
@@ -1497,7 +1536,22 @@ private fun ColumnScope.SettingsNavigatorGroups(state: SettingsNavigatorState, o
                     }
                 }
             }
+            Spacer(Modifier.height(HarnessTokens.Spacing.Two))
         }
+        }
+        HarnessOverlayScrollbar(
+            metrics = scrollbarMetrics,
+            modifier = Modifier.width(NavigatorScrollbarGutter).fillMaxHeight(),
+            variant = HarnessScrollbarVariant.Arrowless,
+            onScrollToFraction = { fraction ->
+                scrollState.dispatchRawDelta(
+                    fraction.coerceIn(0f, 1f) * scrollState.maxValue - scrollState.value,
+                )
+            },
+            onScrollBy = scrollState::dispatchRawDelta,
+            testTag = "settings-navigator-scrollbar",
+            contentDescription = "设置导航滚动条",
+        )
     }
 }
 
@@ -1714,11 +1768,36 @@ private fun NavigatorPane(
         }
         headerExtra?.invoke()
         HorizontalDivider(color = HarnessTokens.Colors.BorderSubtle, modifier = Modifier.padding(vertical = HarnessTokens.Spacing.One))
-        Column(
-            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One),
-        ) {
-            content()
+        val scrollState = rememberScrollState()
+        val scrollbarMetrics by remember {
+            derivedStateOf {
+                harnessScrollbarMetrics(
+                    value = scrollState.value,
+                    maxValue = scrollState.maxValue,
+                    viewportSize = scrollState.viewportSize,
+                )
+            }
+        }
+        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Column(
+                modifier = Modifier.weight(1f).verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One),
+            ) {
+                content()
+            }
+            HarnessOverlayScrollbar(
+                metrics = scrollbarMetrics,
+                modifier = Modifier.width(NavigatorScrollbarGutter).fillMaxHeight(),
+                variant = HarnessScrollbarVariant.Arrowless,
+                onScrollToFraction = { fraction ->
+                    scrollState.dispatchRawDelta(
+                        fraction.coerceIn(0f, 1f) * scrollState.maxValue - scrollState.value,
+                    )
+                },
+                onScrollBy = scrollState::dispatchRawDelta,
+                testTag = "navigator-pane-scrollbar",
+                contentDescription = "导航滚动条",
+            )
         }
     }
 }

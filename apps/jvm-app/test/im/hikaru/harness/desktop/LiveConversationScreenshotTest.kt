@@ -150,6 +150,7 @@ class LiveConversationScreenshotTest {
             role = MessageRole.USER,
             content = listOf(TextContent("检查共享会话界面，展示 reasoning、工具调用和工具结果。")),
             source = UserMessageSource,
+            timestampMillis = FIRST_TURN_MILLIS,
         ),
         Message(
             id = "screenshot-assistant-1",
@@ -164,6 +165,7 @@ class LiveConversationScreenshotTest {
                 ),
             ),
             source = ModelMessageSource(provider = "screenshot-provider", model = "screenshot-model"),
+            timestampMillis = FIRST_TURN_MILLIS + 1_000,
         ),
         Message(
             id = "screenshot-tool-result-1",
@@ -173,6 +175,23 @@ class LiveConversationScreenshotTest {
                 content = listOf(TextContent("// Screenshot fixture\nval history: List<Message> = emptyList()")),
             )),
             source = ToolMessageSource(callId = "screenshot-read-1"),
+            timestampMillis = FIRST_TURN_MILLIS + 2_000,
+        ),
+        // A second turn the same day and a third the next one, so the captures show two separators
+        // and the date-boundary label Codex prints (`10月8日周四`).
+        Message(
+            id = "screenshot-user-2",
+            role = MessageRole.USER,
+            content = listOf(TextContent("第二天再确认一次跨日时间刻度。")),
+            source = UserMessageSource,
+            timestampMillis = SECOND_TURN_MILLIS,
+        ),
+        Message(
+            id = "screenshot-assistant-2",
+            role = MessageRole.ASSISTANT,
+            content = listOf(TextContent("跨日分隔线已确认。")),
+            source = ModelMessageSource(provider = "screenshot-provider", model = "screenshot-model"),
+            timestampMillis = SECOND_TURN_MILLIS + 1_000,
         ),
     )
 
@@ -228,6 +247,10 @@ class LiveConversationScreenshotTest {
         val captureThemes = listOf("light" to HarnessThemeMode.Light, "dark" to HarnessThemeMode.Dark)
         val fixtureHost = ConversationHostScope(HostId("screenshot-local-host"), generation = 1, identity = null)
         val fixtureSessionId = SessionId("screenshot-conversation")
+        // Fixed instants, never the wall clock: the marker label and its date boundary must be
+        // reproducible across runs. 2026-10-07T09:15:00Z, then 2026-10-08T10:00:00Z.
+        val FIRST_TURN_MILLIS = 1_791_364_500_000L
+        val SECOND_TURN_MILLIS = 1_791_453_600_000L
         val fixturePanelScope = ThreadPanelScope(fixtureHost.hostId, fixtureSessionId)
         val fixtureModels = listOf(
             ConversationModelChoice("screenshot-provider", "screenshot-model", "Screenshot model", listOf("low", "medium", "high")),
