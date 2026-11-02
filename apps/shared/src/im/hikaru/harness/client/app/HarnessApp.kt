@@ -102,6 +102,7 @@ import im.hikaru.harness.client.git.ManagedWorktreeChatArchiveReceipt
 import im.hikaru.harness.client.git.SettingsGitPage
 import im.hikaru.harness.client.git.WorktreesPage
 import im.hikaru.harness.client.summary.ThreadSummaryPanel
+import im.hikaru.harness.client.summary.ThreadSummarySectionState
 import im.hikaru.harness.client.summary.ThreadSummaryActivity
 import im.hikaru.harness.client.summary.ThreadSummaryActivityController
 import im.hikaru.harness.client.summary.ThreadSummaryActivityKind
@@ -336,6 +337,9 @@ public fun HarnessApp(
     // The thread summary island is separate from the tabbed context panel; it survives tab changes
     // but is only drawn on a Thread page.
     var summaryPanelOpen by remember { mutableStateOf(false) }
+    // Section expansion survives closing the island. A durable store is not wired yet; the panel
+    // state takes a persist callback when one exists.
+    val summarySectionState = remember { ThreadSummarySectionState() }
     // The Workspace Navigator is user-resizable; the drag writes this preference and the shell
     // clamps it (navigatorResizeWidth) before laying out (navigatorWidth).
     var navigatorWidth by remember { mutableStateOf(NavigatorPreferredWidth) }
@@ -1459,6 +1463,7 @@ public fun HarnessApp(
                         onRetryScheduled = if (scheduledBindingReady) {
                             { schedulingActionScope.launch { scheduledRepository.load() } }
                         } else null,
+                        sectionState = summarySectionState,
                     )
                 }
             } else {
