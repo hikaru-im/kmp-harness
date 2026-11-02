@@ -110,6 +110,8 @@ public interface ConversationOperations {
     public suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt
     public suspend fun prompt(connection: Connection, id: SessionId, message: Message, options: AgentOptions): SessionPrompt =
         prompt(connection, id, message)
+    /** Null means the connection cannot report the session's model configuration. */
+    public suspend fun modelConfiguration(connection: Connection, id: SessionId): AgentOptions? = null
     /** DSH Stop keeps the queued inbox; only the running turn is aborted. */
     public suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean = true) =
         connection.session.cancel(id, keepInbox = keepInbox)
@@ -130,6 +132,8 @@ public object RealConversationOperations : ConversationOperations {
     override suspend fun prompt(connection: Connection, id: SessionId, message: Message, options: AgentOptions): SessionPrompt =
         if (options.provider == null || options.model == null) connection.session.prompt(id, message)
         else connection.session.prompt(id, message, options)
+    override suspend fun modelConfiguration(connection: Connection, id: SessionId): AgentOptions? =
+        connection.session.modelConfiguration(id)
     override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) = connection.session.cancel(id, keepInbox = keepInbox)
     override suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
         connection.session.fork(parent, beforeMessageId)
@@ -512,7 +516,7 @@ public class ConversationController(
         return start({ historyJob = it }) {
             try {
                 val result = operations.history(fence.connection, id).map(::snapshotMessage)
-                val configuration = fence.connection.session.modelConfiguration(id)
+                val configuration = operations.modelConfiguration(fence.connection, id)
                 currentCoroutineContext().ensureActive()
                 if (valid(fence) && request == historyRequest) {
                     mutableState.value = state.value.copy(
