@@ -25,15 +25,17 @@
 - restored 路径相对 `references/decode-codex/restored/`；
 - Kotlin 路径相对仓库根。
 
+区域级索引之外，[逐页面 · 逐组件 · 逐功能核对](page-component-feature-audit-2026-11-02.md) 按页面给出组件与功能两层的逐项状态和缺口，两者状态口径一致。
+
 ## 二、总览
 
 | # | 区域 | restored | Kotlin | 状态 | 主要缺口 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 会话时间线 | `conversations/`（478） | `client/conversation/`、`client/app/` | ◐ | 搜索、fork UI、resume 错误恢复、虚拟化列表、分隔线、patch 失败对话框 |
-| 2 | 摘要面板 | `conversations/local-conversation-thread-parts/thread-summary-*` | `client/summary/` | ◐ | Sources / Artifacts / Plan / Side chats / Automations / Pull requests、autoCollapse、三种 mode |
+| 2 | 摘要面板 | `conversations/local-conversation-thread-parts/thread-summary-*` | `client/summary/` | ◐ | R1 已补小节顺序、autoCollapse 与三种 mode；展开状态落盘待设置存储接入，plan/artifacts/side-chat 数据源尚缺 |
 | 3 | 子 Agent / 后台任务 | `conversations/background-*`、`subagent-activity-*` | `client/panels/ThreadPanels*` | ◐ | 最终回复节、diffStats 徽标、autoCollapse |
 | 4 | Composer | `composer/`（205） | `client/app/ConversationComposer*` | ◐ | 附件、@mention、slash/命令键位、文件上下文监听 |
-| 5 | Git / Diff / Review | `review/`（146）、`git/`（17）、`worktree/`（12） | `client/git/` | ◐ | image/SVG/PDF 预览、sticky、上下文展开、diff 搜索、行内评论、大 diff 横幅、blame |
+| 5 | Git / Diff / Review | `review/`（146）、`git/`（17）、`worktree/`（12） | `client/git/` | ◐ | R3 已补 image/SVG/PDF 预览；余 sticky、上下文展开、diff 搜索、行内评论、大 diff 横幅、blame |
 | 6 | 插件 / MCP / Skills | `plugins/`（111） | `client/plugins/`、`modules/bundle/desktop/` | ◐ | MCP 真实连接/授权、MCP App 宿主、hooks 写入/启停、scripts 生命周期、目录型 apps |
 | 7 | 定时任务 | `automations/`（37）、`automation/`（30） | `client/scheduled/`、`client/scheduling/` | ◐ | 触发条件（triggers）；应用退出后执行明确不做 |
 | 8 | 终端 | `terminal/`（16） | `client/panels/PtyTerminal*`、`TerminalTextInputBridge` | ◐ | 链接处理、原生窗口组合、远端链路 |
@@ -400,6 +402,7 @@ R0 审计发现两处需要修正 [restored-code-task-plan-2026-11-02.md](restor
 
 - R1：已完成（摘要面板小节与交互原语）。
 - R3：已完成（image / SVG / PDF 富预览；PDF 仅 JVM 渲染）。
+- 页面级核对：已完成，见 [逐页面 · 逐组件 · 逐功能核对](page-component-feature-audit-2026-11-02.md)；P0 缺口为审批交互、对话内 diff 卡片、布局状态持久化。
 - R6：按第 6 节接入 MCP 连接/授权，先把「能力名读取」升级为「服务可用」。
 - R4/R8：按第四节修正后的范围执行。
 - 本索引随实现推进更新；状态变化以源码和验证记录为准，不以计划文字为准。
