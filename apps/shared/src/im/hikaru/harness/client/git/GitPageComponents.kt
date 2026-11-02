@@ -1,5 +1,6 @@
 package im.hikaru.harness.client.git
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,7 +20,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -293,11 +296,11 @@ internal fun GitDiffView(
         )
     }
     val allExpanded = document.files.isNotEmpty() && document.files.all { it.header in expandedHeaders }
-    // `fOr`: only markdown files, never a deletion, and only while the toggle is on.
+    // `fOr`: markdown, image, SVG and PDF files, never a deletion, and only while the toggle is on.
     val previewPaths = remember(document, richPreview) {
         if (!richPreview) emptyList()
         else document.files
-            .filter { gitDiffPreviewKind(it.path, it.status == GitDiffFileStatus.Deleted, true) == GitDiffPreviewKind.Markdown }
+            .filter { gitDiffPreviewKind(it.path, it.status == GitDiffFileStatus.Deleted, true) != GitDiffPreviewKind.Diff }
             .map { it.path }
     }
     // Re-request when the diff itself changes: the controller drops its cache then, so the card
@@ -537,38 +540,109 @@ private fun GitDiffFileCard(
                     style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
             }
         }
-        if (expanded && file.body.isNotEmpty()) {
+        val hasPreviewKind = preview != GitDiffPreviewKind.Diff
+        if (expanded && (file.body.isNotEmpty() || hasPreviewKind)) {
             val markdown = if (preview == GitDiffPreviewKind.Markdown) {
                 (previewFile as? GitPreviewFile.Ready)?.text
             } else {
                 null
             }
+            val binary = if (hasPreviewKind && preview != GitDiffPreviewKind.Markdown) {
+                previewFile as? GitPreviewFile.Binary
+            } else {
+                null
+            }
             if (markdown != null) {
                 SelectionContainer { GitMarkdownPreview(file.path, markdown) }
+            } else if (binary != null) {
+                GitBinaryPreview(preview, file.path, binary.bytes) {
+                    GitDiffFallbackBody(file, layout, wrap, wordDiffs, hideImports)
+                }
             } else {
-                if (preview == GitDiffPreviewKind.Markdown) {
-                    // The original silently falls back to the diff while a preview loads or fails;
-                    // this page names the reason instead of hiding it.
-                    val notice = when (previewFile) {
-                        null -> "尚未读取文件，先显示差异文本。"
-                        is GitPreviewFile.Loading -> "正在加载预览…"
-                        is GitPreviewFile.Unavailable -> previewFile.reason
-                        is GitPreviewFile.Ready -> null
-                    }
-                    if (notice != null) {
-                        SelectionContainer {
-                            HarnessText(notice, Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                .testTag("git-diff-rich-preview-notice-${file.path}"),
-                                style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
-                        }
+                // The original silently falls back to the diff while a preview loads or fails;
+                // this page names the reason instead of hiding it.
+                val notice = when (previewFile) {
+                    null -> if (hasPreviewKind) "尚未读取文件，先显示差异文本。" else null
+                    is GitPreviewFile.Loading -> "正在加载预览…"
+                    is GitPreviewFile.Unavailable -> previewFile.reason
+                    is GitPreviewFile.Ready, is GitPreviewFile.Binary -> null
+                }
+                if (notice != null) {
+                    SelectionContainer {
+                        HarnessText(notice, Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            .testTag("git-diff-rich-preview-notice-${file.path}"),
+                            style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
                     }
                 }
-                if (layout == GitDiffLayout.Split) {
-                    GitDiffSplitView(file, wordDiffs, hideImports)
-                } else {
-                    GitUnifiedDiff(file.body, wrap, wordDiffs, hideImports)
-                }
+                GitDiffFallbackBody(file, layout, wrap, wordDiffs, hideImports)
             }
+        }
+    }
+}
+
+/** The diff body a rich preview falls back to when it cannot be decoded. */
+@Composable
+private fun GitDiffFallbackBody(
+    file: GitDiffFile,
+    layout: GitDiffLayout,
+    wrap: Boolean,
+    wordDiffs: Boolean,
+    hideImports: Boolean,
+) {
+    if (file.body.isEmpty()) return
+    if (layout == GitDiffLayout.Split) {
+        GitDiffSplitView(file, wordDiffs, hideImports)
+    } else {
+        GitUnifiedDiff(file.body, wrap, wordDiffs, hideImports)
+    }
+}
+
+/**
+ * Image, SVG and PDF previews read from the working tree. Decoding happens once per byte array; a
+ * format the platform cannot decode keeps the diff text instead of drawing an empty frame.
+ */
+@Composable
+private fun GitBinaryPreview(
+    kind: GitDiffPreviewKind,
+    path: String,
+    bytes: ByteArray,
+    fallback: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val bitmap = remember(kind, bytes) {
+        when (kind) {
+            GitDiffPreviewKind.Image -> decodeGitRasterPreview(bytes)
+            GitDiffPreviewKind.Pdf -> renderGitPdfPreview(bytes)
+            else -> null
+        }
+    }
+    val painter = remember(kind, bytes, density) {
+        if (kind == GitDiffPreviewKind.Svg) decodeGitSvgPreview(bytes, density) else null
+    }
+    val previewModifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).padding(10.dp)
+        .testTag("git-diff-rich-preview-${kind.name.lowercase()}")
+    when {
+        bitmap != null -> Image(
+            bitmap = bitmap,
+            contentDescription = path,
+            modifier = previewModifier,
+            contentScale = ContentScale.Fit,
+        )
+        painter != null -> Image(
+            painter = painter,
+            contentDescription = path,
+            modifier = previewModifier,
+            contentScale = ContentScale.Fit,
+        )
+        else -> {
+            HarnessText(
+                "无法解码该文件的预览，先显示差异文本。",
+                Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    .testTag("git-diff-rich-preview-notice-$path"),
+                style = MaterialTheme.typography.bodySmall,
+                color = HarnessTokens.Colors.TextMuted,
+            )
+            fallback()
         }
     }
 }

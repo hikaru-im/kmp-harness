@@ -6,8 +6,21 @@ package im.hikaru.harness.client.git
  */
 public val GitMarkdownExtensions: Set<String> = setOf("markdown", "md", "mdown", "mdx", "mkd")
 
-/** What a diff file card shows when rich preview is on. Image and PDF previews are not implemented. */
-public enum class GitDiffPreviewKind { Diff, Markdown }
+/** Raster formats the platform image decoder can turn into an `ImageBitmap`. */
+public val GitImageExtensions: Set<String> =
+    setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif", "tif", "tiff")
+
+/** Vector images render through the SVG painter, not the raster decoder. */
+public val GitSvgExtensions: Set<String> = setOf("svg")
+
+public val GitPdfExtensions: Set<String> = setOf("pdf")
+
+/**
+ * What a diff file card shows when rich preview is on. Codex's `RichPreviewKind` is
+ * `image | markdown | pdf | pdb`; SVG is split out because it needs a vector painter rather than the
+ * raster decoder, and `pdb` stays on the diff fallback (no molecular renderer here).
+ */
+public enum class GitDiffPreviewKind { Diff, Markdown, Image, Svg, Pdf }
 
 /**
  * The lowercased extension of the base name, or null when there is none. Mirrors the original
@@ -24,16 +37,39 @@ public fun gitFileExtension(path: String): String? {
 }
 
 /**
- * Original `fOr({filePath,imagePreviewMode,isDeletion,richPreviewEnabled})`, reduced to the branch
- * this Harness can serve: a deleted file never previews, and only markdown files become a rendered
- * preview. Raster images, SVG and PDF keep their diff text here (no preview source is wired).
+ * Original `fOr({filePath,imagePreviewMode,isDeletion,richPreviewEnabled})`: a deleted file never
+ * previews, and markdown, raster images, SVG and PDF each get their own renderer while everything
+ * else keeps its diff text.
  */
-public fun gitDiffPreviewKind(path: String, isDeletion: Boolean, richPreviewEnabled: Boolean): GitDiffPreviewKind =
-    if (richPreviewEnabled && !isDeletion && gitFileExtension(path) in GitMarkdownExtensions) {
-        GitDiffPreviewKind.Markdown
-    } else {
-        GitDiffPreviewKind.Diff
+public fun gitDiffPreviewKind(path: String, isDeletion: Boolean, richPreviewEnabled: Boolean): GitDiffPreviewKind {
+    if (!richPreviewEnabled || isDeletion) return GitDiffPreviewKind.Diff
+    val extension = gitFileExtension(path)
+    return when {
+        extension in GitMarkdownExtensions -> GitDiffPreviewKind.Markdown
+        extension in GitSvgExtensions -> GitDiffPreviewKind.Svg
+        extension in GitPdfExtensions -> GitDiffPreviewKind.Pdf
+        extension in GitImageExtensions -> GitDiffPreviewKind.Image
+        else -> GitDiffPreviewKind.Diff
     }
+}
+
+/**
+ * MIME type when the preview must be read as bytes rather than UTF-8 text. SVG is text on disk but
+ * still travels through the binary path so the card can render it as a vector.
+ */
+public fun gitPreviewBinaryMimeType(path: String): String? = when (gitFileExtension(path)) {
+    "png" -> "image/png"
+    "jpg", "jpeg" -> "image/jpeg"
+    "gif" -> "image/gif"
+    "webp" -> "image/webp"
+    "bmp" -> "image/bmp"
+    "ico" -> "image/x-icon"
+    "avif" -> "image/avif"
+    "tif", "tiff" -> "image/tiff"
+    "svg" -> "image/svg+xml"
+    "pdf" -> "application/pdf"
+    else -> null
+}
 
 /**
  * A diff-relative path is safe to resolve inside the repository root when it is non-blank, not
@@ -47,5 +83,8 @@ public fun gitPreviewPathIsSafe(path: String): Boolean {
     return segments.none { it.isEmpty() || it == "." || it == ".." }
 }
 
-/** Largest preview the renderer will accept; larger files fall back to the diff. */
+/** Largest text preview the renderer will accept; larger files fall back to the diff. */
 public const val GitPreviewTextLimit: Int = 256 * 1024
+
+/** Largest binary preview (image, SVG or PDF); larger files fall back to the diff. */
+public const val GitPreviewBinaryLimit: Int = 8 * 1024 * 1024

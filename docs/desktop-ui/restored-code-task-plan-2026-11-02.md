@@ -112,6 +112,16 @@
 
 **验收**：image / svg / pdf / markdown / 未知格式 / 已删除文件六类 fixture 的 interaction test；大文件有明确上限与错误态。
 
+**R3 执行记录（2026-11-02）**
+
+- `GitRichPreview.kt`：`GitDiffPreviewKind` 从 `Diff | Markdown` 扩展为 `Diff | Markdown | Image | Svg | Pdf`；新增 `GitImageExtensions`、`GitSvgExtensions`、`GitPdfExtensions`、`gitPreviewBinaryMimeType`；SVG 与位图分开是因为前者走 vector painter 而不是位图解码器；`pdb` 保持 diff 回落（本仓库没有分子渲染器）。
+- 读取上限：文本 `GitPreviewTextLimit` 256 KiB，二进制 `GitPreviewBinaryLimit` 8 MiB；超限仍按 `Unavailable` 回落 diff。
+- `GitPreviewFile.Binary(bytes, mimeType)`：Host 读取在 UTF-8 解码前按 MIME 判定返回原始字节，删除文件与不安全路径仍在同一处拒绝；`GitController` 的缓存终止判定包含 `Binary`，同一文件不会重复读取。
+- 解码：`GitPreviewDecoding.kt` 用 expect/actual。位图走 `components-resources` 的 `decodeToImageBitmap`；SVG 走 `decodeToSvgPainter`（JVM/iOS），Android 暂无 Skia SVG 模块返回 null；PDF 只有 JVM 用 PDFBox 3.0.3 渲染首页（96 DPI），其他平台返回 null。解码失败一律显示「无法解码该文件的预览，先显示差异文本。」并回落到 diff，不画空框。
+- `GitPageComponents.kt`：`previewPaths` 收集所有非 Diff 类型，删除文件被排除；卡片新增 `GitBinaryPreview` 与 `GitDiffFallbackBody`，未知格式保持 diff 文本。
+- 验证：`GitRichPreviewTest` 8 项、`GitPreviewDecodingTest` 6 项（desktop runtime，Skia 原生库只在 Compose 测试进程可用）、`GitDiffBinaryPreviewInteractionTest` 2 项（六类 fixture 同一 diff）、既有 `GitDiffRichPreviewInteractionTest` 4 项与 shared git 包 134 项全部通过（jvm）。
+- 未覆盖：iOS/Android 的 SVG 与 PDF 实际实现只做了编译级对齐，本次 jvm 构建无法验证这两个 target（它们的编译被既有的无关错误挡住）。
+
 ---
 
 ### R4 — Git Diff 阅读能力（P1）

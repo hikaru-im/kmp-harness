@@ -33,6 +33,9 @@ public class DesktopGitBackend(
             val file = Path.of(repository.root).resolve(path)
             if (!Files.isRegularFile(file, NOFOLLOW_LINKS))
                 return@withContext GitPreviewFile.Unavailable("未找到可预览的文件，先显示差异文本。")
+            // Images, SVG and PDF are read as bytes for their own renderer; everything else is text.
+            val mimeType = gitPreviewBinaryMimeType(path)
+            val limit = if (mimeType != null) GitPreviewBinaryLimit else GitPreviewTextLimit
             val bytes = ByteArrayOutputStream()
             try {
                 Files.newInputStream(file).use { input ->
@@ -40,7 +43,7 @@ public class DesktopGitBackend(
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
-                        if (bytes.size() + count > GitPreviewTextLimit)
+                        if (bytes.size() + count > limit)
                             return@withContext GitPreviewFile.Unavailable("文件过大，未显示富文本预览。")
                         bytes.write(buffer, 0, count)
                     }
@@ -49,6 +52,9 @@ public class DesktopGitBackend(
                 return@withContext GitPreviewFile.Unavailable("未找到可预览的文件，先显示差异文本。")
             } catch (_: Exception) {
                 return@withContext GitPreviewFile.Unavailable("读取预览失败，请重试。")
+            }
+            if (mimeType != null) {
+                return@withContext GitPreviewFile.Binary(bytes.toByteArray(), mimeType)
             }
             try {
                 GitPreviewFile.Ready(bytes.toByteArray().decodeToString(throwOnInvalidSequence = true))

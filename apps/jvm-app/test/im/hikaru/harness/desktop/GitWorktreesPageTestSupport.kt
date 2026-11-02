@@ -187,6 +187,8 @@ internal class GitWorktreesPageAdapter : GitBackend, GitWorktreeCreator, GitBran
     var fullPatch: String? = null
     /** Working-tree text by diff path; a path absent from the map reads as Unavailable. */
     var previewFiles = mapOf<String, String>()
+    /** Working-tree bytes by diff path, for the image/SVG/PDF previews the host reads undecoded. */
+    var previewBinaries = mapOf<String, GitPreviewFile.Binary>()
     var changes = emptyList<GitChange>()
     var emptyRefs = false
     var emptyWorktrees = false
@@ -239,6 +241,7 @@ internal class GitWorktreesPageAdapter : GitBackend, GitWorktreeCreator, GitBran
     override suspend fun readPreviewFile(repository: GitRepository, path: String): GitPreviewFile {
         previewReads += repository to path
         previewGate?.await()
+        previewBinaries[path]?.let { return it }
         val text = previewFiles[path] ?: return GitPreviewFile.Unavailable("受控夹具没有该路径的预览内容。")
         return GitPreviewFile.Ready(text)
     }

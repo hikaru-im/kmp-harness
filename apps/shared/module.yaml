@@ -20,12 +20,14 @@ dependencies:
   - ../../contracts/harness-protocol
   - $compose.animation
   - $compose.foundation: exported
+  - org.jetbrains.compose.components:components-resources:1.11.1
   - org.jetbrains.compose.material3:material3:1.11.0-alpha07: exported
   - org.jetbrains.androidx.navigation3:navigation3-ui:1.1.0-alpha01: exported
 
 dependencies@jvm:
   - net.java.dev.jna:jna-platform:5.18.1
   - io.ktor:ktor-client-cio:3.5.1
+  - org.apache.pdfbox:pdfbox:3.0.3
 
 dependencies@android:
   - io.ktor:ktor-client-okhttp:3.5.1

@@ -440,7 +440,11 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         paths.distinct().forEach { path ->
             if (path in previewJobs) return@forEach
             val known = state.value.previewFiles[path]
-            if (known is GitPreviewFile.Ready || known is GitPreviewFile.Unavailable) return@forEach
+            if (known is GitPreviewFile.Ready || known is GitPreviewFile.Binary ||
+                known is GitPreviewFile.Unavailable
+            ) {
+                return@forEach
+            }
             mutableState.value = state.value.copy(previewFiles = state.value.previewFiles + (path to GitPreviewFile.Loading))
             val job = tasks.launch(start = CoroutineStart.LAZY) {
                 val result = try {

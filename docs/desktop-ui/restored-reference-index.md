@@ -206,8 +206,8 @@
 | 分支切换、提交、新建分支、刷新、复制 apply | ✅ | 契约文档 + 验证批次 |
 | diff 布局 unified/split/auto | ✅ | `GitDiffLayout.kt:7` 枚举；`GitDiffView` 选择器 |
 | 词级 diff、隐藏空白、隐藏 imports、加载完整文件 | ✅ | `GitWordDiff.kt`、`GitDiffView` 参数 |
-| markdown 富预览 | ✅ | `GitRichPreview.kt:10` 只有 `Diff | Markdown` |
-| image / SVG / PDF 预览 | ○ | `GitRichPreview.kt:27-35` 注释明确 “no preview source is wired” |
+| markdown 富预览 | ✅ | `GitRichPreview.kt` 的 `GitDiffPreviewKind.Markdown` |
+| image / SVG / PDF 预览 | ✅ | R3：`GitDiffPreviewKind.Image/Svg/Pdf` + `GitPreviewDecoding.kt`；PDF 仅 JVM 渲染，Android/iOS 回落 diff |
 | sticky 文件头 | ○ | `GitPageComponents.kt:260` 只是注释描述原版；无 sticky modifier |
 | 上下文展开 | ○ | 无 `expandContext` / context lines 实现 |
 | diff 内搜索 | ○ | 无 `diff-search-*` 对应 |
@@ -398,8 +398,8 @@ R0 审计发现两处需要修正 [restored-code-task-plan-2026-11-02.md](restor
 
 ## 五、下一步
 
-- R1：按本索引第 2 节补齐摘要面板小节与交互原语。
-- R3：按第 5 节把 `GitRichPreview.kt` 从 `Diff | Markdown` 扩展到 image/SVG/PDF。
+- R1：已完成（摘要面板小节与交互原语）。
+- R3：已完成（image / SVG / PDF 富预览；PDF 仅 JVM 渲染）。
 - R6：按第 6 节接入 MCP 连接/授权，先把「能力名读取」升级为「服务可用」。
 - R4/R8：按第四节修正后的范围执行。
 - 本索引随实现推进更新；状态变化以源码和验证记录为准，不以计划文字为准。
