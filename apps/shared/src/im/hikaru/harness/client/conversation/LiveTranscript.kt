@@ -1,6 +1,8 @@
 package im.hikaru.harness.client.conversation
 
 import im.hikaru.contracts.harness.relay.RelayEvent
+import im.hikaru.harness.client.connection.ApprovalRequest
+import im.hikaru.harness.client.connection.FileChangeContent
 import im.hikaru.harness.client.connection.Message
 import im.hikaru.harness.client.connection.MessageContent
 import im.hikaru.harness.client.connection.MessageRole
@@ -38,6 +40,8 @@ internal object LiveSessionEventNames {
     const val STEP_START = "step/start"
     const val REQUEST_HEADER = "request/header"
     const val LLM_RETRY = "llm/retry"
+    const val APPROVAL_REQUESTED = "approval/requested"
+    const val APPROVAL_RESOLVED = "approval/resolved"
 
     /** Events that begin a fresh attempt; a retry must not concatenate partial output. */
     val attentionBoundaries: Set<String> = setOf(STEP_START, REQUEST_HEADER, LLM_RETRY)
@@ -97,6 +101,31 @@ internal object LiveSessionEventCodec {
             else -> null
         }
 }
+
+/**
+ * Decodes the approval events. The Host names the request in a `request` field and answers with the
+ * `requestId` only; unknown fields stay tolerated like the transcript codec above.
+ */
+internal object LiveApprovalEventCodec {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+    }
+
+    fun requested(event: RelayEvent): ApprovalRequest? = runCatching {
+        json.decodeFromJsonElement(WireApprovalRequested.serializer(), event.payload).request
+    }.getOrNull()
+
+    fun resolved(event: RelayEvent): String? = runCatching {
+        json.decodeFromJsonElement(WireApprovalResolved.serializer(), event.payload).requestId
+    }.getOrNull()
+}
+
+@Serializable
+private data class WireApprovalRequested(val request: ApprovalRequest)
+
+@Serializable
+private data class WireApprovalResolved(val requestId: String)
 
 /**
  * Accumulates `assistant/chunk` deltas into the content of one assistant step.
@@ -210,6 +239,7 @@ private fun MessageContent.blockType(): String = when (this) {
     is TextContent -> "text"
     is ReasoningContent -> "reasoning"
     is ToolCallContent -> "tool-call"
+    is FileChangeContent -> "file-change"
     else -> "tool-result"
 }
 

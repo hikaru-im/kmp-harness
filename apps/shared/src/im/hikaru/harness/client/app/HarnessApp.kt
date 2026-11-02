@@ -1010,6 +1010,9 @@ public fun HarnessApp(
         }
         tabStripState?.selectConversation(target)
     }
+    // A transcript file-change card asks the Git page to reveal one path; the request is one-shot, so
+    // the page clears it as soon as it has scrolled the matching file open.
+    var gitRevealPath by remember { mutableStateOf<String?>(null) }
     // Selecting a side panel tab does not navigate — that is the whole point of the split, and why the
     // conversation is not a tab — so the shell only has to follow the *conversation* the strip reports,
     // which is the page the navigator and every in-page gesture also move.
@@ -1312,6 +1315,14 @@ public fun HarnessApp(
                     live = paneConversation.live,
                     onRetry = { paneConversation.refresh() },
                     onEditMessage = { message -> paneConversation.beginEdit(message.id) },
+                    onApprovalChoice = { requestId, choice -> paneConversation.respondApproval(requestId, choice) },
+                    onOpenInGit = { path ->
+                        gitRevealPath = path
+                        // Same destination the 变更 tool card uses: keep the conversation visible and
+                        // open Changes as a side-panel tab when the window has one.
+                        if (paneStrip != null) paneStrip.add(HarnessChangesPage)
+                        else selectPage(HarnessChangesPage.page ?: PageId.Settings(SettingsSection.Git))
+                    },
                 )
 
 
@@ -1356,6 +1367,8 @@ public fun HarnessApp(
                     shortcutsRepository = shortcuts,
                     pluginsState = pluginsState,
                     onPluginAction = pluginAction,
+                    gitRevealPath = gitRevealPath,
+                    onGitRevealConsumed = { gitRevealPath = null },
                     git = git,
                     gitState = gitState,
                     gitBindingReady = observedGitState.binding == gitBinding,
@@ -1974,6 +1987,8 @@ private fun SettingsScreen(
     liveSessions: List<im.hikaru.harness.client.connection.SessionSummary>,
     onOpenSession: (im.hikaru.harness.client.connection.SessionSummary) -> Unit,
     onNewChatInWorktree: (String) -> Unit,
+    gitRevealPath: String?,
+    onGitRevealConsumed: () -> Unit,
 ) {
     Box(Modifier.fillMaxWidth().semantics { testTag = "settings-content-" + section.navigatorSlug() }) {
       when (section) {
@@ -1992,6 +2007,8 @@ private fun SettingsScreen(
             liveSessions = liveSessions,
             onOpenSession = onOpenSession,
             onNewChatInWorktree = onNewChatInWorktree,
+            revealPath = gitRevealPath,
+            onRevealConsumed = onGitRevealConsumed,
         )
         else -> {
             val label = SettingsNavigatorModel.item(section.navigatorSlug())?.label ?: section.name
@@ -2019,6 +2036,8 @@ private fun BoundGitSettingsPage(
     liveSessions: List<im.hikaru.harness.client.connection.SessionSummary>,
     onOpenSession: (im.hikaru.harness.client.connection.SessionSummary) -> Unit,
     onNewChatInWorktree: (String) -> Unit,
+    revealPath: String?,
+    onRevealConsumed: () -> Unit,
 ) {
     val title = if (worktrees) "Worktrees" else "Git"
     val tag = if (worktrees) "worktrees-page" else "git-page"
@@ -2040,5 +2059,6 @@ private fun BoundGitSettingsPage(
         worktreeSettings = worktreeSettings, onSaveWorktreeSettings = onSaveWorktreeSettings,
         sessions = liveSessions, onOpenSession = onOpenSession, onNewChatInWorktree = onNewChatInWorktree,
         directoryPicker = directoryPicker)
-    else SettingsGitPage(controller, Modifier.fillMaxSize(), directoryPicker = directoryPicker)
+    else SettingsGitPage(controller, Modifier.fillMaxSize(), directoryPicker = directoryPicker,
+        revealPath = revealPath, onRevealConsumed = onRevealConsumed)
 }

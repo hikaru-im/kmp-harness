@@ -1274,6 +1274,115 @@ class ConversationControllerTest {
         assertTrue(operations.cancelIds.isEmpty())
         controller.close()
     }
+
+    @Test
+    fun approvalRequestsBelongToTheirSessionAndClearWhenItChanges() = runTest {
+        val operations = FakeOperations()
+        val events = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 8)
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST, streams = ConversationStreams(events, MutableSharedFlow(), {}, {}))
+        controller.select(SESSION)
+        runCurrent()
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 1, "approval-a"))
+        runCurrent()
+        assertEquals(listOf("approval-a"), controller.state.value.approvals.map { it.request.id })
+        // A payload naming another Session is never accepted on this stream.
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 2, "approval-foreign", requestSession = OTHER))
+        runCurrent()
+        assertEquals(listOf("approval-a"), controller.state.value.approvals.map { it.request.id })
+        // A different transcript never inherits another Session's pending request.
+        controller.select(OTHER)
+        runCurrent()
+        assertTrue(controller.state.value.approvals.isEmpty())
+        controller.close()
+    }
+
+    @Test
+    fun anAcceptedDecisionIsSentAndRemovesTheCard() = runTest {
+        val operations = FakeOperations()
+        val events = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 8)
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST, streams = ConversationStreams(events, MutableSharedFlow(), {}, {}))
+        controller.select(SESSION)
+        runCurrent()
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 1, "approval-a"))
+        runCurrent()
+        controller.respondApproval("approval-a", ApprovalChoice.ALLOW_ONCE)
+        runCurrent()
+        assertEquals(listOf(SESSION to ApprovalDecision("approval-a", ApprovalChoice.ALLOW_ONCE)),
+            operations.approvalDecisions)
+        assertTrue(controller.state.value.approvals.isEmpty())
+        controller.close()
+    }
+
+    @Test
+    fun aFailedDecisionKeepsTheCardVisibleForRetry() = runTest {
+        val operations = FakeOperations().apply { respondApprovalResult = { _, _ -> error("offline") } }
+        val events = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 8)
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST, streams = ConversationStreams(events, MutableSharedFlow(), {}, {}))
+        controller.select(SESSION)
+        runCurrent()
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 1, "approval-a"))
+        runCurrent()
+        controller.respondApproval("approval-a", ApprovalChoice.DENY)
+        runCurrent()
+        val pending = controller.state.value.approvals.single()
+        assertEquals("approval-a", pending.request.id)
+        assertFalse(pending.responding)
+        assertEquals("无法提交审批决定，请重试。", pending.error)
+        // The failure never pretends the tool ran, so the user can answer again.
+        operations.respondApprovalResult = { _, _ -> }
+        controller.respondApproval("approval-a", ApprovalChoice.ALLOW_SESSION)
+        runCurrent()
+        assertEquals(2, operations.approvalDecisions.size)
+        assertTrue(controller.state.value.approvals.isEmpty())
+        controller.close()
+    }
+
+    @Test
+    fun aResolutionEventOrTheTurnEndRemovesAPendingCard() = runTest {
+        val operations = FakeOperations()
+        val events = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 8)
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST, streams = ConversationStreams(events, MutableSharedFlow(), {}, {}))
+        controller.select(SESSION)
+        runCurrent()
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 1, "approval-a"))
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 2, "approval-b"))
+        runCurrent()
+        assertEquals(2, controller.state.value.approvals.size)
+        events.emit(event(SESSION, HOST.hostId, 3, "approval/resolved", buildJsonObject {
+            put("requestId", "approval-a")
+        }))
+        runCurrent()
+        assertEquals(listOf("approval-b"), controller.state.value.approvals.map { it.request.id })
+        // A finished turn can no longer be waiting; a dead card must not survive it.
+        events.emit(event(SESSION, HOST.hostId, 4, "turn/end", buildJsonObject {
+            put("turn", 1)
+        }))
+        runCurrent()
+        assertTrue(controller.state.value.approvals.isEmpty())
+        controller.close()
+    }
+
+    @Test
+    fun aChoiceTheHostDidNotOfferIsNeverSent() = runTest {
+        val operations = FakeOperations()
+        val events = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 8)
+        val controller = ConversationController(backgroundScope, operations)
+        controller.bind(operations.connection, HOST, streams = ConversationStreams(events, MutableSharedFlow(), {}, {}))
+        controller.select(SESSION)
+        runCurrent()
+        events.emit(approvalRequestEvent(SESSION, HOST.hostId, 1, "approval-a",
+            choices = listOf(ApprovalChoice.ALLOW_ONCE, ApprovalChoice.CANCEL)))
+        runCurrent()
+        assertNull(controller.respondApproval("approval-a", ApprovalChoice.ALLOW_SESSION))
+        runCurrent()
+        assertTrue(operations.approvalDecisions.isEmpty())
+        assertEquals(1, controller.state.value.approvals.size)
+        controller.close()
+    }
 }
 
 private val HOST = ConversationHostScope(HostId("host-a"), generation = 1, identity = null)
@@ -1292,6 +1401,31 @@ private fun event(id: SessionId, host: HostId, sequence: Long, type: String, pay
     eventId = EventId("event-$sequence"), hostId = host, streamId = StreamId(id.value), sequence = sequence,
     event = type, payload = payload,
 )
+
+private fun approvalRequestEvent(
+    id: SessionId,
+    host: HostId,
+    sequence: Long,
+    requestId: String,
+    requestSession: SessionId = id,
+    choices: List<ApprovalChoice> = ApprovalChoice.entries.toList(),
+) = event(id, host, sequence, "approval/requested", buildJsonObject {
+    put("request", buildJsonObject {
+        put("id", requestId)
+        put("sessionId", requestSession.value)
+        put("toolName", "shell")
+        put("command", "rm -rf build")
+        put("reason", "需要写入仓库")
+        putJsonArray("choices") { choices.forEach { add(it.wireName()) } }
+    })
+})
+
+private fun ApprovalChoice.wireName(): String = when (this) {
+    ApprovalChoice.ALLOW_ONCE -> "allow-once"
+    ApprovalChoice.ALLOW_SESSION -> "allow-session"
+    ApprovalChoice.DENY -> "deny"
+    ApprovalChoice.CANCEL -> "cancel"
+}
 
 private fun chunkEvent(id: SessionId, host: HostId, sequence: Long, turn: Long, step: Long, text: String) =
     event(id, host, sequence, "assistant/chunk", buildJsonObject {
@@ -1376,6 +1510,12 @@ private class FakeOperations : ConversationOperations {
         cancelIds += id
         cancelKeepInbox += keepInbox
         cancelResult()
+    }
+    val approvalDecisions = mutableListOf<Pair<SessionId, ApprovalDecision>>()
+    var respondApprovalResult: suspend (SessionId, ApprovalDecision) -> Unit = { _, _ -> }
+    override suspend fun respondApproval(connection: Connection, id: SessionId, decision: ApprovalDecision) {
+        approvalDecisions += id to decision
+        respondApprovalResult(id, decision)
     }
     val forkRequests = mutableListOf<Pair<SessionId, String>>()
     var forkResult: suspend (SessionId, String) -> SessionSummary = { _, _ -> SUMMARY.copy(id = OTHER, createdAt = 2) }

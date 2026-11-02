@@ -247,6 +247,9 @@ internal fun GitPatch(
     refreshDisabled: Boolean = false,
     copyGitApplyCommandDisabled: Boolean = false,
     contextExpansionAllowed: Boolean = true,
+    /** A path a transcript card asked to reveal; the view opens and scrolls to it once. */
+    revealPath: String? = null,
+    onRevealConsumed: () -> Unit = {},
 ) {
     val document = remember(patch) { parseGitDiff(patch) }
     val clipboard = LocalClipboardManager.current
@@ -268,7 +271,9 @@ internal fun GitPatch(
         },
         copyGitApplyCommandDisabled = copyGitApplyCommandDisabled,
         copyFeedback = copyFeedback,
-        contextExpansionAllowed = contextExpansionAllowed)
+        contextExpansionAllowed = contextExpansionAllowed,
+        initialRevealPath = revealPath,
+        onInitialRevealConsumed = onRevealConsumed)
 }
 
 /**
@@ -293,6 +298,9 @@ internal fun GitDiffView(
     contextExpansionAllowed: Boolean = true,
     autoOpenMaxFiles: Int = GitDiffAutoOpenMaxFiles,
     autoOpenMaxChangedLines: Int = GitDiffAutoOpenMaxChangedLines,
+    /** A transcript card's one-shot request to open and scroll to [initialRevealPath]. */
+    initialRevealPath: String? = null,
+    onInitialRevealConsumed: () -> Unit = {},
 ) {
     var layout by remember { mutableStateOf(GitDiffLayout.Unified) }
     var richPreview by remember { mutableStateOf(false) }
@@ -335,6 +343,16 @@ internal fun GitDiffView(
         expandedHeaders = if (largeDiff) setOf(match.fileHeader) else expandedHeaders + match.fileHeader
         revealNonce++
         reveal = GitDiffReveal(revealNonce, match.fileHeader, match.bodyLineIndex)
+    }
+    // A transcript file-change card names a path, not a line: open its file and land at the top of
+    // the body. Consuming unconditionally keeps a path absent from this diff from retrying forever.
+    LaunchedEffect(initialRevealPath, document) {
+        val path = initialRevealPath ?: return@LaunchedEffect
+        onInitialRevealConsumed()
+        val file = document.files.firstOrNull { it.path == path || it.originalPath == path } ?: return@LaunchedEffect
+        expandedHeaders = if (largeDiff) setOf(file.header) else expandedHeaders + file.header
+        revealNonce++
+        reveal = GitDiffReveal(revealNonce, file.header, 0)
     }
     // `fOr`: markdown, image, SVG and PDF files, never a deletion, and only while the toggle is on.
     val previewPaths = remember(document, richPreview) {

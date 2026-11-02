@@ -108,6 +108,7 @@
 
 ### G2 — 审批交互（P0，波次 2）
 
+- **状态（2026-11-02）**：G2a 已完成（协议、controller 待审批状态、审批卡、断连即拒绝）；G2b 等待 Kaneo #17 的权限策略决定，运行时门控与 gateway respond 尚未接线。
 - **目标**：工具执行前可按策略请求用户审批，并在对话内呈现审批卡；拒绝、超时、断连都不执行工具。
 - **现状**：`MessageContent` 只有 `TextContent / ReasoningContent / ToolCallContent / ToolResultContent`；`rg "PermissionRequest|ApprovalRequest"` 无命中；Host API 文档只为 `Interaction.respond` 保留了“审批和用户问题响应”的位置，代码未实现。
 - **落点**：`client/connection/Connection.kt`（事件与内容）、`ConversationController`（待审批状态）、`client/app/ConversationComponents.kt` 或新 `ApprovalCard.kt`、`modules/tools/Tools.kt`（门控接口）、`modules/agent-loop/AgentLoopAgent.kt`（执行前调用）、`modules/api` 的 session gateway（respond 入口）。
@@ -122,6 +123,7 @@
 
 ### G3 — 会话内 diff 卡（P0，波次 2）
 
+- **状态（2026-11-02）**：G3a 已完成（内容类型、聚合卡片、四类 fixture、Git 跳转定位）；G3b 因运行时没有结构化文件编辑工具而暂缓，没有 producer 时不会产生卡片。
 - **目标**：对话里直接看到本轮文件改动（路径、增删行数、可展开 patch），并可跳到 Git 页。
 - **现状**：内容类型没有文件改动；生产运行时当前没有注册文件编辑工具，因此没有稳定 producer。
 - **落点**：`Connection.kt` 新增 `FileChangeContent(path, kind, added, removed, patch, truncated)`；`ConversationComponents.kt` 新卡片；`ConversationController` 映射；`GitController` 提供“在 Git 中打开”定位。
@@ -361,3 +363,21 @@
 - **未做**：blame 移出 R4；行内评论/apply/revert 属 R5；工具栏与滚动位置持久化属 G1b；不引入 diff 虚拟化。
 
 - **环境说明**：`GitCommitInteractionTest` 与 `git.DesktopGitCommitTest` 的 include-unstaged 提交用例在本机 15s 超时；后者完全不经过本批改动（`DesktopGitBackend` 未修改），与历史验证记录中的同类真实 Git 抖动一致。
+
+### 2026-11-02 — G2a 审批协议与卡片（Kaneo #17，未提交）
+
+- **协议**：`client/connection/Connection.kt` 新增 `ApprovalRequest(id, sessionId, toolName, command, reason, choices)`、`ApprovalChoice`（`allow-once` / `allow-session` / `deny` / `cancel`）、`ApprovalDecision`；构造器拒绝空 id、空工具名、空选项列表与重复选项。`SessionApi.respondApproval` 以默认实现返回不可用，G2b 接线前不假装能提交。
+- **事件**：`LiveSessionEventNames` 增加 `approval/requested`、`approval/resolved`；`LiveApprovalEventCodec` 按 `{"request": …}` / `{"requestId": …}` 解码，畸形 payload 返回 null 而不打断流。
+- **Controller**：`ConversationState.approvals: List<PendingApproval>` 保存待审批请求；`respondApproval(requestId, choice)` 只接受 Host 提供的选项、只提交一次，失败保留卡片并显示「无法提交审批决定，请重试。」。请求 sessionId 与当前会话不一致时忽略；`select()`、`turn/end`、`stopLive()`（换流/断连）都清空待审批，即断连按拒绝处理。
+- **卡片**：新增 `client/app/ApprovalCard.kt`，`ApprovalPanel` 固定在 thread 列末尾（composer 之上）。卡片显示工具名、`是否运行此命令？`、可选择的命令全文（160dp 上限内滚动，不缩写）、原因、状态（待批准/提交中…）与错误；按钮按 Host 给出的选项过滤，顺序为取消 / 拒绝 / 本会话允许 / 允许一次，提交中或断连时全部禁用。
+- **验证**：`ApprovalProtocolTest` 5/5、`ConversationControllerTest` 50/50（含 5 条审批用例）、`ApprovalCardInteractionTest` 10/10、shared 全模块 651/651。
+- **未做（G2b）**：`ToolApprovalGate`、agent-loop 挂起、session gateway 的 respond 端点；等待 #17 对“哪些工具在哪些权限档位需要审批”的拍板。
+
+### 2026-11-02 — G3a 会话内 diff 卡（Kaneo #42，未提交）
+
+- **内容类型**：`Connection.kt` 新增 `FileChangeContent(path, kind, added, removed, patch, truncated, previousPath)` 与 `FileChangeKind`（added/modified/deleted/renamed），wire 名 `file-change`；构造器拒绝空路径、负行数与空 `previousPath`。
+- **卡片**：新增 `client/app/FileChangeCard.kt`；同一消息内连续的文件改动聚合为一张卡片组，组内按路径排序，头部显示「{n} 个文件已更改」与 `+N −M` 汇总。每行显示 已创建/已编辑/已删除/已重命名、路径（重命名显示 `旧路径 → 新路径`）、行数与展开箭头。
+- **展开**：逐文件独立展开；有 patch 时按行渲染并区分增删底色，超过 400 行只渲染前 400 行并提示「补丁过长，仅显示前 400 行」；producer 标记 `truncated` 时只显示「内容过大，无法内联渲染」，不猜 patch。没有 patch、没有截断、也没有 Git 动作的行不可展开。
+- **Git 跳转**：非删除文件且提供了回调时显示「在 Git 中查看」；`HarnessApp` 记录一次性 `gitRevealPath` 并打开「变更」侧栏 tab（无侧栏时回退 Git 设置页），`GitDiffView` 消费后展开对应文件并滚动到正文起始。删除文件不提供该动作。
+- **验证**：`FileChangeRunsTest` 5/5、`FileChangeCardInteractionTest` 7/7、shared 全模块 651/651、jvm-app 回归 92/92（对话、线程视觉、Git diff 阅读/视图/设置路由、右侧面板、子 Agent）。
+- **未做（G3b）**：生产运行时没有结构化文件编辑工具，暂不生成 `FileChangeContent`；不解析自由文本、不猜 patch。

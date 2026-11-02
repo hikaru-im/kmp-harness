@@ -303,6 +303,7 @@ public class ConnectionThreadPanelsRepository : ThreadPanelsRepository {
             "${content.name}: ${content.arguments}"
         is im.hikaru.harness.client.connection.ToolResultContent ->
             content.content.joinToString(separator = "\n", transform = ::contentText)
+        is im.hikaru.harness.client.connection.FileChangeContent -> "${content.kind} ${content.path}"
     }
 }
 

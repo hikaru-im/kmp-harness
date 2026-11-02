@@ -402,7 +402,7 @@ R0 审计发现两处需要修正 [restored-code-task-plan-2026-11-02.md](restor
 
 - R1：已完成（摘要面板小节与交互原语）。
 - R3：已完成（image / SVG / PDF 富预览；PDF 仅 JVM 渲染）。
-- 页面级核对：已完成，见 [逐页面 · 逐组件 · 逐功能核对](page-component-feature-audit-2026-11-02.md)；P0 缺口为审批交互、对话内 diff 卡片、布局状态持久化。
+- 页面级核对：已完成，见 [逐页面 · 逐组件 · 逐功能核对](page-component-feature-audit-2026-11-02.md)；P0 三项已具备客户端层：布局持久化（G1a）、审批协议与卡片（G2a）、会话内 diff 卡（G3a）。剩余 P0 工作都在运行时：审批门控与 gateway respond（G2b，Kaneo #17）、文件改动 producer（G3b）。
 - R6：按第 6 节接入 MCP 连接/授权，先把「能力名读取」升级为「服务可用」。
 - R4：已完成（sticky、上下文展开、大 diff 横幅与单文件模式、diff 内搜索；blame 明确移出 R4）。
 - R8：按第四节修正后的范围执行。

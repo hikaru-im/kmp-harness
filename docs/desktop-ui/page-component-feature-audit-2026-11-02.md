@@ -41,9 +41,9 @@
 | Markdown 渲染 | `client/app/ConversationMarkdown.kt` | `markdown/streaming-fade-markdown.tsx`、`markdown/mermaid-diagram-renderer.tsx` | ◐ | GFM 标题/代码/表格/链接已支持；无 mermaid、流式淡入 |
 | 推理块 | `ConversationComponents.kt` 推理区 | `conversations/activity-disclosure.tsx` | ✅ | 正在思考…/已完成思考，流式时保持展开 |
 | 工具调用卡 | `ConversationComponents.kt` 工具调用区 | `conversations/dynamic-tool-call-row.tsx`、`collapsed-tool-activity-summary.tsx` | ◐ | 通用折叠 + JSON 参数；无按工具的专用行与分组摘要 |
-| 会话内 diff 卡 | 无（内容类型只有 Text/Reasoning/ToolCall/ToolResult，见 `client/connection/Connection.kt`） | `conversations/file-change-patch-summary.tsx`、`file-change-patch-row.tsx` | ○ | 对话里看不到文件改动卡 |
+| 会话内 diff 卡 | `client/app/FileChangeCard.kt`、`client/connection/Connection.kt` `FileChangeContent` | `conversations/file-change-patch-summary.tsx`、`file-change-patch-row.tsx` | ◐ | G3a 已完成四类卡片、聚合、截断与 Git 跳转；G3b 缺 producer（无结构化文件编辑工具），生产中不会出现卡片 |
 | 计划卡 | `client/summary/ThreadSummaryPanel.kt` `PlanSection` | `.../plan-summary-card/card.tsx` | ◐ | 组件存在，但 `HarnessApp.kt` 调 `ThreadSummaryPanel` 时未传 `plan`，实际不显示 |
-| 审批卡 | 无 | `utils/permission-request-model.ts` | ○ | 没有审批请求模型、卡片或事件；`rg "PermissionRequest\|ApprovalRequest"` 无命中 |
+| 审批卡 | `client/app/ApprovalCard.kt`、`ConversationController` `PendingApproval`、`ApprovalRequest` | `utils/permission-request-model.ts` | ◐ | G2a 已完成请求模型、事件、controller 状态与卡片；G2b 门控与 gateway respond 待 Kaneo #17 |
 | 错误/空态/加载/断连 | `client/app/ConversationErrorToasts.kt`、`LiveConversationSurface.kt` | `.../local-conversation-resume-errors.tsx` | ✅ | 错误走 toast；内联 `ConversationErrorCard` 未接入实时页 |
 | 用时/时间分隔 | `ConversationComponents.kt` 回合分隔 | `conversations/turn-elapsed-time-divider.tsx`、`user-message-timestamp.tsx` | ◐ | 有时间分隔；无 working 实时计时与 stopped 态 |
 | Composer 输入 | `client/app/LiveConversationComposer.kt` | `composer/composer.tsx`、`composer-editor-runtime.tsx` | ✅ | Enter 发送 / Shift+Enter 换行，编辑态横幅 |
@@ -67,10 +67,10 @@
 | 会话内查找 | 无 | `find/thread-find-bar.tsx`、`find/thread-find-store.ts` | ○ | 快捷键模型把查找组合键列为保留 |
 | 滚动锚定 | `ConversationComponents.kt` 跟随逻辑 | `.../local-conversation-auto-follow-turn-list.tsx` | ✅ | 跟随底部，离开后停止跟随 |
 | 快捷键 | `HarnessApp.kt` `shortcutConsumer`、composer Enter | `composer/command-shortcut-bindings.ts` | ◐ | 全局 5 项 + Enter；无 Ctrl+F 与命令键位 |
-| 审批交互 | 无 | `utils/permission-request-model.ts` | ○ | 权限模式只是下拉选择，没有逐命令审批 |
+| 审批交互 | `ConversationController.respondApproval`、`ApprovalPanel` | `utils/permission-request-model.ts` | ◐ | 客户端可接收/提交审批并按拒绝处理断连；运行时门控与 respond 端点未接线（G2b，Kaneo #17） |
 | 持久化 | `ConversationController.kt` `drafts`（内存） | `app-shell/thread-panel-tabs-store.ts` | ◐ | 草稿、面板 tab、摘要展开都不落盘 |
 
-**本页结论**：流式增量、编辑重发、错误重试、滚动锚定、composer 控件、子 agent 与 PTY 面板已对齐。最高优先级缺口是**审批卡与审批交互完全缺失**；其次是会话内 diff 卡、附件/@mention/slash、独立 fork、会话内查找，以及右侧面板与摘要面板的数据接线。
+**本页结论**：流式增量、编辑重发、错误重试、滚动锚定、composer 控件、子 agent 与 PTY 面板已对齐。审批卡与会话内 diff 卡已具备客户端协议、状态与 UI（G2a/G3a），剩余最高优先级缺口是**运行时审批门控**（G2b，依赖 Kaneo #17 与 gateway respond）和**文件改动 producer**（G3b，依赖结构化文件编辑工具）；其次是附件/@mention/slash、独立 fork、会话内查找，以及右侧面板与摘要面板的数据接线。
 
 ### 2. 设置页（PageId.Settings）
 
@@ -364,8 +364,8 @@
 
 | # | 缺口 | 页面 | 对应任务 |
 | --- | --- | --- | --- |
-| 1 | 审批交互完全缺失：只能选权限档位，没有逐命令审批卡/事件 | 对话页 | G2 / Kaneo #17 |
-| 2 | 会话内 diff 卡缺失：对话里看不到文件改动 | 对话页 | G3 / Kaneo #42 |
+| 1 | ~~审批交互完全缺失~~：协议、待审批状态与卡片已完成（G2a）；仍缺运行时门控与 respond 端点 | 对话页 | G2b / Kaneo #17 |
+| 2 | ~~会话内 diff 卡缺失~~：四类卡片、截断与 Git 跳转已完成（G3a）；仍缺 producer | 对话页 | G3b / Kaneo #42 |
 | 3 | 布局状态全部不持久化：navigator 宽度/模式、pinned rail、tab 布局、diff 工具栏、滚动位置 | 外壳 / Git | G1 / Kaneo #41 |
 
 ### P1 — 主路径能用，但能力明显不完整

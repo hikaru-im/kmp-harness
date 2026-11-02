@@ -53,6 +53,8 @@ internal fun ConversationViewport(
     onEditMessage: ((Message) -> Unit)? = null,
     /** Streaming assistant tail; it is drawn after the settled history and never gets row actions. */
     live: List<Message> = emptyList(),
+    /** Opens a changed file on the Git page; a deleted file never offers it. */
+    onOpenInGit: ((path: String) -> Unit)? = null,
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -120,6 +122,7 @@ internal fun ConversationViewport(
                                 onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
                                     ?.let { edit -> { edit(message) } },
                                 live = streaming,
+                                onOpenInGit = onOpenInGit,
                             )
                         }
                     }
@@ -164,10 +167,13 @@ internal fun MessageCard(
     onEdit: (() -> Unit)? = null,
     /** True for the tail that is still arriving; its reasoning and labels stay in progress. */
     live: Boolean = false,
+    onOpenInGit: ((path: String) -> Unit)? = null,
 ) {
     val isHuman = message.role == MessageRole.USER && message.source == UserMessageSource
     val clipboard = LocalClipboardManager.current
     val text = message.content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
+    // Consecutive file changes form one card group; the first index owns the group's tag.
+    val fileChanges = remember(message.content) { fileChangeRuns(message.content) }
     BoxWithConstraints(Modifier.fillMaxWidth().semantics { testTag = "message:${message.id}" }) {
         val bubbleMaxWidth = maxWidth * 0.7f
         Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isHuman) Alignment.End else Alignment.Start) {
@@ -178,7 +184,15 @@ internal fun MessageCard(
                 Column(contents, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (!isHuman && workedForMillis != null) WorkedForHeader(workedForMillis, "message:${message.id}")
                     message.content.forEachIndexed { index, content ->
-                        MessageContentView(content, "message:${message.id}:content:$index", isHuman, toolCalls, toolResults, live)
+                        val changes = fileChanges[index]
+                        when {
+                            changes != null -> FileChangeCard(
+                                changes, "message:${message.id}:content:$index", onOpenInGit)
+                            // Every member after the run's first is drawn by that group card.
+                            content is FileChangeContent -> Unit
+                            else -> MessageContentView(content, "message:${message.id}:content:$index",
+                                isHuman, toolCalls, toolResults, live)
+                        }
                     }
                 }
             }
@@ -448,7 +462,29 @@ private fun MessageContentView(
         is ToolResultContent -> ActivityDisclosure(toolResultLabel(toolCalls[content.toolCallId]), HarnessIconName.Host, tag) {
             content.content.forEachIndexed { i, child -> MessageContentView(child, "$tag:content:$i", toolCalls = toolCalls) }
         }
+        // Only reached when a file change is nested inside a disclosure; transcript rows are grouped
+        // by MessageCard before this composable sees them, so this card has no Git navigation.
+        is FileChangeContent -> FileChangeCard(listOf(content), "$tag:file-change")
     }
+}
+
+/** Maps each run of consecutive file changes to the run's files, keyed by the run's first index. */
+internal fun fileChangeRuns(contents: List<MessageContent>): Map<Int, List<FileChangeContent>> {
+    val runs = linkedMapOf<Int, List<FileChangeContent>>()
+    var index = 0
+    while (index < contents.size) {
+        if (contents[index] is FileChangeContent) {
+            val start = index
+            val files = mutableListOf<FileChangeContent>()
+            while (index < contents.size) {
+                val file = contents[index] as? FileChangeContent ?: break
+                files += file
+                index++
+            }
+            runs[start] = files
+        } else index++
+    }
+    return runs
 }
 
 private fun toolActivityLabel(call: ToolCallContent): String {
