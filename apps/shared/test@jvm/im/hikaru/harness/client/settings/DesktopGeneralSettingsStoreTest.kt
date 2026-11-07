@@ -25,6 +25,23 @@ class DesktopGeneralSettingsStoreTest {
     }
 
     @Test
+    fun enterBehaviorRoundTripsAndLegacyDocumentsLoadTheEnterDefault() = runBlocking {
+        val root = Files.createTempDirectory("harness-general-enter-")
+        try {
+            val path = root.resolve("client-general.json")
+            EnterBehavior.entries.forEach { behavior ->
+                val settings = GeneralSettings(CloseConfirmationPolicy.Always, behavior)
+                DesktopGeneralSettingsStore(path).write(settings)
+                assertEquals(settings, DesktopGeneralSettingsStore(path).read())
+            }
+            // A document written before SET-10 has no enterBehavior field and must still load.
+            Files.writeString(path, """{"closeConfirmation":"always"}""")
+            assertEquals(GeneralSettings(CloseConfirmationPolicy.Always, EnterBehavior.Enter),
+                DesktopGeneralSettingsStore(path).read())
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test
     fun corruptOrUnknownPolicyDocumentIsNotOverwritten() = runBlocking {
         val root = Files.createTempDirectory("harness-general-corrupt-")
         try {

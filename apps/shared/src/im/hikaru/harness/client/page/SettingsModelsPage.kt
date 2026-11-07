@@ -33,6 +33,13 @@ private data class ProviderEditorSession(
     val mode: ProviderAddMode = ProviderAddMode.Preset,
 )
 
+private data class ProviderEditorState(
+    val session: ProviderEditorSession,
+    val draft: MutableState<ProviderDraft>,
+    val apiKey: MutableState<String>,
+    val discovering: MutableState<Boolean> = mutableStateOf(false),
+    val discovered: MutableState<ModelDiscoveryResult?> = mutableStateOf(null),
+)
 private data class ProviderRemovalSession(val provider: ConfigurableProvider, val revision: Long)
 
 private fun providerStatus(provider: ConfigurableProvider): String = when {
@@ -60,6 +67,7 @@ public fun SettingsModelsPage(
 ) {
     var query by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<ProviderEditorSession?>(null) }
+    var addEditorStates by remember { mutableStateOf<Map<ProviderAddMode, ProviderEditorState>>(emptyMap()) }
     var removing by remember { mutableStateOf<ProviderRemovalSession?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     val snapshot = state.snapshot
@@ -70,9 +78,11 @@ public fun SettingsModelsPage(
     }
     fun closeEditor() {
         editing = null
+        addEditorStates = emptyMap()
         query = ""
     }
     fun edit(provider: ConfigurableProvider) {
+        addEditorStates = emptyMap()
         editing = ProviderEditorSession(
             provider.configuration ?: ProviderConfiguration(
                 provider.id,
@@ -84,7 +94,16 @@ public fun SettingsModelsPage(
         )
         query = ""
     }
-    fun create(mode: ProviderAddMode) {
+    fun create(mode: ProviderAddMode, reload: Boolean = false) {
+        if (editing?.creating == true && !reload) {
+            addEditorStates[mode]?.let {
+                editing = it.session
+                query = ""
+                return
+            }
+        } else if (editing?.creating != true) {
+            addEditorStates = emptyMap()
+        }
         val plugin = if (mode == ProviderAddMode.Preset) {
             snapshot.plugins.firstOrNull()
         } else {
@@ -114,7 +133,11 @@ public fun SettingsModelsPage(
                 vendor = plugin?.id ?: "openai",
             )
         }
-        editing = ProviderEditorSession(configuration, snapshot.revision, true, mode)
+        val session = ProviderEditorSession(configuration, snapshot.revision, true, mode)
+        addEditorStates = addEditorStates + (mode to ProviderEditorState(
+            session, mutableStateOf(ProviderDraft.from(configuration)), mutableStateOf(""),
+        ))
+        editing = session
         query = ""
     }
 
@@ -187,12 +210,15 @@ public fun SettingsModelsPage(
                 if (editing?.creating == true) {
                     SettingsFormSection("添加厂商") {
                         SettingsFormCard {
-                            AddModeSwitch(editing!!.mode, enabled = state.canEdit) { mode -> create(mode) }
+                            AddModeSwitch(editing!!.mode,
+                                enabled = state.canEdit && addEditorStates.values.none { it.discovering.value },
+                            ) { mode -> create(mode) }
                             key(editing) {
                                 ProviderEditor(
                                     session = editing!!, state = state, provider = null,
+                                    editorState = addEditorStates[editing!!.mode],
                                     query = query, onQueryChange = { query = it },
-                                    onRefresh = onRefresh, onSave = onSave, onReload = { create(editing!!.mode) },
+                                    onRefresh = onRefresh, onSave = onSave, onReload = { create(editing!!.mode, reload = true) },
                                     onDismiss = ::closeEditor,
                                     onSaved = {
                                         closeEditor()
@@ -404,15 +430,20 @@ private fun ProviderEditor(
     onModelEnabled: (String, String, Boolean, Long) -> Unit = { _, _, _, _ -> },
     onModelSelected: (String, String, Long) -> Unit = { _, _, _ -> },
     onRetryApplication: () -> Unit = {},
+    editorState: ProviderEditorState? = null,
 ) {
-    var draft by remember { mutableStateOf(ProviderDraft.from(session.configuration)) }
+    val localDraft = remember { mutableStateOf(ProviderDraft.from(session.configuration)) }
+    var draft by (editorState?.draft ?: localDraft)
     var error by remember { mutableStateOf<String?>(null) }
     var candidate by remember { mutableStateOf<ProviderConfiguration?>(null) }
     var baseline by remember { mutableStateOf(state.saveRevision) }
-    var apiKey by remember { mutableStateOf("") }
-    DisposableEffect(Unit) { onDispose { apiKey = "" } }
-    var discovering by remember { mutableStateOf(false) }
-    var discovered by remember { mutableStateOf<ModelDiscoveryResult?>(null) }
+    val localApiKey = remember { mutableStateOf("") }
+    var apiKey by (editorState?.apiKey ?: localApiKey)
+    DisposableEffect(Unit) { onDispose { localApiKey.value = "" } }
+    val localDiscovering = remember { mutableStateOf(false) }
+    var discovering by (editorState?.discovering ?: localDiscovering)
+    val localDiscovered = remember { mutableStateOf<ModelDiscoveryResult?>(null) }
+    var discovered by (editorState?.discovered ?: localDiscovered)
     var advanced by remember { mutableStateOf(!session.creating || session.mode == ProviderAddMode.Custom || state.snapshot.plugins.isEmpty()) }
     val scope = rememberCoroutineScope()
     val plugin = state.snapshot.plugins.firstOrNull { it.id == draft.vendor }

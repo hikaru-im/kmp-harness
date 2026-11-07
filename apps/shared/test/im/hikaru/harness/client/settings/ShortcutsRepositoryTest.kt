@@ -12,7 +12,10 @@ class ShortcutsRepositoryTest {
         val store = MemoryShortcutsStore()
         val repository = ShortcutsRepository(store, platform)
         repository.load()
-        assertEquals(6, ShortcutRegistry.commands.size)
+        assertEquals(7, ShortcutRegistry.commands.size)
+        assertEquals(ShortcutCommand.SearchFiles, repository.commandFor(ShortcutChord(ShortcutKey.P, meta = true)))
+        assertEquals(listOf(ShortcutChord(ShortcutKey.P, ctrl = true)),
+            ShortcutRegistry.defaults(ShortcutCommand.SearchFiles, ShortcutPlatform.Windows))
         assertEquals(emptyList(), repository.state.value.settings.bindings(ShortcutCommand.ManageTasks, platform))
         val defaults = repository.state.value.settings.bindings(ShortcutCommand.CloseWindow, platform)
         assertTrue(repository.save(ShortcutsSettings().withBindings(ShortcutCommand.CloseWindow, defaults + custom)))

@@ -162,3 +162,15 @@ private fun readQuoted(text: String, start: Int): Pair<String, Int>? {
 }
 
 private fun unquote(text: String): String = readQuoted("\"$text\"", 0)?.first ?: text
+
+/**
+ * Decodes one path token exactly as Git writes it in a patch: either a plain token or a
+ * double-quoted C-style string with octal byte escapes (`core.quotePath` default). Returns null for
+ * an unterminated quote. Used by stage-hunk validation so a patch for a non-ASCII path still names
+ * the same file as the change list.
+ */
+public fun gitDiffPathToken(raw: String): String? {
+    val trimmed = raw.trim()
+    if (!trimmed.startsWith('"')) return trimmed
+    return readQuoted(trimmed, 0)?.first
+}

@@ -50,6 +50,7 @@ internal fun ConversationComposerToolbar(
     draftEmpty: Boolean,
     selectedReasoning: im.hikaru.harness.client.connection.ReasoningOptions? = null,
     onManageModels: (() -> Unit)? = null,
+    submitShortcut: ComposerSubmitShortcut = ComposerSubmitShortcut.Enter,
 ) {
     var popupStack by remember(state.host, state.selectedSessionId) { mutableStateOf(emptyList<ComposerPopup>()) }
     val popup = popupStack.lastOrNull() ?: ComposerPopup.Closed
@@ -250,7 +251,7 @@ internal fun ConversationComposerToolbar(
             ComposerPrimaryAction.Stop -> "停止"
             ComposerPrimaryAction.Stopping -> "正在停止"
         }
-        HarnessTooltipTrigger(if (voice) "语音聊天暂不可用" else if (stop) label else "发送 · Enter；换行 · Shift+Enter") { tip ->
+        HarnessTooltipTrigger(if (voice) "语音聊天暂不可用" else if (stop) label else submitShortcut.hint) { tip ->
             Box(tip) {
                 HarnessComposerAction(label,
                     enabled = if (stop) state.canCancel else if (voice) false else canSend, loading = busy,

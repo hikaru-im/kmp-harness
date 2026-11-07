@@ -14,6 +14,7 @@ public enum class ShortcutCommand(public val label: String, public val descripti
     @SerialName("navigateBack") NavigateBack("返回", "返回上一个页面"),
     @SerialName("closeWindow") CloseWindow("关闭窗口", "按常规设置中的确认策略关闭窗口"),
     @SerialName("manageTasks") ManageTasks("管理定时任务", "打开定时任务页面"),
+    @SerialName("searchFiles") SearchFiles("搜索文件", "搜索当前项目中的文件"),
 }
 
 /** One physical key, never a sequence or a modifier by itself. */
@@ -75,6 +76,7 @@ public object ShortcutRegistry {
             ShortcutCommand.NavigateBack -> ShortcutKey.LeftBracket
             ShortcutCommand.CloseWindow -> ShortcutKey.W
             ShortcutCommand.ManageTasks -> return emptyList()
+            ShortcutCommand.SearchFiles -> ShortcutKey.P
         }
         return listOf(ShortcutChord(key, ctrl = platform != ShortcutPlatform.Mac, meta = platform == ShortcutPlatform.Mac,
             shift = command == ShortcutCommand.ToggleSidebar))

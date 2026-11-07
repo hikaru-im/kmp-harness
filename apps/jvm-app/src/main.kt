@@ -267,6 +267,9 @@ fun main(args: Array<String>) {
                     managedWorktreeRepository = managedWorktrees,
                     installedPluginRepository = installedPlugins,
                     localProjectRepository = localProjectRepository,
+                    projectFileSearch = remember(localProjectRepository) {
+                        im.hikaru.harness.desktop.projects.DesktopProjectFileSearch(localProjectRepository)
+                    },
                     scheduledStore = scheduledExecution.store,
                     scheduledExecutorOwner = scheduledExecutorOwner,
                     scheduledExecutionRecoveryEnabled = scheduledExecution.recoveryEnabled,

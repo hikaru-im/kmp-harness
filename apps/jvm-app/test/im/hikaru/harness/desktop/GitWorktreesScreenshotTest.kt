@@ -219,7 +219,10 @@ class GitWorktreesScreenshotTest {
                                 assertTrue(viewport.width <= width - 32f)
                                 assertTrue(viewport.top >= 0 && viewport.bottom <= height.toFloat())
                                 onNodeWithTag("git-diff-summary").assertTextEquals("1 个文件变更 · +500 −0")
-                                // 500 changed lines exceed the Harness open-by-default threshold, so the file starts collapsed.
+                                // 500 changed lines are below the 2,000-line auto-open limit. Collapse explicitly
+                                // before exercising expansion and independent scrolling of the bounded viewport.
+                                onAllNodesWithTag("git-diff-file")[0].assertTextContains("收起", substring = true)
+                                clickGitNode(scrollGitNodeIntoView(onAllNodesWithTag("git-diff-file")[0]))
                                 onAllNodesWithTag("git-diff-file")[0].assertTextContains("展开", substring = true)
                                 onAllNodesWithTag("git-diff-file-patch").assertCountEquals(0)
                                 save("diff-collapsed")

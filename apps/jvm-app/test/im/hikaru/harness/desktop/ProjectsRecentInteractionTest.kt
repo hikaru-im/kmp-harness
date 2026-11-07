@@ -125,8 +125,10 @@ class ProjectsRecentInteractionTest {
                 pointer("local-project-picker-item-${project.id.value}")
                 onNodeWithTag("local-project-picker-open").assertTextEquals(project.name)
                 pointer("live-composer-model")
+                pointer("live-composer-model-select")
                 pointer(modelItemTag)
                 onNodeWithTag(modelItemTag).assertDoesNotExist()
+                onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Escape) }
                 capture("home-selected", "project=${project.id.value}; provider=$PROJECTS_RECENT_PROVIDER; model=$PROJECTS_RECENT_MODEL; creates=${f.creates.size}; prompts=${f.prompts.size}")
                 onNodeWithTag("live-composer-editor").assertIsDisplayed().assertIsEnabled()
                     .performTextReplacement("Run in the registered directory")

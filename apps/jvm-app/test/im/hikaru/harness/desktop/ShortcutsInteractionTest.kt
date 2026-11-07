@@ -32,6 +32,19 @@ class ShortcutsInteractionTest {
     private val custom = ShortcutChord(ShortcutKey.K, meta = true, shift = true)
 
     @Test
+    fun fileSearchShortcutOpensTheProductionDialogAndEscapeDismissesIt() = runComposeUiTest {
+        val repository = loaded()
+        val focus = FocusRequester()
+        setContent { WindowApp(repository, DesktopWindowCloseController(), CloseConfirmationPolicy.Never, focus) {} }
+        runOnIdle { focus.requestFocus() }
+        onNodeWithTag("shortcuts-test-key-target").shortcut(Key.P)
+        onNodeWithTag("project-file-search").assertExists()
+        onNodeWithText("请先在项目页或新聊天中选择项目，再搜索文件。").assertExists()
+        onNodeWithTag("project-file-search-input").performKeyInput { pressKey(Key.Escape) }
+        onNodeWithTag("project-file-search").assertDoesNotExist()
+    }
+
+    @Test
     fun realSettingsBackSidebarAndScheduledConsumersShareTheEffectiveMapping() = runComposeUiTest {
         val repository = loaded(ShortcutsSettings().withBindings(ShortcutCommand.ManageTasks, listOf(custom)))
         val controller = DesktopWindowCloseController()

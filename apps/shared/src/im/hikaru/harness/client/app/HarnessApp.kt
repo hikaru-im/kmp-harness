@@ -88,7 +88,9 @@ import im.hikaru.harness.client.git.GitBackend
 import im.hikaru.harness.client.git.GitBinding
 import im.hikaru.harness.client.git.GitController
 import im.hikaru.harness.client.git.GitDiffRequest
+import im.hikaru.harness.client.git.GitChangesPanel
 import im.hikaru.harness.client.git.GitDiffSnapshot
+import im.hikaru.harness.client.git.diffSource
 import im.hikaru.harness.client.git.GitFailure
 import im.hikaru.harness.client.git.GitFailureKind
 import im.hikaru.harness.client.git.GitReadException
@@ -160,6 +162,7 @@ import im.hikaru.harness.client.settings.WorktreeSettingsRepository
 import im.hikaru.harness.client.settings.WorktreeSettingsState
 import im.hikaru.harness.client.settings.GeneralSettingsState
 import im.hikaru.harness.client.settings.CloseConfirmationPolicy
+import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.ModelSettingsState
 import im.hikaru.harness.client.settings.ProviderConfiguration
 import im.hikaru.harness.client.settings.AppearanceRepository
@@ -219,6 +222,7 @@ import im.hikaru.harness.client.shell.PluginsNavigatorState
 import im.hikaru.harness.client.shell.toPageId
 import im.hikaru.harness.client.shell.navigatorSlug
 import im.hikaru.harness.client.shell.SettingsNavigatorModel
+import im.hikaru.harness.client.shell.SettingsPanelCatalog
 import im.hikaru.harness.client.shell.SettingsSection
 import im.hikaru.harness.client.shell.SettingsNavigatorState
 import im.hikaru.harness.client.shell.pageShellSpec
@@ -287,6 +291,7 @@ public fun HarnessApp(
     scheduledExecutorOwner: im.hikaru.harness.client.scheduling.ScheduledExecutorOwner? = null,
     scheduledExecutionRecoveryEnabled: Boolean = true,
     localProjectRepository: LocalProjectRepository = UnavailableLocalProjectRepository,
+    projectFileSearch: im.hikaru.harness.client.projects.ProjectFileSearch = im.hikaru.harness.client.projects.UnavailableProjectFileSearch,
     managedWorktreeRepository: im.hikaru.harness.client.git.ManagedWorktreeRepository? = null,
     terminalLaunchProvider: im.hikaru.harness.client.panels.TerminalLaunchProvider =
         im.hikaru.harness.client.panels.UnavailableTerminalLaunchProvider,
@@ -904,6 +909,7 @@ public fun HarnessApp(
         }
         LiveConversationComposer(
             state = composerState, onDraftChange = { if (homeComposerIsCurrent()) conversation.updateDraft(it) },
+            enterBehavior = generalState.settings.enterBehavior, shortcutPlatform = shortcuts.platform,
             onSubmit = {
                 if (submitReason == null && !submitBlockedWithoutHint && homeComposerIsCurrent()) {
                     var target: ValidatedLocalProjectTarget? = null
@@ -1087,7 +1093,24 @@ public fun HarnessApp(
         tabStripState?.onChatPage = isChatPage(page)
     }
     val back: () -> Unit = { navigation = navigation.back() }
-    val shortcutBlocked by rememberUpdatedState(projectEditorOpen || accountMenu.isOpen || exploreMenu.isOpen || navigation.overlay != OverlayId.None)
+    val openFileSearch: () -> Unit = {
+        navigatorSearchOpen = false
+        workspaceState = workspaceState.withSearchQuery("")
+        navigation = navigation.openOverlay(OverlayId.FileSearch)
+    }
+    val shortcutSettings by shortcuts.state.collectAsState()
+    val fileSearchShortcut = shortcutSettings.settings.bindings(ShortcutCommand.SearchFiles, shortcuts.platform)
+        .firstOrNull()?.label(shortcuts.platform).orEmpty()
+    val searchProject = when (val current = page) {
+        is PageId.Project -> localProjectsState.projects.firstOrNull { it.id.value == current.projectId }
+        is PageId.Thread -> localProjectsState.snapshot?.memberships
+            ?.firstOrNull { it.session.id.value == current.threadId }
+            ?.let { membership -> localProjectsState.projects.firstOrNull { it.id == membership.projectId } }
+        else -> localProjectsState.selectedProject
+    }
+    val fileSearchTarget = if (searchProject != null && projectBinding != null)
+        im.hikaru.harness.client.projects.ProjectFileSearchTarget(projectBinding, searchProject) else null
+    val shortcutBlocked by rememberUpdatedState(projectEditorOpen || navigatorSearchOpen || accountMenu.isOpen || exploreMenu.isOpen || navigation.overlay != OverlayId.None)
     val shortcutConsumer by rememberUpdatedState<(ShortcutCommand) -> Boolean>({ command ->
         when (command) {
             ShortcutCommand.Settings -> { selectPage(PageId.Settings(SettingsSection.General)); true }
@@ -1101,6 +1124,7 @@ public fun HarnessApp(
                 if (navigation.backStack.isEmpty()) false else { back(); true }
             }
             ShortcutCommand.ManageTasks -> { selectPage(PageId.ScheduledTasks()); true }
+            ShortcutCommand.SearchFiles -> { openFileSearch(); true }
             ShortcutCommand.CloseWindow -> false // The desktop root owns the sole close consumer.
         }
     })
@@ -1155,6 +1179,7 @@ public fun HarnessApp(
         LiveConversationComposer(
             state = if (bound) paneState else ConversationState(host = conversationHost, selectedSessionId = sessionId),
             onDraftChange = { if (stillBound()) paneController.updateDraft(it) },
+            enterBehavior = generalState.settings.enterBehavior, shortcutPlatform = shortcuts.platform,
             onSubmit = {
                 if (bound && stillBound() && (transport != ConnectionTransport.Local || paneModelAvailable)) {
                     paneController.submit(agentOptions = if (transport == ConnectionTransport.Local)
@@ -1264,7 +1289,30 @@ public fun HarnessApp(
             onTerminalInput = { key, input -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Input, input) },
             onTerminalEof = { key -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Eof) },
             onTerminalCancel = { key -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Cancel) },
-            ptyController = ptyController, ptyState = ptyState) }
+            ptyController = ptyController, ptyState = ptyState,
+            // GIT-01 review tab: a read-only projection of the app-owned GitController. The review
+            // diff is its own read slot (`refreshReviewDiff`), so opening this tab or switching its
+            // stage filter never rewrites the Settings → Git page's diff source. It never stages,
+            // commits, checks out or creates a worktree.
+            changesContent = {
+                LaunchedEffect(git, gitState.selectedCwd, gitState.changeFilter, page) {
+                    if (gitState.unavailableReason != null || gitState.repository !is GitRead.Ready) return@LaunchedEffect
+                    if ((gitState.reviewDiff as? GitRead.Ready<GitDiffSnapshot>)?.value?.request?.source ==
+                        gitState.changeFilter.diffSource) return@LaunchedEffect
+                    git.refreshReviewDiff()
+                }
+                GitChangesPanel(
+                    state = gitState,
+                    onSelectFilter = { filter ->
+                        git.selectChangeFilter(filter)
+                        git.refreshReviewDiff()
+                    },
+                    // `codex.review.refreshGitQueries` re-reads status, branches, diff and the review
+                    // half in one pass; it is the controller's existing read-only refresh.
+                    onRefresh = { git.refresh() },
+                    onRequestPreviews = { paths -> git.refreshPreviewFiles(paths) },
+                )
+            }) }
     }
     val defaultRoot: @Composable () -> Unit = {
         val shellDensity = LocalDensity.current
@@ -1375,7 +1423,15 @@ public fun HarnessApp(
                 )
 
 
-                PageId.Plugins -> InstalledPluginsPage(pluginsState, pluginAction)
+                // The Settings row routes here instead of into SettingsSection.Plugins, so this
+                // page carries the plugin panel's semantic identity too (M0 / SET-01 / SET-02).
+                PageId.Plugins -> Box(
+                    Modifier.fillMaxSize().semantics {
+                        testTag = SettingsPanelCatalog.panelTestTag("plugins")
+                    },
+                ) {
+                    InstalledPluginsPage(pluginsState, pluginAction)
+                }
                 is PageId.PluginDetail -> InstalledPluginDetailPage(pluginsState, pluginAction)
 
 
@@ -1410,6 +1466,7 @@ public fun HarnessApp(
                     onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
                     generalState = generalState,
                     onClosePolicyChange = { policy -> generalScope.launch { general.save(general.state.value.settings.copy(closeConfirmation = policy)) } },
+                    onEnterBehaviorChange = { behavior -> generalScope.launch { general.save(general.state.value.settings.copy(enterBehavior = behavior)) } },
                     onGeneralRetry = { generalScope.launch { general.retry() } },
                     worktreeSettingsState = worktreeSettingsState,
                     onSaveWorktreeSettings = { next -> worktreeSettingsScope.launch { worktreeSettings.save(next) } },
@@ -1501,6 +1558,8 @@ public fun HarnessApp(
             },
             navigatorSearchOpen = navigatorSearchOpen,
             onToggleNavigatorSearch = { navigatorSearchOpen = !navigatorSearchOpen },
+            onSearchFiles = openFileSearch,
+            fileSearchShortcut = fileSearchShortcut,
             onToggleProject = { projectId -> navigation = navigation.toggleProject(projectId) },
             onSelectNode = { node -> selectPage(PageId.Thread(node.id)) },
             onSelectRecent = { task -> selectPage(PageId.Thread(task.id)) },
@@ -1557,7 +1616,15 @@ public fun HarnessApp(
                 {
                     ThreadSummaryPanel(
                         load = summaryLoad,
-                        onOpenReview = { selectPage(PageId.Settings(SettingsSection.Git)) },
+                        // `openReviewTab`: the summary island's 变更 row now opens the thread side
+                        // panel's 审查 tab (a read-only view of this thread's changes). The Settings →
+                        // Git page keeps its own navigator entry.
+                        onOpenReview = panels?.let { state ->
+                            {
+                                panelController.dispatch(ThreadPanelAction.OpenTab(state.scope, ThreadPanelTab.Changes))
+                                summaryPanelOpen = false
+                            }
+                        },
                         onRefresh = { git.refreshSummaryStats() },
                         onClose = { summaryPanelOpen = false },
                         subagents = summaryActivity?.subagents.orEmpty(),
@@ -1689,6 +1756,12 @@ public fun HarnessApp(
                         state = toasts,
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = HarnessToastTopInset),
                     )
+                    if (navigation.overlay == OverlayId.FileSearch) {
+                        im.hikaru.harness.client.projects.ProjectFileSearchDialog(
+                            target = fileSearchTarget, search = projectFileSearch,
+                            onDismiss = { navigation = navigation.closeOverlay() },
+                        )
+                    }
                     if (projectEditorOpen) key(projectBinding) {
                         LocalProjectEditorDialog(localProjectsState, editingProject,
                             onDismiss = { projectEditorOpen = false }, onCreate = saveProject,
@@ -2025,6 +2098,7 @@ private fun SettingsScreen(
     onCredentialSet: (String, String) -> Unit,
     generalState: GeneralSettingsState,
     onClosePolicyChange: (CloseConfirmationPolicy) -> Unit,
+    onEnterBehaviorChange: (EnterBehavior) -> Unit,
     onGeneralRetry: () -> Unit,
     worktreeSettingsState: WorktreeSettingsState,
     onSaveWorktreeSettings: (WorktreeSettings) -> Unit,
@@ -2048,8 +2122,13 @@ private fun SettingsScreen(
     onGitRevealConsumed: () -> Unit,
 ) {
     Box(Modifier.fillMaxWidth().semantics { testTag = "settings-content-" + section.navigatorSlug() }) {
+      // M0 panel identity: one stable semantics node per Settings page, named with the Codex
+      // runtime slug where the surface maps to one (SET-01/SET-02). Kept as a nested node so the
+      // pre-existing `settings-content-<row>` tag stays available to current tests.
+      Box(Modifier.fillMaxWidth().semantics { testTag = SettingsPanelCatalog.panelTestTag(section) }) {
       when (section) {
-        SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins)
+        SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins,
+            onEnterBehaviorChange = onEnterBehaviorChange, shortcutPlatform = shortcutsRepository.platform)
         SettingsSection.Appearance -> SettingsAppearancePage(appearanceState, onAppearanceChange, onAppearanceRetry)
         SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover,
             onModelsDiscoverDraft, onProviderConnect, onModelEnabled, onModelSelected)
@@ -2075,6 +2154,7 @@ private fun SettingsScreen(
                 HarnessText("此设置页面正在实现。", color = HarnessTokens.Colors.TextMuted)
             }
         }
+      }
       }
     }
 }

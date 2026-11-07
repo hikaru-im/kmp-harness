@@ -13,7 +13,8 @@ import kotlinx.coroutines.*
 public class DesktopGitBackend(
     private val localHostId: HostId,
     private val runner: GitCommandRunner = DesktopGitCommandRunner(),
-) : GitBackend, GitWorktreeCreator, GitBranchSwitcher, GitBranchCreator, GitCommitter, GitWorktreeContentProbe, GitWorktreeRemover {
+) : GitBackend, GitWorktreeCreator, GitBranchSwitcher, GitBranchCreator, GitCommitter, GitStager,
+    GitWorktreeContentProbe, GitWorktreeRemover {
     override fun canCommit(binding: GitBinding): Boolean =
         binding.access == GitAccess.LocalReadOnly && binding.hostId == localHostId
 
@@ -485,6 +486,135 @@ public class DesktopGitBackend(
                 if (dispatched) failure.copy(message = failure.message + " 结果未知，请刷新工作树列表；不要直接重试。") else failure,
                 needsRescan = dispatched,
             ))
+        }
+    }
+
+    override fun canStage(binding: GitBinding): Boolean =
+        binding.access == GitAccess.LocalReadOnly && binding.hostId == localHostId
+
+    /**
+     * Index-only stage/unstage, mirroring Codex's `review.patch`: stage writes the worktree patch
+     * into the index, unstage writes the index patch backward. The worktree is never modified, so a
+     * file-level action uses `add` / `restore --staged` on the reviewed path itself, and a hunk
+     * action uses one validated single-hunk patch.
+     *
+     * Every check runs before the first mutating command (the hunk `--check` is a dry run), so an
+     * early failure is a rejection. Once the index write is dispatched, a failure cannot prove
+     * whether the index moved, so it is reported as [GitStageResult.UnknownOutcome]; the receipt's
+     * status is always a real post-command reread, never derived from the patch.
+     */
+    override suspend fun applyStage(repository: GitRepository, request: GitStageRequest): GitStageResult {
+        var dispatched = false
+        try {
+            local(request.binding)
+            if (request.binding != repository.binding || request.root != repository.root)
+                fail(GitFailureKind.InvalidRequest, "暂存请求与仓库 scope 不一致。")
+            verifyCreationRepository(repository)
+            val before = head(repository)
+            if (before.branch != request.expectedBranch || before.oid != request.expectedHeadOid)
+                fail(GitFailureKind.StaleSnapshot, "HEAD 已变化，请重新读取仓库后再暂存。")
+            val current = status(repository)
+            if (current.branch != request.expectedBranch || current.headOid != request.expectedHeadOid)
+                fail(GitFailureKind.StaleSnapshot, "仓库状态已变化，请重新读取后再暂存。")
+            val path = request.target.path
+            if (!gitStagePathIsSafe(path)) fail(GitFailureKind.InvalidRequest, "暂存路径不在仓库内。")
+            val change = current.changes.singleOrNull { it.path == path }
+                ?: fail(GitFailureKind.InvalidRequest, "该文件已不在当前变更列表中，请刷新。")
+            if (change.conflicted) fail(GitFailureKind.InvalidRequest, "存在未解决的冲突，请使用外部 Git 处理。")
+            if (!request.action.accepts(change)) fail(GitFailureKind.InvalidRequest,
+                if (request.action == GitStageAction.Stage) "该文件没有可暂存的改动。" else "该文件没有已暂存的改动。")
+            val target = request.target
+            if (target is GitStageTarget.Hunk) {
+                if (change.untracked) fail(GitFailureKind.InvalidRequest, "未跟踪的文件请按整个文件暂存。")
+                validateStagePatch(path, target.patch)
+            }
+            // A rename has two index sides. The source comes from this read, not from the caller, and
+            // is revalidated like any other path before it can reach argv.
+            val renameSource = change.originalPath?.takeIf { it != path }?.also {
+                if (!gitStagePathIsSafe(it)) fail(GitFailureKind.InvalidRequest, "重命名来源路径不在仓库内。")
+            }
+            currentCoroutineContext().ensureActive()
+            when {
+                target is GitStageTarget.Hunk -> {
+                    // The dry run proves the patch against this exact index before anything is written.
+                    hunkApply(repository, target.patch, reverse = request.action == GitStageAction.Unstage, checkOnly = true)
+                    dispatched = true
+                    hunkApply(repository, target.patch, reverse = request.action == GitStageAction.Unstage, checkOnly = false)
+                }
+                request.action == GitStageAction.Stage -> {
+                    // Exactly the reviewed file. A worktree rename appears as two separate entries
+                    // (deletion + untracked path), so each is staged on its own, like any other change.
+                    dispatched = true
+                    val added = command(repository.root, listOf("add", "--", stagePathspec(path)))
+                    if (added.exitCode != 0)
+                        fail(GitFailureKind.CommandFailed, "Git 暂存失败（exit ${added.exitCode}）。")
+                }
+                before.oid != null -> {
+                    // Unstaging a staged rename must name both sides: the destination alone would
+                    // leave the source's deletion staged.
+                    val paths = listOfNotNull(path, renameSource).map { stagePathspec(it) }
+                    dispatched = true
+                    val restored = command(repository.root, listOf("restore", "--staged", "--") + paths)
+                    if (restored.exitCode != 0)
+                        fail(GitFailureKind.CommandFailed, "Git 取消暂存失败（exit ${restored.exitCode}）。")
+                }
+                else -> {
+                    // Unborn branch: there is no HEAD to restore from, so the entry leaves the index.
+                    dispatched = true
+                    val removed = command(repository.root,
+                        listOf("rm", "--cached", "--force", "--ignore-unmatch", "--", stagePathspec(path)))
+                    if (removed.exitCode != 0)
+                        fail(GitFailureKind.CommandFailed, "Git 取消暂存失败（exit ${removed.exitCode}）。")
+                }
+            }
+            verifyCreationRepository(repository)
+            return GitStageResult.Applied(GitStageReceipt(repository, request, status(repository)))
+        } catch (e: Exception) {
+            val failure = if (e is CancellationException) GitFailure(GitFailureKind.CommandFailed,
+                if (dispatched) "暂存调用已取消，结果未知，请刷新仓库。" else "暂存在调用 Git 前已取消。")
+            else (e as? GitReadException)?.failure ?: GitFailure(GitFailureKind.CommandFailed, "无法确认本机暂存结果。")
+            return if (dispatched) GitStageResult.UnknownOutcome(failure.copy(
+                message = "暂存调用后结果未知，请重新读取仓库状态；不要直接重试。"))
+            else GitStageResult.Rejected(failure)
+        }
+    }
+
+    /**
+     * Git matches `add`/`restore`/`rm` arguments as pathspecs, so a file literally named `*.txt`
+     * would glob onto every matching file. The `:(literal)` magic pins the argument to that exact
+     * path (verified: it also works for a name containing `:(`). Backends validate the path first, so
+     * this only supplies the magic prefix, never user text.
+     */
+    private fun stagePathspec(path: String): String = ":(literal)$path"
+
+    /**
+     * Runs `git apply --cached` on one validated hunk patch. The runner has no stdin channel, so the
+     * patch goes to a private temp file inside this worktree's own Git directory (never the
+     * worktree, so `status` cannot see it) and is always removed afterwards. `--` keeps the file
+     * name from being read as an option; no shell is involved.
+     */
+    private suspend fun hunkApply(repository: GitRepository, patch: String, reverse: Boolean, checkOnly: Boolean) {
+        val directory = Path.of(repository.gitDir)
+        val file = try {
+            Files.createTempFile(directory, "harness-stage-", ".patch")
+        } catch (_: Exception) {
+            fail(GitFailureKind.InvalidRequest, "无法写入暂存补丁临时文件。")
+        }
+        try {
+            Files.writeString(file, patch)
+            // Strict application: no --recount/--unidiff-zero, so Git must find exactly the hunk
+            // this harness validated rather than relaxing its own checks.
+            val args = mutableListOf("apply", "--cached", "--whitespace=nowarn")
+            if (reverse) args.add("--reverse")
+            if (checkOnly) args.add("--check")
+            args.add("--")
+            args.add(file.toString())
+            val result = command(repository.root, args)
+            if (result.exitCode != 0) fail(GitFailureKind.CommandFailed,
+                if (checkOnly) "补丁无法应用到当前暂存区，请刷新后重试。"
+                else "Git 暂存补丁失败（exit ${result.exitCode}）。")
+        } finally {
+            runCatching { Files.deleteIfExists(file) }
         }
     }
 

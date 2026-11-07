@@ -29,8 +29,12 @@ import im.hikaru.harness.ui.foundation.HarnessSwitch
 import im.hikaru.harness.ui.foundation.HarnessText
 import im.hikaru.harness.ui.foundation.HarnessTokens
 import im.hikaru.harness.client.settings.CloseConfirmationPolicy
+import im.hikaru.harness.client.settings.ENTER_BEHAVIOR_DESCRIPTION
+import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.GeneralSettingsState
 import im.hikaru.harness.client.settings.GeneralUnavailableReasons
+import im.hikaru.harness.client.settings.ShortcutPlatform
+import im.hikaru.harness.client.settings.label
 
 /** The stable control kind used by one General preference row. */
 public enum class SettingsGeneralControl {
@@ -76,6 +80,7 @@ public object SettingsGeneralModel {
             SettingsGeneralRow("language", "语言", "", SettingsGeneralControl.Dropdown),
             SettingsGeneralRow("menu-bar", "在菜单栏中显示", "关闭主窗口后继续在 macOS 菜单栏中运行", SettingsGeneralControl.Toggle, true),
             SettingsGeneralRow("confirm-close", "关闭窗口前确认", "使用关闭标签页快捷键关闭最后一个标签页时提醒", SettingsGeneralControl.Dropdown),
+            SettingsGeneralRow("enter-behavior", "发送快捷键", ENTER_BEHAVIOR_DESCRIPTION, SettingsGeneralControl.Dropdown),
             SettingsGeneralRow("full-view", "默认采用完整视图", "开始新任务时，在同一标签页中显示聊天和内容", SettingsGeneralControl.Toggle, true),
             SettingsGeneralRow("bottom-panel", "底部面板", "在应用标题栏中显示底部面板控件", SettingsGeneralControl.Toggle, true),
             SettingsGeneralRow("terminal-location", "默认终端位置", "", SettingsGeneralControl.Segmented),
@@ -95,6 +100,8 @@ public fun SettingsGeneralPage(
     onClosePolicyChange: (CloseConfirmationPolicy) -> Unit = {},
     onRetry: () -> Unit = {},
     onOpenPlugins: (() -> Unit)? = null,
+    onEnterBehaviorChange: (EnterBehavior) -> Unit = {},
+    shortcutPlatform: ShortcutPlatform = ShortcutPlatform.Mac,
 ) {
     SettingsFormFrame("常规", "settings-general-title") {
         if (state.loading || state.saving || state.loadError != null || state.saveError != null || !state.durable) {
@@ -109,8 +116,10 @@ public fun SettingsGeneralPage(
                 }
             }
         }
-        GeneralSection("权限", "settings-permissions", SettingsGeneralModel.permissions, state, onClosePolicyChange, onOpenPlugins)
-        GeneralSection("常规", "settings-preferences", SettingsGeneralModel.preferences, state, onClosePolicyChange, onOpenPlugins)
+        GeneralSection("权限", "settings-permissions", SettingsGeneralModel.permissions, state, onClosePolicyChange, onOpenPlugins,
+            onEnterBehaviorChange, shortcutPlatform)
+        GeneralSection("常规", "settings-preferences", SettingsGeneralModel.preferences, state, onClosePolicyChange, onOpenPlugins,
+            onEnterBehaviorChange, shortcutPlatform)
     }
 }
 
@@ -118,6 +127,7 @@ public fun SettingsGeneralPage(
 private fun GeneralSection(
     title: String, tag: String, rows: List<SettingsGeneralRow>, state: GeneralSettingsState,
     onClosePolicyChange: (CloseConfirmationPolicy) -> Unit, onOpenPlugins: (() -> Unit)?,
+    onEnterBehaviorChange: (EnterBehavior) -> Unit, shortcutPlatform: ShortcutPlatform,
 ) {
     SettingsFormSection(title, titleTag = "$tag-title") {
         SettingsFormCard(Modifier.semantics { testTag = "$tag-card" }) {
@@ -126,6 +136,7 @@ private fun GeneralSection(
                     row = if (row.id == "plugins") row.copy(control = SettingsGeneralControl.Button) else row,
                     showDivider = index > 0, state = state,
                     onClosePolicyChange = onClosePolicyChange, onOpenPlugins = onOpenPlugins,
+                    onEnterBehaviorChange = onEnterBehaviorChange, shortcutPlatform = shortcutPlatform,
                 )
             }
         }
@@ -144,6 +155,8 @@ private fun SettingsRow(
     state: GeneralSettingsState,
     onClosePolicyChange: (CloseConfirmationPolicy) -> Unit,
     onOpenPlugins: (() -> Unit)?,
+    onEnterBehaviorChange: (EnterBehavior) -> Unit,
+    shortcutPlatform: ShortcutPlatform,
 ) {
     if (showDivider) HorizontalDivider(
         color = HarnessTokens.Colors.BorderSubtle,
@@ -162,6 +175,8 @@ private fun SettingsRow(
             )
             SettingsGeneralControl.Dropdown -> {
                 if (row.id == "confirm-close") GeneralClosePolicyMenu(state, onClosePolicyChange, tag)
+                else if (row.id == "enter-behavior")
+                    GeneralEnterBehaviorMenu(state, shortcutPlatform, onEnterBehaviorChange, tag)
                 else HarnessSelectTrigger(
                     text = if (row.id == "language") "中文" else "尚未配置",
                     onClick = {}, enabled = false, testTag = tag,
@@ -201,16 +216,44 @@ private fun GeneralClosePolicyMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     HarnessMenu(
-        expanded = expanded && state.canEdit,
+        expanded = expanded && state.closePolicyCanEdit,
         entries = CloseConfirmationPolicy.entries.map { policy ->
             HarnessMenuEntry.Item(key = policy.name, text = policy.label,
-                selected = policy == state.settings.closeConfirmation, enabled = state.canEdit)
+                selected = policy == state.settings.closeConfirmation, enabled = state.closePolicyCanEdit)
         },
-        onExpandedChange = { expanded = it && state.canEdit },
+        onExpandedChange = { expanded = it && state.closePolicyCanEdit },
         onSelect = { key -> onSelect(CloseConfirmationPolicy.valueOf(key)) },
         anchor = { toggle ->
             HarnessSelectTrigger(
                 text = state.settings.closeConfirmation.label,
+                onClick = toggle, enabled = state.closePolicyCanEdit,
+                state = if (state.saving) HarnessControlState.Loading else HarnessControlState.Normal,
+                testTag = testTag,
+            )
+        },
+    )
+}
+
+/** SET-10: one of the three Codex enter modes; the composer reads the saved value directly. */
+@Composable
+private fun GeneralEnterBehaviorMenu(
+    state: GeneralSettingsState,
+    platform: ShortcutPlatform,
+    onSelect: (EnterBehavior) -> Unit,
+    testTag: String,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    HarnessMenu(
+        expanded = expanded && state.canEdit,
+        entries = EnterBehavior.entries.map { behavior ->
+            HarnessMenuEntry.Item(key = behavior.name, text = behavior.label(platform),
+                selected = behavior == state.settings.enterBehavior, enabled = state.canEdit)
+        },
+        onExpandedChange = { expanded = it && state.canEdit },
+        onSelect = { key -> onSelect(EnterBehavior.valueOf(key)) },
+        anchor = { toggle ->
+            HarnessSelectTrigger(
+                text = state.settings.enterBehavior.label(platform),
                 onClick = toggle, enabled = state.canEdit,
                 state = if (state.saving) HarnessControlState.Loading else HarnessControlState.Normal,
                 testTag = testTag,

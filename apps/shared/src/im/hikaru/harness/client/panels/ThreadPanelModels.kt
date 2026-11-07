@@ -11,8 +11,28 @@ import im.hikaru.harness.client.connection.BackgroundInputState
 /** All external data and local actions belong to a host and parent conversation. */
 public data class ThreadPanelScope(val hostId: HostId, val conversationId: SessionId)
 
-/** Local views, not synthetic terminal sessions. Closing a view never kills a process. */
-public enum class ThreadPanelTab { BackgroundOutput, Subagents }
+/**
+ * Local views, not synthetic terminal sessions. Closing a view never kills a process.
+ *
+ * [Changes] is Codex's Review side-panel tab (`thread.sidePanel.diffTab` → 审查, GIT-01). It is a
+ * read-only projection of [im.hikaru.harness.client.git.GitState]; opening it starts no read by
+ * itself and never stages, commits, checks out or creates a worktree.
+ */
+public enum class ThreadPanelTab {
+    Changes,
+    BackgroundOutput,
+    Subagents,
+    ;
+
+    /**
+     * Tabs a freshly bound panel shows without user action. [Changes] is deliberately excluded:
+     * the review tab in Codex is opened on demand (`openReviewTab`), so a default that included it
+     * would surface an empty review pane for every thread and regress the terminal/subagent panel.
+     */
+    public companion object {
+        public val defaultOpenTabs: List<ThreadPanelTab> = listOf(BackgroundOutput, Subagents)
+    }
+}
 
 /**
  * Panel sections. [name] stays the stable identity used by state, persistence and tests; [label] is

@@ -5,8 +5,10 @@ import im.hikaru.harness.client.connection.SessionId
 import im.hikaru.harness.client.conversation.*
 import im.hikaru.harness.client.connection.ReasoningEffortId
 import im.hikaru.harness.client.connection.ReasoningOptions
+import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.ModelReasoningCapabilities
 import im.hikaru.harness.client.settings.ModelReasoningConstraint
+import im.hikaru.harness.client.settings.ShortcutPlatform
 import kotlin.test.*
 
 class ComposerPresentationTest {
@@ -66,5 +68,28 @@ class ComposerPresentationTest {
         val requested = ReasoningOptions(effort = ReasoningEffortId("high"))
         assertEquals(requested, resolveComposerReasoning(model, requested))
         assertEquals(listOf("low", "high"), model.allowedReasoningEfforts(requested))
+    }
+
+    @Test
+    fun submitHintIsDerivedFromTheSameShortcutModelTheHandlerUses() {
+        assertEquals("发送 · Enter；换行 · Shift+Enter", ComposerSubmitShortcut.Enter.hint)
+        assertTrue(ComposerSubmitShortcut.Enter.plainEnterSubmits)
+
+        val macAlways = ComposerSubmitShortcut(EnterBehavior.CmdAlways, ShortcutPlatform.Mac)
+        assertFalse(macAlways.plainEnterSubmits)
+        assertEquals("发送 · ⌘ + Enter；换行 · Enter", macAlways.hint)
+
+        val windowsAlways = ComposerSubmitShortcut(EnterBehavior.CmdAlways, ShortcutPlatform.Windows)
+        assertEquals("发送 · Ctrl + Enter；换行 · Enter", windowsAlways.hint)
+
+        // `cmdIfMultiline` follows the draft's real newline, not its visual wrapping.
+        val singleLine = ComposerSubmitShortcut(EnterBehavior.CmdIfMultiline, ShortcutPlatform.Mac,
+            multilineDraft = false)
+        assertTrue(singleLine.plainEnterSubmits)
+        assertEquals("发送 · Enter；换行 · Shift+Enter", singleLine.hint)
+        val multiline = ComposerSubmitShortcut(EnterBehavior.CmdIfMultiline, ShortcutPlatform.Mac,
+            multilineDraft = true)
+        assertFalse(multiline.plainEnterSubmits)
+        assertEquals("发送 · ⌘ + Enter；换行 · Enter", multiline.hint)
     }
 }

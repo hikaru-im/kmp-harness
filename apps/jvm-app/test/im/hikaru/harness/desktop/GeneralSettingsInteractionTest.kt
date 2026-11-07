@@ -59,6 +59,48 @@ class GeneralSettingsInteractionTest {
     }
 
     @Test
+    fun everyEnterBehaviorSavesAndRouteReturnShowsTheSavedChoice() = runComposeUiTest {
+        val repository = GeneralSettingsRepository(MemoryGeneralSettingsStore(), true)
+        runBlocking { repository.load() }
+        val shortcuts = ShortcutsRepository(platform = ShortcutPlatform.Mac)
+        setContent {
+            Box(Modifier.fillMaxSize()) {
+                HarnessApp(null, initialDestination = HarnessDestination.Settings,
+                    generalSettingsRepository = repository, shortcutsRepository = shortcuts)
+            }
+        }
+        EnterBehavior.entries.forEach { behavior ->
+            onNodeWithTag("settings-general-control-enter-behavior").performScrollTo().clickWithMouse()
+            onNodeWithTag("menu:" + behavior.name).clickWithMouse()
+            onNodeWithTag("menu:" + behavior.name).assertDoesNotExist()
+            runOnIdle {
+                assertEquals(behavior, repository.state.value.settings.enterBehavior)
+                assertEquals(behavior.ordinal + 1L, repository.state.value.saveRevision)
+            }
+            onNodeWithTag("settings-row-appearance").clickWithMouse()
+            onNodeWithTag("settings-row-general").clickWithMouse()
+            onNodeWithTag("settings-general-control-enter-behavior").performScrollTo()
+                .assertTextContains(behavior.label(ShortcutPlatform.Mac), substring = true)
+        }
+    }
+
+    @Test
+    fun savedEnterBehaviorReachesTheLiveComposerHint() = runSkikoComposeUiTest(size = Size(1200f, 900f)) {
+        val repository = GeneralSettingsRepository(MemoryGeneralSettingsStore(
+            GeneralSettings(CloseConfirmationPolicy.KeyboardOnly, EnterBehavior.CmdAlways)), true)
+        runBlocking { repository.load() }
+        setContent {
+            HarnessApp(null, generalSettingsRepository = repository,
+                shortcutsRepository = ShortcutsRepository(platform = ShortcutPlatform.Mac))
+        }
+        onNodeWithTag("live-composer-editor").performTextInput("hello")
+        onNodeWithTag("live-composer-send").performMouseInput { moveTo(center) }
+        mainClock.advanceTimeBy(300)
+        waitForIdle()
+        onNodeWithText("发送 · ⌘ + Enter；换行 · Enter").assertIsDisplayed()
+    }
+
+    @Test
     fun compactPageDisablesUnavailableControlsAndExposesPluginAction() = runComposeUiTest {
         var opens = 0
         var width by mutableStateOf(420.dp)

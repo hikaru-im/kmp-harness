@@ -26,6 +26,9 @@ internal class ModelUiBackend : ModelSettingsBackend {
     var retries = 0
     var discoveries = 0
     var draftDiscoveries = 0
+    var draftDiscoveryGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    var draftDiscoveryFailure: String? = null
+    var draftDiscoveryResult = ModelDiscoveryResult(listOf(ProviderModel("remote-chat", "Discovered Chat")), "fixture-catalog", true)
     var snapshot = ModelSettingsSnapshot(
         providers = listOf(ConfigurableProvider("openai", "OpenAI", ProviderConfiguration("openai", "OpenAI", credentialName = "MODEL_UI_TEST_KEY", modelIds = listOf("model-a", "model-b")),
             active = true, credentialWritable = true, canRemove = true,
@@ -77,9 +80,11 @@ internal class ModelUiBackend : ModelSettingsBackend {
 
     override suspend fun discoverDraft(configuration: ProviderConfiguration, apiKey: String): ModelDiscoveryResult {
         draftDiscoveries++
+        draftDiscoveryGate?.await()
+        draftDiscoveryFailure?.let { error(it) }
         assertEquals("fixture-plugin-key", apiKey)
         assertEquals("fixture-vendor", configuration.vendor)
-        return ModelDiscoveryResult(listOf(ProviderModel("remote-chat", "Discovered Chat")), "fixture-catalog", true)
+        return draftDiscoveryResult
     }
 }
 
@@ -132,6 +137,51 @@ class ModelSettingsInteractionTest {
     }
 
     @Test
+    fun addModesRetainIndependentDiscoveryResultsAcrossSwitches() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+        onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+        waitUntil { onAllNodesWithText("Discovered Chat").fetchSemanticsNodes().size == 1 }
+
+        onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+        onNodeWithText("Discovered Chat").assertDoesNotExist()
+        runOnIdle {
+            backend.draftDiscoveryResult = ModelDiscoveryResult(
+                listOf(ProviderModel("custom-chat", "Custom Discovered Chat")), "custom-catalog", true,
+            )
+        }
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+        onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+        waitUntil { onAllNodesWithText("Custom Discovered Chat").fetchSemanticsNodes().size == 1 }
+        repeat(2) {
+            onNodeWithTag("models-add-mode-preset").performScrollTo().performClick()
+            onNodeWithText("Discovered Chat").performScrollTo().assertExists()
+            onNodeWithText("目录来源：fixture-catalog").assertExists()
+            onNodeWithText("Custom Discovered Chat").assertDoesNotExist()
+            onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+            onNodeWithText("Custom Discovered Chat").performScrollTo().assertExists()
+            onNodeWithText("目录来源：custom-catalog").assertExists()
+            onNodeWithText("Discovered Chat").assertDoesNotExist()
+        }
+        runOnIdle {
+            assertEquals(2, backend.draftDiscoveries)
+            assertEquals(0, backend.writes)
+            assertTrue(backend.keys.isEmpty())
+        }
+
+        onNodeWithTag("provider-editor-base-url").performScrollTo().performTextReplacement("https://changed.test/v1")
+        onNodeWithText("Custom Discovered Chat").assertDoesNotExist()
+        onNodeWithTag("models-add-mode-preset").performScrollTo().performClick()
+        onNodeWithText("Discovered Chat").assertExists()
+        onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+        onNodeWithText("Custom Discovered Chat").assertDoesNotExist()
+        runOnIdle { assertEquals(2, backend.draftDiscoveries); assertEquals(0, backend.writes) }
+    }
+
+    @Test
     fun changedConnectionCanBeSavedPendingDiscovery() = runComposeUiTest {
         val backend = pluginBackend()
         val repository = loaded(backend)
@@ -145,6 +195,116 @@ class ModelSettingsInteractionTest {
         onNodeWithTag("provider-editor-discovered-model").assertDoesNotExist()
         onNodeWithTag("provider-editor-save").performScrollTo().performClick()
         runOnIdle { assertEquals(1, backend.writes); assertNull(repository.state.value.confirmedProviderConfiguration?.modelIds) }
+    }
+
+    @Test
+    fun addModesRetainIndependentUnsavedInputsAcrossRepeatedSwitches() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        fun fill(tag: String, value: String) {
+            onNodeWithTag(tag).performScrollTo().performTextReplacement(value)
+        }
+        fun expect(tag: String, value: String) {
+            onNodeWithTag(tag).performScrollTo().assertTextEquals(value)
+        }
+        onNodeWithTag("models-new-provider").performClick()
+        fill("provider-editor-name", "Preset draft")
+        fill("provider-editor-api-key", "preset-fixture-key")
+        onNodeWithTag("provider-editor-advanced").performScrollTo().performClick()
+        fill("provider-editor-base-url", "https://preset.test/v1")
+        fill("provider-editor-request-timeout", "not-a-number")
+        fill("provider-editor-models", "preset-a\npreset-b")
+        onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+        expect("provider-editor-name", "")
+        expect("provider-editor-base-url", "")
+        fill("provider-editor-name", "Custom draft")
+        fill("provider-editor-id", "custom-draft")
+        fill("provider-editor-api-key", "custom-fixture-key")
+        fill("provider-editor-base-url", "https://custom.test/v1")
+        fill("provider-editor-request-timeout", "12345")
+        fill("provider-editor-models", "custom-model")
+        repeat(2) {
+            onNodeWithTag("models-add-mode-preset").performScrollTo().performClick()
+            expect("provider-editor-name", "Preset draft")
+            // Advanced fields may start collapsed when the editor is displayed again.
+            onNodeWithTag("provider-editor-advanced").performScrollTo().performClick()
+            expect("provider-editor-base-url", "https://preset.test/v1")
+            expect("provider-editor-request-timeout", "not-a-number")
+            expect("provider-editor-models", "preset-a\npreset-b")
+            onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+            expect("provider-editor-name", "Custom draft")
+            expect("provider-editor-id", "custom-draft")
+            expect("provider-editor-base-url", "https://custom.test/v1")
+            expect("provider-editor-request-timeout", "12345")
+            expect("provider-editor-models", "custom-model")
+        }
+        runOnIdle { assertEquals(0, backend.writes); assertTrue(backend.keys.isEmpty()) }
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        runOnIdle {
+            val saved = requireNotNull(repository.state.value.confirmedProviderConfiguration)
+            assertEquals("custom-draft", saved.id)
+            assertEquals("https://custom.test/v1", saved.baseUrl)
+            assertEquals(listOf("custom-model"), saved.modelIds)
+            assertEquals("custom-fixture-key", backend.keys[saved.credentialName])
+            assertEquals(1, backend.writes)
+        }
+    }
+
+    @Test
+    fun returningToPresetRetainsItsOwnApiKeyForSave() = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("preset-fixture-key")
+        onNodeWithTag("models-add-mode-custom").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("custom-fixture-key")
+        onNodeWithTag("models-add-mode-preset").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        runOnIdle {
+            val saved = requireNotNull(repository.state.value.confirmedProviderConfiguration)
+            assertEquals("fixture-vendor", saved.vendor)
+            assertEquals("https://fixture.test/v1", saved.baseUrl)
+            assertEquals("preset-fixture-key", backend.keys[saved.credentialName])
+            assertEquals(1, backend.writes)
+        }
+    }
+
+    @Test
+    fun fetchingModelsLocksModeSwitchUntilSuccess() = discoveryLocksModeSwitch(fail = false)
+
+    @Test
+    fun fetchingModelsUnlocksModeSwitchAfterFailure() = discoveryLocksModeSwitch(fail = true)
+
+    private fun discoveryLocksModeSwitch(fail: Boolean) = runComposeUiTest {
+        val backend = pluginBackend()
+        val repository = loaded(backend)
+        setContent { OwnedModels(repository) }
+        onNodeWithTag("models-new-provider").performClick()
+        for ((mode, other) in listOf("preset" to "custom", "custom" to "preset")) {
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            runOnIdle {
+                backend.draftDiscoveryGate = gate
+                backend.draftDiscoveryFailure = if (fail) "Fixture discovery failed" else null
+            }
+            onNodeWithTag("provider-editor-api-key").performScrollTo().performTextReplacement("fixture-plugin-key")
+            try {
+                onNodeWithTag("provider-editor-discover").performScrollTo().performClick()
+                onNodeWithTag("models-add-mode-$mode").assertIsNotEnabled()
+                onNodeWithTag("models-add-mode-$other").performScrollTo().assertIsNotEnabled().performClick()
+                onNodeWithTag("provider-editor-discover").assertTextEquals("获取中…")
+                runOnIdle { assertEquals(if (mode == "preset") 1 else 2, backend.draftDiscoveries) }
+            } finally {
+                gate.complete(Unit)
+            }
+            waitUntil { onAllNodesWithText("获取模型列表").fetchSemanticsNodes().size == 1 }
+            if (fail) onNodeWithTag("provider-editor-error").assertTextEquals("Fixture discovery failed")
+            else onNodeWithText("Discovered Chat").assertExists()
+            onNodeWithTag("models-add-mode-$mode").assertIsEnabled()
+            onNodeWithTag("models-add-mode-$other").performScrollTo().assertIsEnabled().performClick()
+        }
+        runOnIdle { assertEquals(0, backend.writes); assertTrue(backend.keys.isEmpty()) }
     }
 
     private fun pluginBackend(): ModelUiBackend = ModelUiBackend().also { backend ->
@@ -217,6 +377,31 @@ class ModelSettingsInteractionTest {
         onNodeWithTag("settings-row-general").performClick()
         onNodeWithTag("settings-row-models").performClick()
         onNodeWithTag("models-provider-openai").assertExists()
+    }
+
+    @Test
+    fun providerConfigurationSurvivesLeavingSettingsAndReturning() = runComposeUiTest {
+        val backend = ModelUiBackend()
+        val repository = loaded(backend)
+        setContent {
+            HarnessApp(null, initialDestination = HarnessDestination.Settings,
+                modelSettingsRepository = repository, themeMode = HarnessThemeMode.Light)
+        }
+        onNodeWithTag("settings-row-models").performClick()
+        onNodeWithTag("models-provider-openai").assertExists()
+        onNodeWithTag("models-edit-openai").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-name").performScrollTo().performTextReplacement("Renamed provider")
+        onNodeWithTag("provider-editor-save").performScrollTo().performClick()
+        onNodeWithTag("provider-editor-name").assertDoesNotExist()
+        onNodeWithTag("rail-home").performClick()
+        onNodeWithTag("rail-account").performClick()
+        onNodeWithTag("account-menu-settings").performClick()
+        onNodeWithTag("settings-row-models").performClick()
+        onNodeWithText("Renamed provider").performScrollTo().assertExists()
+        runOnIdle {
+            assertEquals(1, backend.writes)
+            assertEquals("Renamed provider", repository.state.value.snapshot.providers.single().displayName)
+        }
     }
 
     @Test

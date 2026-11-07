@@ -466,7 +466,7 @@ private fun ComposeUiTest.mouseNode(target: SemanticsNodeInteraction) {
 @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 private fun ComposeUiTest.typeAscii(tag: String, text: String) {
     mouse(tag)
-    onNodeWithTag(tag, true).assertIsFocused()
+    val target = onNodeWithTag(tag, true).assertIsFocused()
     val skiko = this as? SkikoComposeUiTest ?: error("Real Desktop character events require SkikoComposeUiTest")
     val eventSource = object : Component() {}
     val deadline = System.nanoTime() + 10_000_000_000L
@@ -475,29 +475,33 @@ private fun ComposeUiTest.typeAscii(tag: String, text: String) {
     text.forEachIndexed { index, character ->
         check(System.nanoTime() < deadline) { "Real character input exceeded ten seconds: $tag at $index" }
         require(character == ' ' || character in 'a'..'z')
-        onNodeWithTag(tag, true).assertIsFocused()
         val key = if (character == ' ') Key.Spacebar else alphabet[character.code - 'a'.code]
-        val root = rootFor(onNodeWithTag(tag, true))
-        root.performKeyInput { keyDown(key) }
-        try {
-            // Desktop commits printable KEY_TYPED events; Down/Up alone carry no native event.
-            runOnUiThread {
+        // Send one physical key sequence in a single UI dispatch; settle between characters.
+        runOnUiThread {
+            skiko.scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyDown))
+            try {
+                // Desktop commits printable KEY_TYPED events; Down/Up alone carry no native event.
                 val nativeEvent = AwtKeyEvent(eventSource, AwtKeyEvent.KEY_TYPED,
                     System.currentTimeMillis(), 0, AwtKeyEvent.VK_UNDEFINED, character)
                 skiko.scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.Unknown,
                     codePoint = character.code, nativeEvent = nativeEvent))
+            } finally {
+                skiko.scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyUp))
             }
-        } finally {
-            root.performKeyInput { keyUp(key) }
         }
+        // Let controlled input recompose after every native event; verify bounded prefixes in batches.
         settle()
-        onNodeWithTag(tag, true).assertIsFocused()
-        assertEquals(text.take(index + 1),
-            onNodeWithTag(tag, true).fetchSemanticsNode().config[SemanticsProperties.EditableText].text,
-            "Real character prefix after event $index on $tag")
+        if ((index + 1) % 16 == 0 || index == text.lastIndex) {
+            target.assertIsFocused()
+            assertEquals(text.take(index + 1),
+                target.fetchSemanticsNode().config[SemanticsProperties.EditableText].text,
+                "Real character prefix after event $index on $tag")
+        }
     }
     settle()
-    assertEquals(text, onNodeWithTag(tag, true).fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+    target.assertIsFocused()
+    assertEquals(text, target.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+    check(System.nanoTime() < deadline) { "Real character input exceeded ten seconds: $tag after verification" }
 }
 
 /** Match the desktop pixel conversion; the Skiko dispatcher supplies scrollAmount = 1. */

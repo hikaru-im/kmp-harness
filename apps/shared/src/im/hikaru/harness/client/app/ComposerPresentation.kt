@@ -5,7 +5,10 @@ import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.client.connection.ModelMessageSource
 import im.hikaru.harness.client.connection.ReasoningEffortId
 import im.hikaru.harness.client.connection.ReasoningOptions
+import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.ModelReasoningCapabilities
+import im.hikaru.harness.client.settings.ShortcutPlatform
+import im.hikaru.harness.client.settings.enterModifierChord
 import im.hikaru.harness.client.settings.reasoningOptionsError
 
 public data class ConversationModelChoice(
@@ -27,6 +30,41 @@ internal fun ConversationModelChoice.allowedReasoningEfforts(options: ReasoningO
 
 private fun ConversationModelChoice.effectiveReasoningCapabilities(): ModelReasoningCapabilities =
     reasoningCapabilities ?: ModelReasoningCapabilities(efforts = reasoningEfforts)
+
+/**
+ * The submit chord the composer both enforces and prints, derived from General's Codex
+ * `发送快捷键` row (SET-10) and the current draft. One model means the key handler and the tooltip
+ * can never disagree.
+ *
+ * Codex semantics: `enter` sends on Enter; `cmdAlways` reserves Enter for newlines; and
+ * `cmdIfMultiline` sends on Enter only while the prompt is a single line. The modifier chord
+ * (⌘ on macOS, Ctrl elsewhere) sends in every mode. A draft is multiline when it contains a
+ * newline character — visual wrapping does not count.
+ */
+public data class ComposerSubmitShortcut(
+    val enterBehavior: EnterBehavior = EnterBehavior.Enter,
+    val platform: ShortcutPlatform = ShortcutPlatform.Mac,
+    val multilineDraft: Boolean = false,
+) {
+    public val plainEnterSubmits: Boolean
+        get() = when (enterBehavior) {
+            EnterBehavior.Enter -> true
+            EnterBehavior.CmdAlways -> false
+            EnterBehavior.CmdIfMultiline -> !multilineDraft
+        }
+
+    public val submitChord: String
+        get() = if (plainEnterSubmits) "Enter" else enterModifierChord(platform)
+
+    public val newlineChord: String
+        get() = if (plainEnterSubmits) "Shift+Enter" else "Enter"
+
+    public val hint: String get() = "发送 · $submitChord；换行 · $newlineChord"
+
+    public companion object {
+        public val Enter: ComposerSubmitShortcut = ComposerSubmitShortcut()
+    }
+}
 
 public enum class ComposerPermission(val label: String, val description: String) {
     Ask("请求批准", "编辑外部文件和使用互联网时始终询问"),
