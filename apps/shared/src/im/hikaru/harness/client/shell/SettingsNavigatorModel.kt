@@ -54,7 +54,7 @@ public object SettingsNavigatorModel {
         SettingsNavGroup("编码", listOf(
             SettingsNavItem("connections", "连接", SettingsNavIcon.Connections),
             SettingsNavItem("git", "Git", SettingsNavIcon.Git),
-            SettingsNavItem("worktrees", "Worktrees", SettingsNavIcon.Worktrees),
+            SettingsNavItem("worktrees", "工作树", SettingsNavIcon.Worktrees),
         )),
     )
 

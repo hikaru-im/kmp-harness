@@ -43,7 +43,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun ConversationComposerToolbar(
     state: ConversationState, models: List<ConversationModelChoice>, selectedModel: ConversationModelChoice?,
-    onModelSelect: (ConversationModelChoice) -> Unit, modelReason: String?,
+    onModelSelect: (ConversationModelChoice) -> Unit,
     canSend: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit,
     selectedEffort: String?, onEffortSelect: ((String?) -> Unit)?, effortKnown: Boolean,
     permission: ComposerPermission, onPermissionSelect: (ComposerPermission) -> Unit,
@@ -51,8 +51,17 @@ internal fun ConversationComposerToolbar(
     selectedReasoning: im.hikaru.harness.client.connection.ReasoningOptions? = null,
     onManageModels: (() -> Unit)? = null,
     submitShortcut: ComposerSubmitShortcut = ComposerSubmitShortcut.Enter,
+    /**
+     * `ComposerSubmitButton`'s `blockedReason`: the reason a blocked submit shows in its tooltip, and
+     * the message `BlockedSubmitDialog` renders under 「无法发送消息」 once the user clicks. Codex
+     * never prints this as a standing line above the composer.
+     */
+    submitBlockedReason: String? = null,
 ) {
     var popupStack by remember(state.host, state.selectedSessionId) { mutableStateOf(emptyList<ComposerPopup>()) }
+    // `BlockedSubmitDialog` is owned by the composer, not the caller: Codex opens it from the submit
+    // button's own click, and it closes on 确定 or on dismiss.
+    var blockedDialogOpen by remember(state.host, state.selectedSessionId) { mutableStateOf(false) }
     val popup = popupStack.lastOrNull() ?: ComposerPopup.Closed
     val choices = models.distinctBy { it.providerId to it.modelId }
     val idle = state.action == ConversationAction.Idle && !state.cancelling
@@ -81,11 +90,12 @@ internal fun ConversationComposerToolbar(
     Row(Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Composer.FooterPaddingX)
         .semantics { testTag = "live-composer-footer" },
         verticalAlignment = Alignment.CenterVertically) {
-        // Live plus glyph is `text-default` white inside a 28px transparent slot.
-        HarnessTooltipTrigger("附件暂不可用") { tip ->
+        // Live plus glyph is `text-default` white inside a 28px transparent slot. Attachment is not
+        // wired yet, so the slot is simply inert: Codex has no 「暂不可用」-style wording for it.
+        HarnessTooltipTrigger(null) { tip ->
             Box(tip.size(HarnessTokens.Composer.ActionSize).semantics {
                 testTag = "live-composer-attachment"; role = Role.Button; disabled()
-                contentDescription = "添加附件"; stateDescription = "附件暂不可用"
+                contentDescription = "添加附件"
             }, contentAlignment = Alignment.Center) {
                 ConversationIcon(ConversationGlyph.Plus, ConversationAppearance.ink, 16.dp)
             }
@@ -115,10 +125,10 @@ internal fun ConversationComposerToolbar(
                 HarnessText("应如何批准 Codex 操作？", Modifier.weight(1f),
                     color = ConversationAppearance.tertiary,
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp))
-                HarnessTooltipTrigger("文档暂不可用") { tip ->
+                HarnessTooltipTrigger(null) { tip ->
                     HarnessText("了解更多", tip.semantics {
                         testTag = "live-composer-permission-learn-more"; role = Role.Button; disabled()
-                        contentDescription = "了解更多"; stateDescription = "文档暂不可用"
+                        contentDescription = "了解更多"
                     }, color = ConversationAppearance.tertiary,
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp,
                             textDecoration = TextDecoration.Underline))
@@ -163,9 +173,11 @@ internal fun ConversationComposerToolbar(
             ).semantics { testTag = "live-composer-model-popup" },
             anchor = { toggle -> ModelTriggerChip(modelLabel, strength, selectedModel != null && effortKnown && efforts.isNotEmpty(),
                 tint = ConversationAppearance.tertiary,
+                // `composer.intelligenceDropdown.tooltip` 「选择模型」 and `.title` 「推理」 are Codex's
+                // own strings for the two panels the chip can open.
                 openLabel = when (popup) {
                     ComposerPopup.Models -> "选择模型"
-                    ComposerPopup.Reasoning -> "选择强度"
+                    ComposerPopup.Reasoning -> "推理"
                     else -> null
                 },
                 enabled = triggerEnabled, onClick = toggle, testTag = "live-composer-model") }) {
@@ -176,10 +188,8 @@ internal fun ConversationComposerToolbar(
                     Column(Modifier.fillMaxWidth()
                         .verticalScroll(modelScroll)
                         .padding(start = 4.dp, end = 15.dp, bottom = HarnessTokens.Composer.PopupContainerInset)) {
-                        if (choices.isEmpty()) {
-                            HarnessText(modelReason ?: "暂无可选模型，请在模型管理中开启模型。",
-                                Modifier.padding(8.dp), color = ConversationAppearance.tertiary, style = MaterialTheme.typography.bodySmall)
-                        }
+                        // `IntelligenceDropdown` maps the model list and renders nothing when it is
+                        // empty — no 「暂无可选模型…」 sentence and no reason for an absent model.
                         if (choices.isEmpty() && onManageModels != null) HarnessButton("前往模型管理",
                             { close(); onManageModels() }, variant = HarnessButtonVariant.Ghost, testTag = "live-composer-manage-models")
                         choices.forEach { choice ->
@@ -219,22 +229,25 @@ internal fun ConversationComposerToolbar(
                 }
                 val values = listOf<String?>(null) + efforts
                 val selectedIndex = values.indexOf(selectedEffort).coerceAtLeast(0)
+                // `IntelligenceDropdown`: the effort controls render only when the model actually has
+                // adjustable efforts. A model without them, or none selected at all, leaves the slot
+                // empty — Codex has no 「请先选择模型」/「此模型未提供…」 sentence anywhere.
                 if (efforts.isNotEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(HarnessTokens.Composer.EffortRowHeight)) {
-                        ComposerEffortSlider(values.map { if (it == null) "跟随厂商" else effortLabel(it) },
+                        ComposerEffortSlider(values.map { effortLabel(it) },
                             selectedIndex, enabled = canAdjust,
                             onSelect = { if (canAdjust) onEffortSelect?.invoke(values[it]) })
                     }
-                } else HarnessText(if (selectedModel == null) "请先选择模型" else "此模型未提供可调整的思考强度，跟随厂商。",
-                    Modifier.padding(8.dp), color = ConversationAppearance.tertiary, style = MaterialTheme.typography.bodySmall)
+                }
 
             }
         }
         // Live dictation slot: 28px, white 16px microphone over a transparent disc, flush to the chip.
-        HarnessTooltipTrigger("听写暂不可用") { tip ->
+        // Dictation is not wired yet; the slot stays inert with no invented wording.
+        HarnessTooltipTrigger(null) { tip ->
             Box(tip.size(HarnessTokens.Composer.ActionSize).semantics {
                 testTag = "live-composer-dictation"; role = Role.Button; disabled()
-                contentDescription = "听写"; stateDescription = "听写暂不可用"
+                contentDescription = "听写"
             }, contentAlignment = Alignment.Center) {
                 ConversationIcon(ConversationGlyph.Microphone, ConversationAppearance.ink, 16.dp)
             }
@@ -251,18 +264,57 @@ internal fun ConversationComposerToolbar(
             ComposerPrimaryAction.Stop -> "停止"
             ComposerPrimaryAction.Stopping -> "正在停止"
         }
-        HarnessTooltipTrigger(if (voice) "语音聊天暂不可用" else if (stop) label else submitShortcut.hint) { tip ->
+        // `ComposerSubmitButton`: a blocked submit keeps the disc but dims to 50% and still takes the
+        // click — that click is what opens `BlockedSubmitDialog`. Codex swaps the reason in for the
+        // shortcut hint only while a reason exists (`w = C ? l : d`); without one the hint stays, so
+        // a silently blocked composer still advertises its shortcuts.
+        val blocked = !stop && !busy && !voice && !canSend && submitBlockedReason != null
+        val tooltip = when {
+            blocked -> submitBlockedReason
+            voice -> null
+            stop -> label
+            else -> submitShortcut.hint
+        }
+        HarnessTooltipTrigger(tooltip) { tip ->
             Box(tip) {
                 HarnessComposerAction(label,
-                    enabled = if (stop) state.canCancel else if (voice) false else canSend, loading = busy,
-                    onClick = { if (stop && state.canCancel) onCancel() else if (!busy && !voice && canSend) onSubmit() },
+                    // A blocked click must reach the handler so the dialog can open; only the truly
+                    // inert states (voice placeholder, busy) stay non-interactive.
+                    enabled = when {
+                        stop -> state.canCancel
+                        blocked -> true
+                        voice -> false
+                        else -> canSend
+                    }, loading = busy,
+                    onClick = {
+                        when {
+                            stop && state.canCancel -> onCancel()
+                            blocked -> blockedDialogOpen = true
+                            !busy && !voice && canSend -> onSubmit()
+                        }
+                    },
                     testTag = if (stop) "live-composer-stop" else if (busy) "live-composer-busy" else "live-composer-send",
                     containerColor = ConversationAppearance.primary, contentColor = ConversationAppearance.onPrimary,
                     forceActive = voice,
+                    dimmed = blocked,
                     content = { if (!busy) ConversationIcon(
                         when { stop -> ConversationGlyph.Stop; voice -> ConversationGlyph.Voice; else -> ConversationGlyph.SendArrow },
                         ConversationAppearance.onPrimary,
                         16.dp) })
+            }
+        }
+    }
+    // `BlockedSubmitDialog` (`composer.submit.blockedDialogTitle` / `.blockedDialogOk`): compact, no close affordance,
+    // one primary 确定. The blocked reason is the subtitle, never a standing composer line.
+    if (blockedDialogOpen && submitBlockedReason != null) {
+        HarnessDialog(visible = true, onDismissRequest = { blockedDialogOpen = false },
+            title = "无法发送消息") {
+            Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Three)) {
+                HarnessText(submitBlockedReason, color = HarnessTokens.Colors.TextMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics { testTag = "blocked-submit-message" })
+                HarnessButton("确定", { blockedDialogOpen = false }, testTag = "blocked-submit-ok",
+                    variant = HarnessButtonVariant.Primary, size = HarnessControlSize.Compact)
             }
         }
     }
@@ -412,7 +464,7 @@ private fun ComposerEffortSlider(labels: List<String>, index: Int, enabled: Bool
         }
         .semantics {
             testTag = "live-composer-effort-slider"
-            contentDescription = "思考强度"
+            contentDescription = "推理"
             stateDescription = labels.getOrNull(index) ?: "不可用"
             progressBarRangeInfo = ProgressBarRangeInfo(index.toFloat(),
                 0f..(count - 1).coerceAtLeast(1).toFloat(), (count - 2).coerceAtLeast(0))

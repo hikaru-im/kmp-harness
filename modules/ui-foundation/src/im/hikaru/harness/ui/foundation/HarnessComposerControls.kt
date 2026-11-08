@@ -109,17 +109,32 @@ public fun HarnessComposerAction(
     contentColor: Color = HarnessTokens.Colors.Canvas,
     // The live empty composer keeps its full primary disc while showing the voice glyph.
     forceActive: Boolean = false,
+    /**
+     * Codex `ComposerSubmitButton`'s blocked state: `!isSubmitting && blockedReason` paints the disc
+     * at `opacity-50` while leaving it clickable, so the click can open `BlockedSubmitDialog`. This is
+     * deliberately distinct from `enabled = false`, which removes the click as well.
+     */
+    dimmed: Boolean = false,
     content: (@Composable () -> Unit)? = null,
 ) {
     val active = forceActive || enabled || loading
+    val quiet = dimmed && !loading
     Surface(onClick = onClick, enabled = enabled && !loading, shape = CircleShape,
-        color = if (active) containerColor else containerColor.copy(alpha = 0.35f),
+        color = when {
+            quiet -> containerColor.copy(alpha = 0.5f)
+            active -> containerColor
+            else -> containerColor.copy(alpha = 0.35f)
+        },
         modifier = Modifier.size(HarnessTokens.Composer.ActionSize).semantics {
             this.testTag = testTag; contentDescription = label
             if (!enabled || loading) disabled()
         }) {
         Box(contentAlignment = Alignment.Center) {
-            val tint = if (active) contentColor else contentColor.copy(alpha = 0.7f)
+            val tint = when {
+                quiet -> contentColor.copy(alpha = 0.5f)
+                active -> contentColor
+                else -> contentColor.copy(alpha = 0.7f)
+            }
             when {
                 loading -> HarnessProgress(tint)
                 content != null -> content()

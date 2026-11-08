@@ -17,6 +17,9 @@ import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.client.connection.*
 import im.hikaru.harness.client.scheduling.*
 import im.hikaru.harness.desktop.scheduling.DesktopScheduleCalendar
+import im.hikaru.harness.ui.foundation.HarnessToastHost
+import im.hikaru.harness.ui.foundation.LocalHarnessToastState
+import im.hikaru.harness.ui.foundation.rememberHarnessToastState
 import im.hikaru.harness.ui.foundation.*
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicInteger
@@ -101,7 +104,8 @@ internal class ScheduledPageTestStore(
 @Composable
 internal fun ScheduledPageTestSurface(repository: ScheduledRepository, theme: HarnessThemeMode = HarnessThemeMode.Light,
     onOpenRun: ((SessionId) -> Unit)? = null) {
-    CompositionLocalProvider(LocalDensity provides Density(1f)) {
+    val toast = rememberHarnessToastState()
+    CompositionLocalProvider(LocalDensity provides Density(1f), LocalHarnessToastState provides toast) {
         HarnessTheme(theme) {
             var query by remember(repository) { mutableStateOf("") }
             val state by repository.state.collectAsState()
@@ -118,6 +122,7 @@ internal fun ScheduledPageTestSurface(repository: ScheduledRepository, theme: Ha
                     }
                     ScheduledManagementPage(repository, Modifier.weight(1f), onOpenRun = onOpenRun)
                 }
+                HarnessToastHost(toast)
             }
         }
     }

@@ -105,7 +105,7 @@ public object ShortcutRegistry {
             for (chord in bindings) {
                 chordError(chord)?.let { return it }
                 val owner = owners.put(chord, command)
-                if (owner != null && owner != command) return "此组合已用于“${owner.label}”。"
+                if (owner != null && owner != command) return "已被 ${owner.label} 使用"
             }
         }
         return null

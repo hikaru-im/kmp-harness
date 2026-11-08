@@ -334,7 +334,8 @@ class GitCommitControllerTest {
             controller.refresh()
             runCurrent()
             assertFalse(controller.state.value.canCommit)
-            assertTrue(assertNotNull(controller.state.value.commitDisabledReason).contains("勾选"))
+            // `review.commit.disabled.noChanges` = 无可提交的更改: one Codex sentence, no instructions.
+            assertEquals("无可提交的更改", controller.state.value.commitDisabledReason)
             var captured: GitCommitRequest? = null
             backend.action = { repo, request -> captured = request; backend.committed(repo, request) }
             controller.setIncludeUnstaged(true)

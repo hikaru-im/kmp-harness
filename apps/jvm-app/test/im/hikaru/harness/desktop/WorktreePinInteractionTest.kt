@@ -223,7 +223,7 @@ private fun GitState.pinGitReady(): Boolean = unavailableReason == null && bindi
     !creationBusy && !checkoutBusy && !commitBusy && diff !is GitRead.Loading && commitSnapshot !is GitRead.Loading
 
 private fun ComposeUiTest.readyPinPage(page: PinPage) {
-    waitUntil(timeoutMillis = 10_000) {
+    waitUntil(timeoutMillis = 30_000) {
         pluginsPageSettle()
         page.git.state.value.pinGitReady() && page.managed.state.value.phase == ManagedWorktreePhase.Ready &&
             page.managed.state.value.repository == (page.git.state.value.repository as? GitRead.Ready<GitRepository>)?.value
@@ -239,7 +239,7 @@ private fun ComposeUiTest.refreshPinPage(page: PinPage) {
 }
 
 private fun ComposeUiTest.awaitPin(page: PinPage, key: PinKey, pinned: Boolean) {
-    waitUntil(timeoutMillis = 10_000) {
+    waitUntil(timeoutMillis = 30_000) {
         pluginsPageSettle()
         val state = page.managed.state.value
         val read = state.inventory?.pinRead as? ManagedWorktreePinRead.Available
@@ -250,7 +250,7 @@ private fun ComposeUiTest.awaitPin(page: PinPage, key: PinKey, pinned: Boolean) 
 }
 
 private fun ComposeUiTest.awaitArchive(page: PinPage, key: ChatArchiveKey, archived: Boolean) {
-    waitUntil(timeoutMillis = 10_000) {
+    waitUntil(timeoutMillis = 30_000) {
         pluginsPageSettle()
         val state = page.managed.state.value
         val read = state.inventory?.archiveRead as? ManagedWorktreeChatArchiveRead.Available

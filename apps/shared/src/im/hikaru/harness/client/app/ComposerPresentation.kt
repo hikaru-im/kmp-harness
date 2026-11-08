@@ -111,19 +111,19 @@ internal fun composerModel(
 }
 
 /**
- * Live Codex effort names (`composer.mode.local.reasoning.*.label`, zh-CN), read from the asar and
- * confirmed by the picker's sr-only label list: 无 / 极低 / 轻度 / 中 / 高 / 极高 / Max / Ultra / 持续.
- * `max` and `ultra` have no zh-CN translation in the bundle, so they stay Latin.
+ * `composer.mode.local.reasoning.*.label` (zh-CN): 无 / 极低 / 低 / 中 / 高 / 超高 / 最高. `ultra` and
+ * `none`-less gaps have no zh-CN entry in the shipped locale, so they keep their own token; the
+ * provider-default slot is Codex's own 「默认」.
  */
 internal fun effortLabel(value: String?): String = when (value) {
     null -> "默认"
     "none" -> "无"
     "minimal" -> "极低"
-    "low" -> "轻度"
+    "low" -> "低"
     "medium" -> "中"
     "high" -> "高"
-    "xhigh" -> "极高"
-    "max" -> "Max"
+    "xhigh" -> "超高"
+    "max" -> "最高"
     "ultra" -> "Ultra"
     "persistent" -> "持续"
     else -> value

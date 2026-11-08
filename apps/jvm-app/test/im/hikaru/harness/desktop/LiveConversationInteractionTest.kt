@@ -70,7 +70,9 @@ class LiveConversationInteractionTest {
                 onNodeWithTag("live-composer-model-select").performClick()
                 savePopup(onNodeWithTag("live-composer-model-popup"), "models-$mode")
                 onNodeWithTag(menuTag(SECOND)).performClick()
-                onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertExists()
+                // A model without adjustable efforts leaves the effort slot empty; Codex prints no
+                // sentence to explain it.
+                onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertDoesNotExist()
                 onNodeWithTag("live-composer-model-popup").performKeyInput { pressKey(Key.Escape) }
                 onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
             }
@@ -235,9 +237,13 @@ class LiveConversationInteractionTest {
         editor.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         editor.performKeyInput { pressKey(Key.Enter) }
         runOnIdle { owner.state = owner.state.copy(connected = true); owner.submitReason = "当前 Host 无法创建会话。" }
-        onNodeWithTag("live-composer-send").assertIsNotEnabled()
-        // The disabled button carries the block; no explanation sentence sits under the draft.
+        // `ComposerSubmitButton`'s blocked state is `opacity-50`, not `disabled`: the dimmed disc
+        // still takes the click so `BlockedSubmitDialog` can open from it.
+        onNodeWithTag("live-composer-send").assertIsEnabled()
+        // The block is carried by the button, never by a sentence under the draft.
         onNodeWithTag("live-composer-submit-unavailable").assertDoesNotExist()
+        onNodeWithTag("live-composer-model-unavailable").assertDoesNotExist()
+        // Enter stays inert while blocked: the dialog is the only affordance, never a silent send.
         editor.performKeyInput { pressKey(Key.Enter) }
         runOnIdle {
             assertTrue(owner.submitted.isEmpty())
@@ -286,7 +292,9 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
         onNodeWithTag(menuTag(SECOND)).performClick()
         // Selection returns to the reasoning panel even when the model has no adjustable efforts.
-        onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertExists()
+        // `IntelligenceDropdown` renders nothing there in that case — no explanatory sentence.
+        onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertDoesNotExist()
+        onNodeWithText("请先选择模型").assertDoesNotExist()
         runOnIdle { assertEquals(listOf(SECOND), owner.selected); assertTrue(owner.submitted.isEmpty()) }
         onNodeWithTag("live-composer-model-popup").performKeyInput { pressKey(Key.Escape) }
         onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
@@ -699,6 +707,19 @@ class LiveConversationInteractionTest {
     }
 
     @Test
+    fun unavailableMessageActionsKeepDisabledStateWithoutReasonCopy() = runSkikoComposeUiTest(size = Size(600f, 600f)) {
+        val answer = Message("answer", MessageRole.ASSISTANT, listOf(TextContent("Answer")),
+            ModelMessageSource("test", "model"))
+        setContent { HarnessTheme { LiveThreadSurface(
+            readyState().copy(selectedSessionId = SessionId("thread"), history = listOf(answer),
+                historyPhase = ConversationDataPhase.Ready), onRetry = {}) } }
+        listOf("朗读", "评价回复", "从这里创建聊天分支").forEach { label ->
+            onNodeWithContentDescription(label, useUnmergedTree = true).assertIsNotEnabled()
+            onNodeWithContentDescription("$label（暂不可用）", useUnmergedTree = true).assertDoesNotExist()
+        }
+    }
+
+    @Test
     fun streamingTailJoinsTheTimelineAndLeavesWhenItSettles() = runSkikoComposeUiTest(size = Size(420f, 600f)) {
         val session = SessionId("thread")
         val settled = Message("user", MessageRole.USER, listOf(TextContent("Actual question")), UserMessageSource)
@@ -748,11 +769,33 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
     }
 
+    /**
+     * `ComposerSubmitButton` + `BlockedSubmitDialog`: a blocked submit never prints a standing line
+     * above the composer. The reason rides the submit button's tooltip, and the click — which the
+     * dimmed disc still accepts — opens 无法发送消息 with the reason as its subtitle.
+     */
+    @Test
+    fun blockedSubmitShowsNoStandingHintAndOpensTheBlockedSubmitDialog() = runComposeUiTest {
+        val owner = ComposerOwner()
+        runOnIdle { owner.submitReason = "远程连接已断开"; owner.state = owner.state.copy(draft = "hello") }
+        setContent { HarnessTheme { owner.Content() } }
+        // No standing copy, and the send never happened.
+        onNodeWithText("远程连接已断开").assertDoesNotExist()
+        onNodeWithTag("live-composer-send").assertExists()
+        onNodeWithTag("live-composer-send").performMouseInput { click() }
+        // The dimmed disc still takes the click, which is what opens the dialog.
+        onNodeWithText("无法发送消息").assertIsDisplayed()
+        onNodeWithTag("blocked-submit-message").assertIsDisplayed()
+        onNodeWithText("远程连接已断开").assertIsDisplayed()
+        onNodeWithTag("blocked-submit-ok").performMouseInput { click() }
+        onNodeWithText("无法发送消息").assertDoesNotExist()
+        assertTrue(owner.submitted.isEmpty())
+    }
+
     private class ComposerOwner {
         var state by mutableStateOf(readyState())
         var models by mutableStateOf(listOf(FIRST, SECOND))
         var chosen by mutableStateOf<ConversationModelChoice?>(null)
-        var modelReason by mutableStateOf<String?>(null)
         var submitReason by mutableStateOf<String?>(null)
         val submitted = mutableListOf<String>()
         val selected = mutableListOf<ConversationModelChoice>()
@@ -773,7 +816,7 @@ class LiveConversationInteractionTest {
                 } },
                 onCancel = { if (state.canCancel) { cancelled++; state = state.copy(cancelling = true) } },
                 models = models, selectedModel = chosen, onModelSelect = { selected += it; chosen = it },
-                modelUnavailableReason = modelReason, submitUnavailableReason = submitReason,
+                submitUnavailableReason = submitReason,
                 selectedReasoningEffort = effort, onReasoningEffortSelect = { effort = it },
                 permission = permission, onPermissionSelect = { permission = it })
         }

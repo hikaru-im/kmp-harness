@@ -35,6 +35,9 @@ import im.hikaru.harness.client.connection.ConnectionTransport
 import im.hikaru.harness.client.plugins.*
 import im.hikaru.harness.desktop.connection.LocalConnection
 import im.hikaru.harness.desktop.plugins.DesktopInstalledPluginRepository
+import im.hikaru.harness.ui.foundation.HarnessToastHost
+import im.hikaru.harness.ui.foundation.LocalHarnessToastState
+import im.hikaru.harness.ui.foundation.rememberHarnessToastState
 import im.hikaru.harness.ui.foundation.HarnessTheme
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
 import java.io.File
@@ -95,7 +98,13 @@ class PluginLocalUpdateInteractionTest {
                 assertTrue(f.state.mutationRequiresRefresh); assertNull(f.state.mutationReceipt)
                 assertNull(f.state.managementNotice); assertNotNull(f.state.mutationError)
                 onNodeWithTag("plugin-update-local").assertIsNotEnabled()
-                reveal(f, "plugin-mutation-error"); onNodeWithTag("plugin-mutation-error").assertTextContains("显式刷新", substring = true)
+                // Separate failed attempts can retain identical feedback until the toast expires.
+                onAllNodes(hasTestTag("harness-toast-error") and
+                    hasAnyDescendant(hasText(f.state.mutationError!!)), useUnmergedTree = true)
+                    .apply {
+                        assertTrue(fetchSemanticsNodes().isNotEmpty())
+                        assertAll(hasAnyDescendant(hasText("显式刷新", substring = true)))
+                    }
                 assertContentEquals(saved, Files.readAllBytes(f.file))
                 assertEquals(savedSnapshot, runBlocking { f.service.read() })
                 assertEquals("saved", f.detail().plugin.version)
@@ -232,7 +241,7 @@ class PluginLocalUpdateInteractionTest {
             assertEquals("saved-read-failed", saved.plugins.first().version)
             assertEquals(saved.revision, assertNotNull(f.state.mutationReceipt).revision)
             assertIs<PluginLoadState.Error>(f.state.list); assertIs<PluginLoadState.Error>(f.state.detail)
-            reveal(f, "plugin-saved-refresh-failure"); onNodeWithTag("plugin-saved-refresh-failure").assertIsDisplayed()
+            onNodeWithTag("harness-toast-error").assertIsDisplayed()
             assertFalse(f.state.canUpdateLocal)
             f.readFaults.failReads = false; f.readFaults.failAfterUpdate = false
             reveal(f, "plugin-detail-refresh"); pluginsPageMouseClick("plugin-detail-refresh"); settle(f)
@@ -291,11 +300,14 @@ class PluginLocalUpdateInteractionTest {
     private fun ComposeUiTest.mount(f: LocalUpdateHarness, theme: HarnessThemeMode = HarnessThemeMode.Light) {
         setContent {
             val state by f.controller.state.collectAsState()
-            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            val toast = rememberHarnessToastState()
+            CompositionLocalProvider(LocalDensity provides Density(1f), LocalHarnessToastState provides toast) {
                 HarnessTheme(themeMode = theme) {
                     Box(Modifier.fillMaxSize().semantics { testTag = "plugins-page-capture-viewport" }) {
+                        PluginManagementFeedback(state)
                         if (state.selectedId == null) InstalledPluginsPage(state, f.controller::dispatch)
                         else InstalledPluginDetailPage(state, f.controller::dispatch)
+                        HarnessToastHost(toast)
                     }
                 }
             }
@@ -400,7 +412,6 @@ class PluginLocalUpdateInteractionTest {
 
     /** Semantic page sections and row identities, never numeric scroll positions or item offsets. */
     private fun pageOrder(f: LocalUpdateHarness, listTag: String, tag: String): Pair<Int, Int>? {
-        if (tag.startsWith("plugin-mutation-") || tag == "plugin-saved-refresh-failure") return 1 to 0
         if (listTag == "plugin-inventory-list") {
             if (tag == "plugins-header" || tag.startsWith("plugins-")) return 0 to 0
             val row = f.state.visiblePlugins.orEmpty().indexOfFirst { "installed-plugin-" + it.id.value == tag }

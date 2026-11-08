@@ -53,10 +53,23 @@ class GitChangesPanelInteractionTest {
                 onNodeWithTag("git-changes-empty").assertDoesNotExist()
 
                 // Switch to the staged half: only the staged file remains, and the diff read follows.
+                // `DiffFilterDropdown` keeps every source inside one menu, so the option is reached
+                // through the anchor rather than sitting in the header as its own button.
+                onNodeWithTag("git-changes-filter").performMouseInput { click() }
                 onNodeWithTag("git-changes-filter-staged").performMouseInput { click() }
                 waitUntil { fixture.backend.reviewReads.last() == GitDiffSource.Index }
                 onNodeWithTag("git-changes-file-added.kt").assertExists()
                 onNodeWithTag("git-changes-file-edited.kt").assertDoesNotExist()
+
+                // `ReviewOptionsMenuCompact` owns 刷新, so the header exposes it behind 查看选项
+                // rather than as a standalone button. Reading again is enough to prove the menu item
+                // reaches the controller: no write may result from it either.
+                onNodeWithTag("git-changes-refresh").assertDoesNotExist()
+                onNodeWithTag("git-changes-options").performMouseInput { click() }
+                onNodeWithTag("git-changes-options-menu").assertExists()
+                val beforeRefresh = fixture.backend.statusReads
+                onNodeWithTag("git-changes-refresh").performMouseInput { click() }
+                waitUntil { fixture.backend.statusReads > beforeRefresh }
 
                 // Closing through the tab strip's own close button leaves no review pane and starts
                 // no further read (the tab owns no service read to fence).

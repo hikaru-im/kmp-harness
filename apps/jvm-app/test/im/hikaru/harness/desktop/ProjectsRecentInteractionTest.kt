@@ -144,7 +144,8 @@ class ProjectsRecentInteractionTest {
                 pointer("rail-library")
                 waitUntil(timeoutMillis = 10_000) { projectsRecentHasTag("library-page") }
                 dismissNavigatorIfOpen()
-                onNodeWithTag("library-unavailable").assertIsDisplayed()
+                onNodeWithTag("library-unavailable").assertDoesNotExist()
+                onNodeWithTag("library-title").assertIsDisplayed()
                 capture("library-placeholder", "sessions=${f.sessions.size}; memberships=${f.snapshot().memberships.size}")
                 // 主页 is the new-chat page, not "back to the last thread"; the created session
                 // stays in the navigator's recent list instead of staying open.
@@ -162,11 +163,12 @@ class ProjectsRecentInteractionTest {
             setContent { HarnessTheme(HarnessThemeMode.Light) {
                 LocalProjectsPage(ProjectsRecentDisplayData.projects(null, phase), query, { query = it }, {}, {}, {})
             } }
-            onNodeWithTag("local-project-status-${phase.name.lowercase()}").assertExists()
             if (phase in listOf(LocalProjectsPhase.Ready, LocalProjectsPhase.Empty)) {
+                onNodeWithTag("local-project-status-${phase.name.lowercase()}").assertDoesNotExist()
                 onNodeWithTag("local-project-search").assertIsEnabled().performTextReplacement("no-match")
                 onNodeWithTag(if (phase == LocalProjectsPhase.Empty) "local-projects-empty" else "local-projects-no-results").assertExists()
             } else {
+                onNodeWithTag("local-project-status-${phase.name.lowercase()}").assertExists()
                 onNodeWithTag("local-project-search").assertIsNotEnabled()
                 onNodeWithTag("local-project-row-project-0").assertDoesNotExist()
             }
@@ -195,10 +197,12 @@ class ProjectsRecentInteractionTest {
             assertTrue(create.left >= header.left - 1f && refresh.right <= header.right + 1f,
                 "Actions stay inside the header band: header=$header create=$create refresh=$refresh")
             if (width == 1440) {
-                // Wide band: the actions sit beside the title, right of the text column.
+                // Wide band: the actions sit beside the title on the same row.
                 wideActionsLeft = create.left
-                assertTrue(create.left > header.width / 2f,
-                    "Wide band keeps the actions beside the title: header=$header create=$create")
+                val title = onNodeWithText("本机项目").fetchSemanticsNode().boundsInRoot
+                assertTrue(create.left >= title.right,
+                    "Wide band keeps the actions beside the title: title=$title create=$create")
+                assertTrue(create.top <= title.bottom && create.bottom >= title.top)
             } else {
                 // Narrow band: the actions share the title's left edge on their own stacked row.
                 assertEquals(header.left, create.left, 1f)

@@ -39,7 +39,7 @@ class ShortcutsInteractionTest {
         runOnIdle { focus.requestFocus() }
         onNodeWithTag("shortcuts-test-key-target").shortcut(Key.P)
         onNodeWithTag("project-file-search").assertExists()
-        onNodeWithText("请先在项目页或新聊天中选择项目，再搜索文件。").assertExists()
+        onNodeWithText("未选择项目").assertExists()
         onNodeWithTag("project-file-search-input").performKeyInput { pressKey(Key.Escape) }
         onNodeWithTag("project-file-search").assertDoesNotExist()
     }
@@ -163,7 +163,7 @@ class ShortcutsInteractionTest {
         onNodeWithTag("shortcut-add-ManageTasks").performScrollTo().performClick()
         onNodeWithTag("shortcuts-key-target").assertIsFocused().shortcut(Key.K, shift = true)
         onNodeWithTag("shortcut-save").assertIsFocused().performClick()
-        onNodeWithTag("shortcuts-error").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("shortcuts-error").performScrollTo().assertTextEquals("更新快捷键失败")
         onNodeWithTag("shortcut-recording-ManageTasks").assertExists()
         runOnIdle { assertNull(repository.commandFor(custom)); assertNotNull(repository.state.value.draft); fail = false }
         onNodeWithTag("shortcuts-retry").performScrollTo().performClick()
@@ -173,6 +173,11 @@ class ShortcutsInteractionTest {
         onNodeWithTag("shortcut-remove-ManageTasks-0").performScrollTo().performClick()
         onNodeWithTag("shortcut-empty-ManageTasks").assertExists()
         onNodeWithTag("shortcuts-reset-all").performScrollTo().performClick()
+        runOnIdle { fail = true }
+        onNodeWithTag("shortcuts-reset-dialog:confirm").performClick()
+        onNode(hasText("重置键盘快捷键失败") and hasAnyAncestor(hasTestTag("shortcuts-reset-dialog")))
+            .assertIsDisplayed()
+        runOnIdle { assertTrue(repository.state.value.resetConfirmation); fail = false }
         onNodeWithTag("shortcuts-reset-dialog:confirm").performClick()
         runOnIdle { assertTrue(repository.state.value.settings.overrides.isEmpty()) }
         onNodeWithTag("shortcuts-search").performTextClearance()

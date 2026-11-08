@@ -20,7 +20,7 @@ class ModelPickerStackInteractionTest {
             HarnessTheme {
                 LiveConversationComposer(ConversationState(), {}, {}, {}, models = listOf(first, second),
                     selectedModel = selected, onModelSelect = { selected = it },
-                    modelUnavailableReason = null, submitUnavailableReason = null,
+                    submitUnavailableReason = null,
                     permission = ComposerPermission.Ask, onPermissionSelect = {}, onReasoningEffortSelect = {})
             }
         }
@@ -30,7 +30,7 @@ class ModelPickerStackInteractionTest {
         onNodeWithTag("menu:conversation-model:1:p:1:b").performClick()
         onNodeWithTag("live-composer-model-select").assertExists()
         onNodeWithTag("live-composer-model-search").assertDoesNotExist()
-        onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertExists()
+        onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertDoesNotExist()
         onNodeWithTag("live-composer-model-select").performClick()
         onNodeWithTag("live-composer-model-back").assertDoesNotExist()
         onNodeWithTag("live-composer-model-search").assertDoesNotExist()

@@ -527,7 +527,9 @@ public data class GitState(
         if (repo == null || repo.binding != binding) return "请先读取仓库。"
         val current = (status as? GitRead.Ready<GitStatusSnapshot>)?.value ?: return "请先读取真实仓库状态。"
         if (current.headOid == null) return "尚无提交，无法切换分支。"
-        if (current.changes.isNotEmpty()) return "工作树、暂存区或未跟踪文件非干净，请先自行处理。"
+        // `composer.footer.branchSwitch.uncommittedDialog.title`: Codex answers a dirty worktree with
+        // 「提交更改以切换分支」 — one short reason, not an enumeration of what is dirty.
+        if (current.changes.isNotEmpty()) return "提交更改以切换分支"
         val refs = (branches as? GitRead.Ready<List<GitBranch>>)?.value ?: return "请先读取分支。"
         val target = refs.singleOrNull { it.ref == selectedBranchRef } ?: return "请选择已有本地分支。"
         if (target.remote || !target.ref.startsWith("refs/heads/")) return "仅支持已有本地分支。"
@@ -546,12 +548,14 @@ public data class GitState(
         if (repo == null || repo.binding != binding) return "请先读取仓库。"
         val current = (status as? GitRead.Ready<GitStatusSnapshot>)?.value ?: return "请先读取真实仓库状态。"
         if (current.headOid == null) return "尚无提交，无法新建分支。"
-        if (current.changes.isNotEmpty()) return "工作树、暂存区或未跟踪文件非干净，请先自行处理。"
+        // `composer.footer.branchSwitch.createAndCheckout.disabledTooltip` = 提交更改以创建并检出新分支.
+        if (current.changes.isNotEmpty()) return "提交更改以创建并检出新分支"
         val name = newBranchName.trim()
         if (name.isBlank()) return "请输入新分支名称。"
         if (!validLocalBranchName(name)) return "分支名称不是有效的本地引用。"
         val refs = (branches as? GitRead.Ready<List<GitBranch>>)?.value ?: return "请先读取分支。"
-        if (refs.any { !it.remote && it.ref == "refs/heads/$name" }) return "同名本地分支已存在。"
+        // `composer.footer.branchSwitch.createDialog.branchExistsError` = 分支已存在。 (with the period).
+        if (refs.any { !it.remote && it.ref == "refs/heads/$name" }) return "分支已存在。"
         val start = newBranchStartRef
         if (start == null || start == "HEAD") return null
         val base = refs.singleOrNull { it.ref == start && !it.remote && it.ref.startsWith("refs/heads/") }
@@ -575,8 +579,10 @@ public data class GitState(
         if (snapshot.stagedCount <= 0) {
             // With the stage step enabled an empty index is allowed as long as the worktree has
             // something to stage; the backend still rejects a request that stages nothing.
-            if (!includeUnstaged) return "没有已暂存变更；请使用外部 Git 暂存，或勾选「包含未暂存变更」。"
-            if (snapshot.status.changes.isEmpty()) return "没有可提交的变更。"
+            // `review.commit.disabled.noChanges` = 无可提交的更改 — Codex's own single sentence for
+            // this state. It does not also instruct the user which checkbox would unblock it.
+            if (!includeUnstaged) return "无可提交的更改"
+            if (snapshot.status.changes.isEmpty()) return "无可提交的更改"
         }
         return null
     }

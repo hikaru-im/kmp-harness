@@ -50,16 +50,23 @@ class WorktreeRootSettingInteractionTest {
                 onNodeWithTag("worktree-root-input").performTextReplacement("/tmp/managed-worktrees")
                 clickGitNode(onNodeWithTag("worktree-root-save").assertIsEnabled())
                 waitUntil(timeoutMillis = 5_000) { repository.state.value.saveRevision > 0 }
-                onNodeWithTag("worktree-root-saved").assertExists()
+                onNode(
+                    hasText("已保存工作树根目录。") and hasAnyAncestor(hasTestTag("harness-toast-info")),
+                    useUnmergedTree = true,
+                ).assertExists()
+                onNodeWithTag("worktree-root-saved").assertDoesNotExist()
+                onNodeWithTag("worktree-root-save-error").assertDoesNotExist()
                 onNodeWithTag("worktree-root-save").assertIsNotEnabled()
                 assertEquals("/tmp/managed-worktrees", store.value?.root)
 
-                // The saved root seeds the new worktree's parent directory once a real branch is typed.
+                // The saved root seeds the new worktree's parent directory once a real branch is typed;
+                // the seeded value itself is the evidence, with no caption announcing the seeding.
                 onNodeWithTag("git-worktree-create-branch").performScrollTo().performTextReplacement("feature/root-seed")
                 waitUntil(timeoutMillis = 5_000) {
-                    onAllNodesWithTag("git-worktree-create-auto-path").fetchSemanticsNodes().isNotEmpty()
+                    onAllNodesWithText("/tmp/managed-worktrees/feature-root-seed", substring = true)
+                        .fetchSemanticsNodes().isNotEmpty()
                 }
-                onNodeWithTag("git-worktree-create-auto-path").assertTextEquals("路径随分支名称自动生成")
+                onNodeWithTag("git-worktree-create-auto-path").assertDoesNotExist()
                 onNodeWithTag("git-worktree-create-path").assertTextContains("/tmp/managed-worktrees/feature-root-seed", substring = true)
                 onNodeWithTag("git-worktree-create-submit").assertIsEnabled()
             }
@@ -125,6 +132,14 @@ class WorktreeRootSettingInteractionTest {
                 clickGitNode(onNodeWithTag("worktree-keep-count-save").assertIsEnabled())
                 waitUntil(timeoutMillis = 5_000) { store.value?.keepCount == 20 }
                 onNodeWithTag("worktree-keep-count-save").assertIsNotEnabled()
+                onNode(
+                    hasText("已保存自动删除限制", substring = true) and hasAnyAncestor(hasTestTag("harness-toast-info")),
+                    useUnmergedTree = true,
+                ).assertExists()
+                onNodeWithTag("worktree-env-saved").assertDoesNotExist()
+                onNodeWithTag("worktree-env-save-error").assertDoesNotExist()
+                onNodeWithTag("worktree-root-saved").assertDoesNotExist()
+                onNodeWithTag("worktree-root-save-error").assertDoesNotExist()
 
                 // The upstream-refresh toggle persists the `best-effort` mode.
                 onNodeWithTag("worktree-upstream-refresh-switch").performScrollTo().performClick()
@@ -140,8 +155,9 @@ class WorktreeRootSettingInteractionTest {
                 assertTrue(store.value?.autoCleanupEnabled == true)
                 onNodeWithTag("worktree-auto-cleanup-confirm:confirm").performClick()
                 waitUntil(timeoutMillis = 5_000) { store.value?.autoCleanupEnabled == false }
-                onNodeWithText("自动删除已停用", substring = true)
-                    .assertTextContains("自动删除已停用", substring = true)
+                onNodeWithText("自动清理较旧工作树前保留的工作树数量。", substring = true).assertExists()
+                onNodeWithText("应始终可恢复", substring = true).assertDoesNotExist()
+                onNodeWithText("自动删除功能已禁用。", substring = true).assertDoesNotExist()
             }
         } finally { scope.cancel(); fixture.close() }
     }

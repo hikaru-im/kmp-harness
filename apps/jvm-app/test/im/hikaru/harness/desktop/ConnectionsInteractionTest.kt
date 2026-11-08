@@ -83,16 +83,24 @@ class ConnectionsInteractionTest {
         setContent { HarnessApp(null, initialDestination = HarnessDestination.Settings, themeMode = HarnessThemeMode.Light) }
         onNodeWithTag("settings-row-connections").performClick()
         onNodeWithTag("connections-refresh").performScrollTo().assertIsNotEnabled()
-        onNodeWithText("当前没有可刷新的连接服务。").assertExists()
+        // Codex disables an action that cannot run and states no cause beside it; every reason line
+        // this page used to print is gone, and no `settings.remoteConnections.*` key replaces them.
+        onNodeWithText("当前没有可刷新的连接服务。").assertDoesNotExist()
+        onNodeWithText("本机模式不支持切换远程 Host。").assertDoesNotExist()
         onNodeWithText("尚无当前 Host 信息。").assertExists()
-        onNodeWithText("暂无已发现的 Host").performScrollTo().assertIsDisplayed()
+        // The empty list keeps its factual title; adding a connection is unavailable here.
+        onNodeWithText("未找到设备连接。").performScrollTo().assertIsDisplayed()
+        onNodeWithText("未找到设备连接。添加新连接即可开始使用").assertDoesNotExist()
         onAllNodes(SemanticsMatcher("a host supplied by describe/discovery") {
             it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("connections-host-")
         }).assertCountEquals(0)
         onNodeWithTag("connections-ssh-add").performScrollTo().assertIsNotEnabled().performMouseInput { click() }
         onNodeWithTag("connections-wsl-connect").performScrollTo().assertIsNotEnabled().performMouseInput { click() }
-        onNodeWithText("尚未接入 SSH 连接适配器，暂不可发现、添加或连接 SSH Host。").assertExists()
-        onNodeWithText("尚未接入 WSL 连接适配器，暂不可发现或连接 WSL Host。").assertExists()
+        // `settings.remoteConnections.ssh.empty`: Codex describes the tab's purpose, and never
+        // explains a missing adapter. The disabled 添加 button is the whole signal.
+        onNodeWithText("通过 SSH 连接到远程设备").assertExists()
+        onNodeWithText("尚未接入 SSH 连接适配器，暂不可发现、添加或连接 SSH Host。").assertDoesNotExist()
+        onNodeWithText("尚未接入 WSL 连接适配器，暂不可发现或连接 WSL Host。").assertDoesNotExist()
         onNodeWithTag("connections-details-dialog").assertDoesNotExist()
     }
 
@@ -112,7 +120,10 @@ class ConnectionsInteractionTest {
         onNodeWithTag(hostTag(candidate)).assert(
             SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已发现 · 不代表在线"),
         )
-        onNodeWithText("发现结果不代表已建立连接。切换 Host 会丢弃旧 Host 的事件订阅，后续会话操作将使用所选 Host。").assertExists()
+        // The row's own state description carries "已发现 · 不代表在线"; Codex has no standing
+        // paragraph explaining that discovery is not a connection or what switching does.
+        onNodeWithText("发现结果不代表已建立连接。切换 Host 会丢弃旧 Host 的事件订阅，后续会话操作将使用所选 Host。")
+            .assertDoesNotExist()
         onNodeWithTag(selectTag(current)).assertTextEquals("已连接").assertIsNotEnabled()
         onNodeWithTag(selectTag(candidate)).performScrollTo().assertTextEquals("连接").clickWithMouse()
         runOnIdle { assertEquals(listOf(candidate), selections) }
@@ -349,7 +360,11 @@ class ConnectionsInteractionTest {
                 dialogText(candidate.displayName).assertIsDisplayed().assertTextDoesNotOverflow()
                 onNodeWithTag("connections-details-close").assertFits(dialog)
                 capture(dialog.captureToImage(), "relay-details-top-$suffix.png")
-                dialogText("协议能力声明不代表当前用户的使用权限，也不保证服务当前可用。").performScrollTo().assertFits(dialog)
+                // The dialog ends at the capability list — Codex's details show the values it read and
+                // add no paragraph about what a capability declaration does or does not prove.
+                onNode(hasText("fixture.capability.18 · v18", substring = true) and
+                    hasAnyAncestor(hasTestTag("connections-details-dialog"))).performScrollTo().assertFits(dialog)
+                dialogText("协议能力声明不代表当前用户的使用权限，也不保证服务当前可用。").assertDoesNotExist()
                 onNodeWithTag("connections-details-close").assertFits(dialog)
                 capture(dialog.captureToImage(), "relay-details-bottom-$suffix.png")
                 onNodeWithTag("connections-details-close").clickWithMouse()

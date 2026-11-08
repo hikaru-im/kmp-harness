@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,6 +88,15 @@ public fun rememberHarnessToastState(): HarnessToastState {
     val scope = rememberCoroutineScope()
     return remember(scope) { HarnessToastState(scope) }
 }
+
+/**
+ * The window's toaster, reachable from any surface the host mounts under it — the counterpart of
+ * Codex's global `toast()`. A screen that reports a transient outcome (`copy succeeded`, `import
+ * failed`) pushes a message here instead of pinning a sentence to the page; `null` means the
+ * surrounding composition has no toaster and the caller must not fake one.
+ */
+public val LocalHarnessToastState: ProvidableCompositionLocal<HarnessToastState?> =
+    staticCompositionLocalOf { null }
 
 /**
  * Draws [state]'s messages at the top center of the window, up to the composer column's width.

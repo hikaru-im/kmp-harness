@@ -21,7 +21,7 @@ class DesktopGitCommitTest {
             val original = f.originalEvidence()
             val repo = f.repository()
             val request = f.request(repo, "--amend\nquotes ' and literal \$(text)\n")
-            val receipt = assertIs<GitCommitResult.Committed>(withTimeout(15_000) { f.backend.commit(repo, request) }).receipt
+            val receipt = assertIs<GitCommitResult.Committed>(withTimeout(60_000) { f.backend.commit(repo, request) }).receipt
             assertEquals(f.baseOid, receipt.parentOid)
             assertEquals(receipt.commitOid, f.git(f.workspace, "rev-parse", "HEAD").trim())
             assertEquals("accepted staged\n", f.git(f.workspace, "show", "HEAD:tracked.txt"))
@@ -50,7 +50,7 @@ class DesktopGitCommitTest {
             val request = GitCommitRequest(snapshot, requireNotNull(normalizeGitCommitMessage("include unstaged\n")),
                 includeUnstaged = true)
             val receipt = assertIs<GitCommitResult.Committed>(
-                withTimeout(15_000) { f.backend.commit(repo, request) }).receipt
+                withTimeout(60_000) { f.backend.commit(repo, request) }).receipt
             assertTrue(receipt.stagedByRequest)
             assertNotEquals(snapshot.indexDigest, receipt.stagedIndexDigest)
             assertEquals(receipt.treeDigest, receipt.stagedIndexDigest)

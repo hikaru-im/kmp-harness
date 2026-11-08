@@ -143,7 +143,7 @@ public fun ThreadPanels(
                     }
                     if (interactive) {
                         if (ptyController != null && ptyState != null) PtyTerminalPanel(ptyController, ptyState, Modifier.weight(1f))
-                        else PanelMessage("交互终端不可用", "当前连接没有终端服务。")
+                        else PanelMessage("交互终端不可用")
                     } else {
                     if (state.terminalInventory.isNotEmpty()) Box(Modifier.fillMaxWidth().padding(12.dp)) {
                         SettingsFormSelect<BackgroundTerminalKey?>(
@@ -184,8 +184,8 @@ public fun ThreadPanels(
                     SubagentsPanel(state, onAction, Modifier.fillMaxWidth().weight(1f), childInteraction)
                 }
                 ThreadPanelTab.Changes -> if (changesContent != null) changesContent()
-                else PanelMessage("审查不可用", "当前会话没有注入 Git 只读快照，无法显示更改。")
-                null -> PanelMessage("面板已关闭", "通过会话面板入口重新打开。")
+                else PanelMessage("审查不可用")
+                null -> PanelMessage("面板已关闭")
             }
         }
     }
@@ -310,8 +310,8 @@ internal fun BackgroundOutputPanel(
 ) {
     Box(modifier) {
         when (load) {
-            is PanelLoad.Unavailable -> PanelMessage("终端不可用", load.serviceDescription ?: load.reason.description)
-            is PanelLoad.Empty -> PanelMessage("没有后台进程", "当前会话没有已注册的后台进程。打开面板不会创建进程。")
+            is PanelLoad.Unavailable -> PanelMessage("终端不可用")
+            is PanelLoad.Empty -> PanelMessage("没有后台进程")
             is PanelLoad.Loading -> PanelMessage("正在加载输出…")
             is PanelLoad.Error -> PanelMessage("无法加载输出", load.message, error = true)
             is PanelLoad.Ready -> {
@@ -405,7 +405,7 @@ public fun SubagentsPanel(
         if (state.selectedChild != null) {
             ChildDetailPanel(state, onAction, childInteraction)
         } else when (val load = state.subagents) {
-            is PanelLoad.Unavailable -> PanelMessage("子智能体不可用", load.reason.description)
+            is PanelLoad.Unavailable -> PanelMessage("子智能体不可用")
             is PanelLoad.Loading -> PanelMessage("正在加载子智能体…")
             is PanelLoad.Empty -> PanelMessage("没有子智能体")
             is PanelLoad.Error -> PanelMessage("无法加载子智能体", load.message, error = true)
@@ -416,14 +416,11 @@ public fun SubagentsPanel(
                     HarnessText("正在刷新子智能体…", color = HarnessTokens.Colors.TextMuted, style = panelTextStyle())
                     Spacer(Modifier.height(8.dp))
                 }
-                if (load.value.completeness == SubagentOverviewCompleteness.LiveOnlyIncomplete) {
-                    HarnessText("仅显示当前可读取的 live 子会话；历史或已卸载子会话可能未包含。",
-                        color = HarnessTokens.Colors.TextMuted, style = panelTextStyle())
-                    Spacer(Modifier.height(8.dp))
-                }
+                // `codex.localConversation.backgroundTasks.title.subagents` names the panel; Codex adds
+                // no standing sentence about which subagents a list may or may not have included.
                 if (load.value.children.isEmpty()) {
                     HarnessText(if (load.value.completeness == SubagentOverviewCompleteness.Complete)
-                        "没有子智能体" else "没有可读取的 live 子智能体", style = panelTextStyle())
+                        "没有子智能体" else "没有可读取的子智能体", style = panelTextStyle())
                 } else {
                     SubagentSectionView(state, SubagentSection.Active, onAction)
                     if (load.value.children(SubagentSection.Done).isNotEmpty()) {
@@ -447,8 +444,7 @@ private fun SubagentSectionView(state: ThreadPanelsState, section: SubagentSecti
     val all = overview.children(section)
     val shown = state.visibleChildren(section)
     SectionHeading(section.heading(all.size))
-    if (shown.isEmpty()) HarnessText(if (overview.completeness == SubagentOverviewCompleteness.Complete)
-        "没有活跃的子智能体" else "此 live 快照中没有活跃的子智能体", Modifier.padding(horizontal = 8.dp),
+    if (shown.isEmpty()) HarnessText("没有活跃的子智能体", Modifier.padding(horizontal = 8.dp),
         color = HarnessTokens.Colors.TextMuted, style = panelTextStyle())
     else ChildRows(shown, onAction)
     if (shown.size < all.size) HarnessButton(
@@ -567,7 +563,7 @@ private fun ChildDetailPanel(
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when (val load = state.detail) {
-                is PanelLoad.Unavailable -> PanelMessage("对话记录不可用", load.reason.description)
+                is PanelLoad.Unavailable -> PanelMessage("对话记录不可用")
                 is PanelLoad.Loading -> PanelMessage("正在加载子智能体对话记录…")
                 is PanelLoad.Empty -> PanelMessage("没有消息")
                 is PanelLoad.Error -> PanelMessage("无法加载对话记录", load.message, error = true)

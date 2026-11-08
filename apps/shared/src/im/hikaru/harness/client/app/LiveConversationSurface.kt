@@ -209,16 +209,16 @@ public fun LiveThreadSurface(
         when {
             !state.connected || state.historyPhase == ConversationDataPhase.Disconnected ->
                 ConversationNotice("连接已断开。重新连接后可继续此会话。", "live-thread-disconnected")
+            // `localConversation.loadingThread` = 正在加载对话串… — Codex's own loading sentence.
             state.historyPhase == ConversationDataPhase.Loading ->
-                ConversationNotice("正在读取会话…", "live-thread-loading")
-            state.historyPhase == ConversationDataPhase.Failed -> {
-                // The failure itself is a toast; the surface keeps only the retry that unblocks it.
-                ConversationNotice("会话历史不可用。", "live-thread-unavailable")
+                ConversationNotice("正在加载对话串…", "live-thread-loading")
+            // `localConversationPage.error.toast` (未找到对话) is a toast, so the surface carries no
+            // standing sentence for a failed read — only the retry that unblocks it.
+            state.historyPhase == ConversationDataPhase.Failed ->
                 HarnessButton(
                     "重试", onRetry, enabled = state.connected && state.historyPhase != ConversationDataPhase.Loading,
                     testTag = "live-thread-retry", size = HarnessControlSize.Compact,
                 )
-            }
         }
         if (state.history.isNotEmpty() || liveMessages.isNotEmpty()) {
             key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {

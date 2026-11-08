@@ -32,7 +32,6 @@ public fun LiveConversationComposer(
     models: List<ConversationModelChoice>,
     selectedModel: ConversationModelChoice?,
     onModelSelect: (ConversationModelChoice) -> Unit,
-    modelUnavailableReason: String?,
     submitUnavailableReason: String?,
     /** Blocks submit without printing a hint: the model chip already shows that a model is needed. */
     submitBlocked: Boolean = false,
@@ -174,17 +173,14 @@ public fun LiveConversationComposer(
                         }
                     },
                 )
-                ConversationComposerToolbar(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
+                ConversationComposerToolbar(state, models, selectedModel, onModelSelect, canSend, onSubmit, onCancel,
                     selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown,
                     permission, onPermissionSelect, draftEmpty = editor.text.isBlank(),
                     selectedReasoning = selectedReasoning, onManageModels = onManageModels,
-                    submitShortcut = submitShortcut)
-                if (!useHostDefaultModel && selectedModel != null &&
-                    models.none { it.providerId == selectedModel.providerId && it.modelId == selectedModel.modelId }) {
-                    HarnessText(submitUnavailableReason ?: "当前模型已关闭或不可用，请重新选择模型。",
-                        Modifier.padding(horizontal = HarnessTokens.Composer.PaddingX).semantics { testTag = "live-composer-model-unavailable" },
-                        color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-                }
+                    submitShortcut = submitShortcut,
+                    // Codex never prints the blocked reason above the composer: it is the submit
+                    // button's tooltip, and clicking the dimmed button opens `BlockedSubmitDialog`.
+                    submitBlockedReason = submitUnavailableReason)
             }
         }
         }

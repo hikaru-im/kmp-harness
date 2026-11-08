@@ -23,7 +23,7 @@ public fun SettingsGitPage(
     onRevealConsumed: () -> Unit = {},
 ) {
     val state by controller.state.collectAsState()
-    Box(modifier) {
+    GitPageToasts(modifier) {
         SettingsFormFrame("Git", "git-page") {
             RepositoryControls(controller, state, directoryPicker)
             SettingsFormSection("工作区变更") {
@@ -81,8 +81,8 @@ public fun SettingsGitPage(
                             if (ref != null) controller.selectDiff(GitDiffRequest(GitDiffSource.BaseBranch, ref))
                         }
                     }
-                    HarnessText("不包含未跟踪文件；文件与暂存区可能在读取期间变化。",
-                        color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                    // Codex's diff-source picker is the control and nothing else; it carries no
+                    // paragraph describing what the chosen base does or does not include.
                 }
                 val readyDiff = (state.diff as? GitRead.Ready<GitDiffSnapshot>)?.value
                 // Keep the last completed patch visible while the controller's existing Loading state
@@ -157,14 +157,14 @@ public fun WorktreesPage(
         if (observed.repository == currentRepository) observed else ManagedWorktreeState(repository = currentRepository)
     }
     LaunchedEffect(managedController, currentRepository) { managedController?.bind(currentRepository) }
-    Box(modifier) {
-        SettingsFormFrame("Worktrees", "worktrees-page") {
+    GitPageToasts(modifier) {
+        // `settings.nav.worktrees` / `settings.section.worktrees` = 工作树.
+        SettingsFormFrame("工作树", "worktrees-page") {
             RepositoryControls(controller, state, directoryPicker)
             SettingsFormSection("本地 Git 工作树") {
-                HarnessText("包含未托管的工作树，归属与保护状态见托管列表。",
-                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                 ReadResult(state.worktrees, "选择仓库后读取工作树。") { worktrees ->
-                    if (worktrees.isEmpty()) HarnessText("没有工作树。", Modifier.testTag("git-worktrees-empty"))
+                    // `settings.worktrees.empty.title`.
+                    if (worktrees.isEmpty()) HarnessText("尚无工作树", Modifier.testTag("git-worktrees-empty"))
                     GitPageList("git-worktrees-list") {
                         worktrees.forEach { worktree ->
                             GitPageCard {
@@ -175,7 +175,7 @@ public fun WorktreesPage(
                                     else -> worktree.branch?.let(::gitRefLabel) ?: "分支不可用"
                                 }, "git-worktree-branch")
                                 if (worktree.locked) HarnessText("已锁定" + (worktree.lockReason?.let { "：$it" } ?: ""))
-                                if (worktree.prunable) HarnessText("Git 标记为 prunable（清理不可用）" + (worktree.pruneReason?.let { "：$it" } ?: ""))
+                                if (worktree.prunable) HarnessText("prunable" + (worktree.pruneReason?.let { "：$it" } ?: ""))
                                 WorktreeConversations(worktree.path, sessions, onOpenSession)
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     HarnessButton("新建聊天", { onNewChatInWorktree(worktree.path) },
@@ -212,7 +212,7 @@ private fun WorktreeConversations(root: String, sessions: List<SessionSummary>, 
     Column(Modifier.fillMaxWidth().testTag("worktree-conversations-$dir"),
         verticalArrangement = Arrangement.spacedBy(4.dp)) {
         HarnessText("已知对话", style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
-        if (matching.isEmpty()) HarnessText("未找到关联到此工作树的对话",
+        if (matching.isEmpty()) HarnessText("无关联到此工作树的对话。",
             Modifier.testTag("worktree-conversations-empty-$dir"), color = HarnessTokens.Colors.TextMuted)
         else matching.forEach { session -> key(session.id) {
             HarnessRow(session.id.value,
@@ -233,31 +233,36 @@ private fun ManagedWorktreeSection(
     var pendingRemoval by remember(controller) { mutableStateOf<ManagedWorktreeRemovalPlan?>(null) }
     SettingsFormSection("托管工作树") {
         if (controller == null || state == null) {
+            // `settings.worktrees.error.title` / `.error.body`: Codex's own copy for worktrees that
+            // could not be read. No invented second sentence — an unavailable service is stated once,
+            // and never enumerates which downstream controls that implies.
             GitPageCard {
-                HarnessText("托管管理暂不可用。", Modifier.testTag("managed-unavailable"))
-                HarnessText("关联会话未知；固定与归档暂不可用。删除与清理不可用。",
-                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                HarnessText("无法加载工作树", Modifier.testTag("managed-unavailable"))
             }
         } else {
-            HarnessButton("刷新归属与保护", controller::refresh,
+            // `settings.worktrees.refresh` is just 刷新; the button lives at the section header.
+            HarnessButton("刷新", controller::refresh,
                 variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
                 enabled = pageReady && state.canRefresh && state.phase != ManagedWorktreePhase.Loading,
                 testTag = "managed-refresh")
             when (state.phase) {
-                ManagedWorktreePhase.Unbound -> HarnessText("选择仓库后读取 managed 登记。", Modifier.testTag("managed-unbound"))
-                ManagedWorktreePhase.Loading -> HarnessText("正在读取 managed 登记…", Modifier.testTag("managed-loading"))
-                ManagedWorktreePhase.Error -> HarnessText(state.message ?: "Managed 读取失败。",
+                ManagedWorktreePhase.Unbound -> HarnessText("未选择仓库", Modifier.testTag("managed-unbound"))
+                ManagedWorktreePhase.Loading -> HarnessText("正在加载工作树", Modifier.testTag("managed-loading"))
+                // `settings.worktrees.error.title` / `.error.body`: the failure line is Codex's own
+                // title, and the body only appears when the read itself carried a message.
+                ManagedWorktreePhase.Error -> HarnessText(state.message ?: "无法加载工作树",
                     Modifier.testTag("managed-error"), color = HarnessTokens.Colors.Danger)
-                ManagedWorktreePhase.Unavailable -> HarnessText(state.message ?: "Managed 登记服务不可用。",
+                ManagedWorktreePhase.Unavailable -> HarnessText(state.message ?: "无法加载工作树",
                     Modifier.testTag("managed-unavailable"))
                 ManagedWorktreePhase.Ready -> Unit
             }
-            if (state.stale) HarnessText("上次观察已过期；当前归属与保护尚未确认。", Modifier.testTag("managed-stale"))
+            if (state.stale) HarnessText("上次观察已过期。", Modifier.testTag("managed-stale"))
             state.inventory?.let { inventory ->
                 val verified = state.phase == ManagedWorktreePhase.Ready && !state.stale
                 HarnessText(if (verified) "已核验 Managed ${inventory.registeredCount} · 其他归属仍需核验"
                     else "上次观察 ${inventory.entries.size} 条 · 当前核验数量未知", Modifier.testTag("managed-count"))
-                if (verified && inventory.entries.isEmpty()) HarnessText("完整读取成功，没有工作树或登记意图。",
+                // `settings.worktrees.empty.title` / `.empty.body`.
+                if (verified && inventory.entries.isEmpty()) HarnessText("尚无工作树",
                     Modifier.testTag("managed-empty"))
                 GitPageList("managed-inventory-list") {
                     inventory.entries.forEach { entry ->
@@ -287,15 +292,12 @@ private fun ManagedWorktreeSection(
                                 color = HarnessTokens.Colors.Danger) }
                             val sessionObservation = entry.sessionObservation
                             if (sessionObservation == null) ProtectionLabel(entry.protection.sessions, "managed-sessions")
-                            else {
-                                SessionObservationLabel(sessionObservation, verified, entry.root, state, controller, pageReady)
-                                HarnessText("会话保护仍未完整核验；本次观察不提供删除许可。", Modifier.testTag("managed-sessions"),
-                                    color = HarnessTokens.Colors.TextMuted)
-                            }
+                            else SessionObservationLabel(sessionObservation, verified, entry.root, state, controller, pageReady)
                             when (val pins = inventory.pinRead) {
-                                is ManagedWorktreePinRead.Available -> HarnessText(
-                                    "自有聊天固定存储已读取；完整 Pin 保护仍未知，不提供删除许可。",
-                                    Modifier.testTag("managed-pins"), color = HarnessTokens.Colors.TextMuted)
+                                // A read pin store is a fact, not a licence: the label below still reports
+                                // whatever protection the inventory actually verified. No sentence here
+                                // explains what the read does or does not permit.
+                                is ManagedWorktreePinRead.Available -> Unit
                                 is ManagedWorktreePinRead.Unknown -> HarnessText(pins.reason, Modifier.testTag("managed-pins"))
                                 else -> ProtectionLabel(entry.protection.pins, "managed-pins")
                             }
@@ -306,22 +308,15 @@ private fun ManagedWorktreeSection(
                             when (val removal = entry.removal) {
                                 null -> Unit
                                 is ManagedWorktreeRemovalRead.Available -> {
+                                    // The action is simply offered or not; Codex never prints a paragraph
+                                    // beside a worktree's delete control describing what the checks prove.
                                     val eligible = verified && state.canRemove(entry.root)
-                                    HarnessText(
-                                        if (eligible) "移除保护已完整核验：可以删除此工作树。"
-                                        else "删除被拒绝：" + (removal.plan.blocks.firstOrNull()?.detail ?: "仍有保护项未通过。"),
-                                        Modifier.testTag("managed-removal-status"),
-                                        color = if (eligible) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextMuted,
-                                    )
                                     HarnessButton("删除工作树", { pendingRemoval = removal.plan },
                                         enabled = eligible && pageReady,
                                         variant = HarnessButtonVariant.Secondary,
                                         testTag = "managed-remove")
                                 }
-                                is ManagedWorktreeRemovalRead.Unknown -> HarnessText("删除与清理不可用：" + removal.reason,
-                                    Modifier.testTag("managed-removal-status"), color = HarnessTokens.Colors.TextMuted)
-                                is ManagedWorktreeRemovalRead.Unavailable -> HarnessText("删除与清理不可用：" + removal.reason,
-                                    Modifier.testTag("managed-removal-status"), color = HarnessTokens.Colors.TextMuted)
+                                is ManagedWorktreeRemovalRead.Unknown, is ManagedWorktreeRemovalRead.Unavailable -> Unit
                             }
                         }
                     }
@@ -335,7 +330,7 @@ private fun ManagedWorktreeSection(
                     } }
                 receipt?.let {
                     HarnessText(when (it) {
-                        is ManagedWorktreePinReceipt.Applied -> it.durabilityWarning ?: "聊天固定已提交；显示状态来自磁盘刷新。"
+                        is ManagedWorktreePinReceipt.Applied -> it.durabilityWarning ?: "聊天固定已提交。"
                         is ManagedWorktreePinReceipt.Rejected -> it.reason
                         is ManagedWorktreePinReceipt.Unknown -> it.reason
                     }, Modifier.testTag("managed-pin-receipt"))
@@ -352,8 +347,8 @@ private fun ManagedWorktreeSection(
                 archiveReceipt?.let {
                     HarnessText(when (it) {
                         is ManagedWorktreeChatArchiveReceipt.Applied -> it.durabilityWarning ?: when (val restore = it.restore) {
-                            null -> "聊天归档已提交；显示状态来自磁盘刷新。"
-                            ManagedWorktreeChatRestore.Restored -> "已取消归档；聊天已恢复为可打开会话，未发送新的模型请求。"
+                            null -> "聊天归档已提交。"
+                            ManagedWorktreeChatRestore.Restored -> "已取消归档"
                             ManagedWorktreeChatRestore.AlreadyLive -> "已取消归档；该聊天已是活动会话。"
                             ManagedWorktreeChatRestore.NoHistory -> "已取消归档，但没有可恢复的持久历史。"
                             ManagedWorktreeChatRestore.Unavailable -> "已取消归档；本机恢复服务不可用。"
@@ -365,18 +360,13 @@ private fun ManagedWorktreeSection(
                 }
                 state.removalReceipt?.let { receipt ->
                     HarnessText(when (receipt) {
-                        is ManagedWorktreeRemovalReceipt.Removed -> "工作树已删除；显示列表来自磁盘刷新。"
+                        is ManagedWorktreeRemovalReceipt.Removed -> "工作树已删除。"
                         is ManagedWorktreeRemovalReceipt.Blocked -> receipt.reason
                         is ManagedWorktreeRemovalReceipt.Unsupported -> receipt.reason
                         is ManagedWorktreeRemovalReceipt.Failed -> receipt.reason
                         is ManagedWorktreeRemovalReceipt.UnknownOutcome -> receipt.reason
                     }, Modifier.testTag("managed-removal-receipt"))
                 }
-            }
-            // The guarded delete block is per worktree; this line only covers inventories whose
-            // removal evidence is not available at all.
-            if (state.inventory?.entries?.none { it.removal is ManagedWorktreeRemovalRead.Available } != false) {
-                HarnessText("删除与清理不可用：保护数据尚不完整。", Modifier.testTag("managed-destructive-unavailable"))
             }
         }
     }
@@ -431,7 +421,7 @@ private fun SessionObservationLabel(observation: ManagedSessionObservation, curr
                 HarnessText(when {
                     available != null -> if (pinned) "聊天已固定" else "此聊天未设置固定"
                     state.inventory?.pinRead is ManagedWorktreePinRead.Unavailable || state.inventory?.pinRead == null -> "聊天固定服务不可用"
-                    else -> "当前聊天固定状态未知；请刷新核验"
+                    else -> "当前聊天固定状态未知"
                 }, Modifier.testTag("managed-session-pin-status"), color = HarnessTokens.Colors.TextMuted)
                 val archiveAvailable = (inventory?.archiveRead as? ManagedWorktreeChatArchiveRead.Available)?.takeIf {
                     current && inventory != null && inventory.owner == observation.owner && it.owner == observation.owner &&
@@ -443,7 +433,7 @@ private fun SessionObservationLabel(observation: ManagedSessionObservation, curr
                     archiveAvailable != null -> if (archived) "聊天已归档" else "此聊天未设置归档"
                     inventory?.archiveRead is ManagedWorktreeChatArchiveRead.Unavailable || inventory?.archiveRead == null ->
                         "聊天归档服务不可用"
-                    else -> "当前聊天归档状态未知；请刷新核验"
+                    else -> "当前聊天归档状态未知"
                 }, Modifier.testTag("managed-session-archive-status"), color = HarnessTokens.Colors.TextMuted)
                 // Both controls share one row so the observed-session card keeps its previous height.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -463,9 +453,6 @@ private fun SessionObservationLabel(observation: ManagedSessionObservation, curr
             HarnessText(listOfNotNull(issue.sessionId, issue.reason).joinToString("："),
                 Modifier.testTag("managed-session-observation-issue"), style = MaterialTheme.typography.bodySmall)
         }
-        HarnessText("两个来源独立读取；本次观察不证明无会话或安全删除。",
-            Modifier.testTag("managed-session-observation-boundary"), style = MaterialTheme.typography.bodySmall,
-            color = HarnessTokens.Colors.TextMuted)
     }
 }
 
@@ -479,22 +466,24 @@ private fun BranchCheckoutForm(controller: GitController, state: GitState) {
                 !state.checkoutNeedsRescan && !state.creationNeedsRescan && !state.commitNeedsRescan &&
                 !state.branchCreateNeedsRescan && refs.isNotEmpty(),
             "git-checkout-branch") { controller.selectBranch(it) }
-        HarnessButton("切换分支", controller::switchBranch, enabled = state.pageReady && state.canSwitchBranch, testTag = "git-checkout-submit")
-        state.checkoutDisabledReason?.let {
-            HarnessText(it, Modifier.testTag("git-checkout-disabled-reason"), color = HarnessTokens.Colors.TextMuted)
+        // `git-action-blocked-reason-tooltips.tsx`: Codex states why a git action is blocked in the
+        // button's own hover tip, never as a standing line under it.
+        HarnessTooltipTrigger(state.checkoutDisabledReason, popupTestTag = "git-checkout-disabled-reason") { tip ->
+            HarnessButton("切换分支", controller::switchBranch, modifier = tip,
+                enabled = state.pageReady && state.canSwitchBranch, testTag = "git-checkout-submit")
         }
         when (val checkout = state.checkout) {
             GitBranchCheckout.Idle -> Unit
-            GitBranchCheckout.Rescanned -> HarnessText("已重新读取当前状态，可重新选择。", Modifier.testTag("git-checkout-rescanned"))
+            // A completed rescan leaves no note: Codex reports a git action's outcome, never a caption
+            // telling the user they may now choose again.
+            GitBranchCheckout.Rescanned -> Unit
             is GitBranchCheckout.Switching -> HarnessText("正在切换本地分支…", Modifier.testTag("git-checkout-busy"))
-            is GitBranchCheckout.Switched -> HarnessText("已确认切换：${checkout.receipt.status.branch}",
-                Modifier.testTag("git-checkout-success"))
-            is GitBranchCheckout.Failed -> HarnessText(checkout.failure.message,
-                Modifier.testTag("git-checkout-error"), color = HarnessTokens.Colors.Danger)
-            is GitBranchCheckout.UnknownOutcome -> HarnessText(checkout.failure.message,
-                Modifier.testTag("git-checkout-unknown"), color = HarnessTokens.Colors.Danger)
+            is GitBranchCheckout.Switched -> GitActionOutcomeToast(checkout, "已切换到 ${checkout.receipt.status.branch?.let(::gitRefLabel) ?: "HEAD"}")
+            is GitBranchCheckout.Failed -> GitActionOutcomeToast(checkout, checkout.failure.message, isError = true)
+            is GitBranchCheckout.UnknownOutcome -> GitActionOutcomeToast(checkout, checkout.failure.message, isError = true)
         }
-        if (state.checkoutNeedsRescan) HarnessText("切换结果未知。请先刷新状态、分支和工作树，再决定下一步。",
+        // The outcome facts, nothing more: no sentence instructing the user what to do next.
+        if (state.checkoutNeedsRescan) HarnessText("切换结果未知。",
             Modifier.testTag("git-checkout-needs-rescan"), color = HarnessTokens.Colors.Danger)
     }
 }
@@ -507,32 +496,28 @@ private fun BranchCreationForm(controller: GitController, state: GitState) {
     val startOptions = listOf("HEAD") + localRefs
     val start = state.newBranchStartRef ?: "HEAD"
     val editable = state.pageReady && state.branchCreateAvailable && !state.pageMutationBusy && !state.branchCreateNeedsRescan
-    GitFormSection("新建分支并切换") {
-        HarnessText("从当前提交或已有本地分支创建；同名分支不会被覆盖。",
-            Modifier.testTag("git-branch-create-policy"), color = HarnessTokens.Colors.TextMuted)
-        HarnessTextField(state.newBranchName, { controller.setNewBranchName(it) }, "新分支名称",
+    // `composer.footer.branchSwitch.createDialog.title` = 创建并检出分支. Codex's dialog is the
+    // name field and the action; it carries no paragraph describing what the form would do.
+    GitFormSection("创建并检出分支") {
+        HarnessTextField(state.newBranchName, { controller.setNewBranchName(it) }, "分支名称",
             Modifier.fillMaxWidth(), enabled = editable, testTag = "git-branch-create-name")
         GitPageSelect(start, startOptions, { it }, editable && startOptions.size > 1, "git-branch-create-start") {
             controller.setNewBranchStart(it)
         }
-        HarnessButton("新建并切换分支", controller::createBranch, enabled = state.pageReady && state.canCreateBranch,
-            testTag = "git-branch-create-submit")
-        state.branchCreateDisabledReason?.let {
-            HarnessText(it, Modifier.testTag("git-branch-create-disabled-reason"), color = HarnessTokens.Colors.TextMuted)
+        HarnessTooltipTrigger(state.branchCreateDisabledReason, popupTestTag = "git-branch-create-disabled-reason") { tip ->
+            // `composer.footer.branchSwitch.createDialog.createAndCheckout` = 创建并检出.
+            HarnessButton("创建并检出", controller::createBranch, modifier = tip,
+                enabled = state.pageReady && state.canCreateBranch, testTag = "git-branch-create-submit")
         }
         when (val creation = state.branchCreation) {
             GitBranchCreation.Idle -> Unit
-            GitBranchCreation.Rescanned -> HarnessText("已重新读取当前状态，可重新选择。",
-                Modifier.testTag("git-branch-create-rescanned"))
+            GitBranchCreation.Rescanned -> Unit
             is GitBranchCreation.Creating -> HarnessText("正在创建并切换分支…", Modifier.testTag("git-branch-create-busy"))
-            is GitBranchCreation.Created -> HarnessText("已确认创建并切换：${creation.receipt.status.branch}",
-                Modifier.testTag("git-branch-create-success"))
-            is GitBranchCreation.Failed -> HarnessText(creation.failure.message,
-                Modifier.testTag("git-branch-create-error"), color = HarnessTokens.Colors.Danger)
-            is GitBranchCreation.UnknownOutcome -> HarnessText(creation.failure.message,
-                Modifier.testTag("git-branch-create-unknown"), color = HarnessTokens.Colors.Danger)
+            is GitBranchCreation.Created -> GitActionOutcomeToast(creation, "已创建并检出 ${creation.receipt.status.branch?.let(::gitRefLabel) ?: "HEAD"}")
+            is GitBranchCreation.Failed -> GitActionOutcomeToast(creation, creation.failure.message, isError = true)
+            is GitBranchCreation.UnknownOutcome -> GitActionOutcomeToast(creation, creation.failure.message, isError = true)
         }
-        if (state.branchCreateNeedsRescan) HarnessText("新建分支结果未知。请先刷新状态、分支和工作树，再决定下一步。",
+        if (state.branchCreateNeedsRescan) HarnessText("新建分支结果未知。",
             Modifier.testTag("git-branch-create-needs-rescan"), color = HarnessTokens.Colors.Danger)
     }
 }
@@ -550,15 +535,23 @@ private fun CommitForm(controller: GitController, observed: GitState) {
     var visible by remember(observed.binding, observed.selectedCwd) { mutableStateOf(false) }
     var message by remember(observed.binding, observed.selectedCwd) { mutableStateOf("") }
     val enabled = repo != null && snapshot != null && observed.pageReady && observed.canCommit
-    GitFormSection("提交已有暂存变更") {
-        HarnessText("默认提交暂存内容，可在确认时选择先暂存其他变更。不运行 hooks，不签名。",
-            Modifier.testTag("git-commit-policy"), color = HarnessTokens.Colors.TextMuted)
-        HarnessButton("提交变更…", { visible = true },
-            enabled = repo != null && observed.commitAvailable && observed.unavailableReason == null, testTag = "git-commit-open")
-        observed.commitDisabledReason?.let { HarnessText(it, Modifier.testTag("git-commit-disabled-reason")) }
+    when (operation) {
+        is GitCommit.Verified -> GitActionOutcomeToast(operation,
+            "已提交到 ${operation.receipt.snapshot.status.branch?.let(::gitRefLabel) ?: "HEAD"}")
+        is GitCommit.Rejected -> GitActionOutcomeToast(operation, operation.failure.message, isError = true)
+        is GitCommit.UnknownOutcome -> GitActionOutcomeToast(operation, operation.failure.message, isError = true)
+        else -> Unit
+    }
+    // `review.commit.form.commitTitle` = 提交. Codex's commit surface is the title, the message field
+    // and the action; it carries no standing paragraph describing what the form will do.
+    GitFormSection("提交") {
+        HarnessTooltipTrigger(observed.commitDisabledReason, popupTestTag = "git-commit-disabled-reason") { tip ->
+            HarnessButton("提交变更…", { visible = true }, modifier = tip,
+                enabled = repo != null && observed.commitAvailable && observed.unavailableReason == null, testTag = "git-commit-open")
+        }
         if (!visible) CommitOutcome(operation)
     }
-    HarnessDialog(visible, { visible = false }, "提交暂存变更") {
+    HarnessDialog(visible, { visible = false }, "提交") {
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth().heightIn(max = 520.dp)
             .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             GitPageValue(repo?.root ?: "仓库不可用", "git-commit-repository")
@@ -566,17 +559,15 @@ private fun CommitForm(controller: GitController, observed: GitState) {
             ReadResult(observed.commitSnapshot, "尚未读取暂存区。") { value ->
                 if (value.repository == repo) HarnessText("已暂存 ${value.stagedCount}", Modifier.testTag("git-commit-staged-count"))
             }
+            // `review.commit.selection.includeUnstagedChanges` = 包含未暂存的更改. Codex pairs the
+            // checkbox with that label alone — no paragraph explaining what checking it would stage.
             HarnessCheckbox(
                 checked = observed.includeUnstaged,
                 onCheckedChange = { controller.setIncludeUnstaged(it) },
-                contentDescription = "包含未暂存变更（提交前先暂存全部变更）",
+                contentDescription = "包含未暂存的更改",
                 enabled = !observed.pageMutationBusy && !observed.commitNeedsRescan && observed.commitAvailable,
                 testTag = "git-commit-include-unstaged",
             )
-            HarnessText(
-                if (observed.includeUnstaged) "提交前会先暂存工作树全部变更（含未跟踪，忽略 .gitignore 之外的忽略项），再提交全部已暂存内容。"
-                else "仅提交已有暂存内容；勾选上方选项可先暂存未暂存与未跟踪变更。不运行 Git hooks，不签名。",
-                Modifier.testTag("git-commit-include-unstaged-hint"), color = HarnessTokens.Colors.TextMuted)
             HarnessTextField(message, { message = it }, "提交消息", Modifier.fillMaxWidth().heightIn(min = 100.dp),
                 enabled = !observed.pageMutationBusy && !observed.commitNeedsRescan && observed.commitAvailable,
                 singleLine = false, testTag = "git-commit-message")
@@ -584,9 +575,11 @@ private fun CommitForm(controller: GitController, observed: GitState) {
                 controller.selectDiff(GitDiffRequest(GitDiffSource.Index)); visible = false
             }, enabled = observed.pageReady, testTag = "git-commit-index-diff",
                 variant = HarnessButtonVariant.Secondary)
-            HarnessButton(if (observed.includeUnstaged) "暂存全部变更并提交" else "提交暂存变更", { controller.commit(message) },
-                enabled = enabled && normalizeGitCommitMessage(message) != null, testTag = "git-commit-submit")
-            observed.commitDisabledReason?.let { HarnessText(it, Modifier.testTag("git-commit-dialog-reason")) }
+            HarnessTooltipTrigger(observed.commitDisabledReason, popupTestTag = "git-commit-dialog-reason") { tip ->
+                // `review.commit.nextSteps.commit` = 提交: one action label, regardless of the checkbox.
+                HarnessButton("提交", { controller.commit(message) },
+                    modifier = tip, enabled = enabled && normalizeGitCommitMessage(message) != null, testTag = "git-commit-submit")
+            }
             CommitOutcome(operation)
             HarnessButton("关闭", { visible = false }, testTag = "git-commit-close", variant = HarnessButtonVariant.Secondary)
         }
@@ -597,11 +590,11 @@ private fun CommitForm(controller: GitController, observed: GitState) {
 private fun CommitOutcome(commit: GitCommit) {
     when (commit) {
         GitCommit.Idle -> Unit
-        is GitCommit.Submitting -> HarnessText("正在提交暂存变更…", Modifier.testTag("git-commit-busy"))
-        is GitCommit.Verified -> HarnessText("已验证提交：${commit.receipt.commitOid.take(12)}", Modifier.testTag("git-commit-verified"))
-        is GitCommit.Rejected -> HarnessText(commit.failure.message, Modifier.testTag("git-commit-error"), color = HarnessTokens.Colors.Danger)
-        is GitCommit.UnknownOutcome -> HarnessText(commit.failure.message, Modifier.testTag("git-commit-unknown"), color = HarnessTokens.Colors.Danger)
-        GitCommit.Rescanned -> HarnessText("已重新读取当前状态，可重新选择。", Modifier.testTag("git-commit-rescanned"))
+        // `review.commit.disabled.committing` = 正在提交… and `review.commit.successToast` reports the
+        // branch; both are Codex's own, and neither explains what a success receipt already proves.
+        is GitCommit.Submitting -> HarnessText("正在提交…", Modifier.testTag("git-commit-busy"))
+        is GitCommit.Verified, is GitCommit.Rejected, is GitCommit.UnknownOutcome -> Unit
+        GitCommit.Rescanned -> Unit
     }
 }
 
@@ -614,6 +607,20 @@ private fun WorktreeRootSection(state: WorktreeSettingsState?, onSave: (Worktree
             return@GitFormSection
         }
         val saved = state.settings.root
+        val toasts = LocalHarnessToastState.current
+        var pendingSave by remember { mutableStateOf<Pair<Long, WorktreeSettings>?>(null) }
+        LaunchedEffect(state.saveRevision, state.saving, state.saveError, pendingSave, toasts) {
+            val pending = pendingSave ?: return@LaunchedEffect
+            if (!state.saving) {
+                if (state.saveError != null) {
+                    toasts?.show(state.saveError, isError = true)
+                    pendingSave = null
+                } else if (state.saveRevision > pending.first && state.settings == pending.second) {
+                    toasts?.show("已保存工作树根目录。")
+                    pendingSave = null
+                }
+            }
+        }
         // Re-seed the draft whenever the persisted value changes (load or a completed save).
         var draft by remember(state.loaded, saved) { mutableStateOf(saved) }
         val error = worktreeRootError(draft)
@@ -621,14 +628,12 @@ private fun WorktreeRootSection(state: WorktreeSettingsState?, onSave: (Worktree
         HarnessTextField(draft, { draft = it }, "工作树根目录（留空使用默认位置）", Modifier.fillMaxWidth(),
             enabled = state.canEdit, isError = error != null, supportingText = error,
             testTag = "worktree-root-input")
-        HarnessButton("保存根目录", { onSave(state.settings.copy(root = worktreeRootValue(draft))) },
-            enabled = state.canEdit && changed && error == null, testTag = "worktree-root-save")
+        HarnessButton("保存根目录", {
+            val next = state.settings.copy(root = worktreeRootValue(draft))
+            pendingSave = state.saveRevision to next
+            onSave(next)
+        }, enabled = state.canEdit && changed && error == null, testTag = "worktree-root-save")
         state.loadError?.let { HarnessText(it, Modifier.testTag("worktree-root-load-error"), color = HarnessTokens.Colors.Danger) }
-        state.saveError?.let { HarnessText(it, Modifier.testTag("worktree-root-save-error"), color = HarnessTokens.Colors.Danger) }
-        if (state.saveRevision > 0 && state.saveError == null && !changed) {
-            HarnessText("已保存工作树根目录。", Modifier.testTag("worktree-root-saved"),
-                color = HarnessTokens.Colors.TextMuted)
-        }
     }
 }
 
@@ -645,14 +650,33 @@ private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (W
             return@GitFormSection
         }
         val settings = state.settings
+        val toasts = LocalHarnessToastState.current
+        var pendingSave by remember { mutableStateOf<Triple<Long, WorktreeSettings, String>?>(null) }
+        val saveSettings: (WorktreeSettings, String) -> Unit = { next, message ->
+            pendingSave = Triple(state.saveRevision, next, message)
+            onSave(next)
+        }
+        LaunchedEffect(state.saveRevision, state.saving, state.saveError, pendingSave, toasts) {
+            val pending = pendingSave ?: return@LaunchedEffect
+            if (!state.saving) {
+                if (state.saveError != null) {
+                    toasts?.show(state.saveError, isError = true)
+                    pendingSave = null
+                } else if (state.saveRevision > pending.first && settings == pending.second) {
+                    toasts?.show(pending.third)
+                    pendingSave = null
+                }
+            }
+        }
 
-        // "Automatically delete old worktrees"; the original confirms before disabling it.
+        // `settings.worktrees.autoCleanup.label` / `.description`; the original confirms before
+        // disabling it.
         var confirmDisable by remember(settings.autoCleanupEnabled) { mutableStateOf(false) }
-        SettingsFormRow("自动删除旧工作树", "超过保留数量后清理较旧的托管工作树。",
+        SettingsFormRow("自动删除旧工作树", "推荐大多数用户启用。仅当你需要手动管理旧工作树和磁盘使用空间时，再关闭此功能。",
             modifier = Modifier.testTag("worktree-auto-cleanup-label")) {
             HarnessSwitch(
                 checked = settings.autoCleanupEnabled,
-                onCheckedChange = { next -> if (next) onSave(settings.copy(autoCleanupEnabled = true)) else confirmDisable = true },
+                onCheckedChange = { next -> if (next) saveSettings(settings.copy(autoCleanupEnabled = true), "自动删除功能已启用") else confirmDisable = true },
                 contentDescription = "自动删除旧工作树", enabled = state.canEdit,
                 testTag = "worktree-auto-cleanup-switch")
         }
@@ -661,14 +685,13 @@ private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (W
         var draft by remember(state.loaded, savedKeep) { mutableStateOf(savedKeep) }
         val keepError = keepCountError(draft)
         val keepChanged = keepCountValue(draft) != settings.keepCount
-        SettingsFormRow("自动删除限制",
-            description = if (settings.autoCleanupEnabled) "保留的托管工作树数量，至少为 1。" else "自动删除已停用，保留数量仍会保存。",
+        SettingsFormRow("自动删除限制", "自动清理较旧工作树前保留的工作树数量。",
             modifier = Modifier.testTag("worktree-keep-count-label")) {
             Column(Modifier.widthIn(max = 240.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 HarnessTextField(draft, { draft = it }, "保留数量", Modifier.fillMaxWidth(),
                     enabled = state.canEdit, isError = keepError != null, supportingText = keepError,
                     testTag = "worktree-keep-count-input")
-                HarnessButton("保存", { keepCountValue(draft)?.let { onSave(settings.copy(keepCount = it)) } },
+                HarnessButton("保存", { keepCountValue(draft)?.let { saveSettings(settings.copy(keepCount = it), "已保存自动删除限制") } },
                     variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact,
                     enabled = state.canEdit && keepChanged && keepError == null, testTag = "worktree-keep-count-save")
             }
@@ -678,16 +701,13 @@ private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (W
             modifier = Modifier.testTag("worktree-upstream-refresh-label")) {
             HarnessSwitch(
                 checked = settings.upstreamRefreshMode == WorktreeUpstreamRefreshMode.BestEffort,
-                onCheckedChange = { next -> onSave(settings.copy(
-                    upstreamRefreshMode = if (next) WorktreeUpstreamRefreshMode.BestEffort else WorktreeUpstreamRefreshMode.Never)) },
+                onCheckedChange = { next -> saveSettings(settings.copy(
+                    upstreamRefreshMode = if (next) WorktreeUpstreamRefreshMode.BestEffort else WorktreeUpstreamRefreshMode.Never),
+                    "已保存工作树设置。") },
                 contentDescription = "创建工作树前始终获取上游更新", enabled = state.canEdit,
                 testTag = "worktree-upstream-refresh-switch")
         }
         state.loadError?.let { HarnessText(it, Modifier.testTag("worktree-env-load-error"), color = HarnessTokens.Colors.Danger) }
-        state.saveError?.let { HarnessText(it, Modifier.testTag("worktree-env-save-error"), color = HarnessTokens.Colors.Danger) }
-        if (state.saveRevision > 0 && state.saveError == null) {
-            HarnessText("已保存工作树设置。", Modifier.testTag("worktree-env-saved"), color = HarnessTokens.Colors.TextMuted)
-        }
 
         HarnessConfirmDialog(
             visible = confirmDisable,
@@ -698,7 +718,7 @@ private fun WorktreeEnvironmentSection(state: WorktreeSettingsState?, onSave: (W
             confirmLabel = "禁用自动删除功能",
             submitState = HarnessConfirmSubmitState.Ready,
             onCancel = { confirmDisable = false },
-            onConfirm = { confirmDisable = false; onSave(settings.copy(autoCleanupEnabled = false)) },
+            onConfirm = { confirmDisable = false; saveSettings(settings.copy(autoCleanupEnabled = false), "自动删除功能已禁用") },
             testTag = "worktree-auto-cleanup-confirm")
     }
 }
@@ -715,12 +735,10 @@ private fun WorktreeCreationForm(controller: GitController, state: GitState, wor
     val refs = (state.branches as? GitRead.Ready<List<GitBranch>>)?.value.orEmpty().map { it.ref }
     val options = listOf("HEAD") + refs
     GitFormSection("创建本地工作树") {
-        if (!state.creationAvailable) HarnessText("此 Host 未提供本地工作树创建能力。",
-            Modifier.testTag("git-worktree-create-unavailable"), color = HarnessTokens.Colors.TextMuted)
+        // A host without the creation capability leaves the fields and action disabled; Codex states
+        // no cause beside an unavailable control, so no sentence explains the missing capability.
         HarnessTextField(path, { path = it; pathTouched = true }, "新工作树绝对路径（父目录须已存在）", Modifier.fillMaxWidth(),
             enabled = state.pageReady && state.canCreateWorktree, testTag = "git-worktree-create-path")
-        if (!pathTouched && autoPath != null) HarnessText("路径随分支名称自动生成",
-            Modifier.testTag("git-worktree-create-auto-path"), color = HarnessTokens.Colors.TextMuted)
         HarnessTextField(branch, { branch = it }, "新分支名称", Modifier.fillMaxWidth(),
             enabled = state.pageReady && state.canCreateWorktree, testTag = "git-worktree-create-branch")
         GitPageSelect(startRef, options, { it }, state.pageReady && state.canCreateWorktree, "git-worktree-create-start") { startRef = it }
@@ -731,16 +749,10 @@ private fun WorktreeCreationForm(controller: GitController, state: GitState, wor
             HarnessText("正在创建本地工作树…", Modifier.testTag("git-worktree-create-busy"))
         when (val creation = state.creation) {
             GitWorktreeCreation.Idle, is GitWorktreeCreation.Creating -> Unit
-            is GitWorktreeCreation.Created -> GitPageCard {
-                GitPageValue("已创建：${creation.receipt.worktree.path}", "git-worktree-create-success")
-                GitPageValue(creation.receipt.worktree.branch ?: "分支不可用", "git-worktree-created-branch")
-                HarnessText("此回执只确认 Git 工作树已创建；Managed 登记请查看归属清单。环境设置与会话关联尚未确认。",
-                    Modifier.testTag("git-worktree-created-boundary"), color = HarnessTokens.Colors.TextMuted)
-            }
-            is GitWorktreeCreation.Failed -> HarnessText(creation.failure.failure.message,
-                Modifier.testTag("git-worktree-create-error"), color = HarnessTokens.Colors.Danger)
+            is GitWorktreeCreation.Created -> GitActionOutcomeToast(creation, "已创建工作树：${creation.receipt.worktree.path}")
+            is GitWorktreeCreation.Failed -> GitActionOutcomeToast(creation, creation.failure.failure.message, isError = true)
         }
-        if (state.creationNeedsRescan) HarnessText("创建结果未知。请先刷新并检查实际工作树列表，再决定下一步。",
+        if (state.creationNeedsRescan) HarnessText("创建结果未知。",
             Modifier.testTag("git-worktree-create-needs-rescan"), color = HarnessTokens.Colors.Danger)
     }
 }
@@ -810,4 +822,23 @@ private fun ProtectionLabel(protection: ManagedProtection, tag: String) {
             color = HarnessTokens.Colors.TextMuted)
         HarnessText(protection.reason, Modifier.testTag(tag), style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+/** Standalone Git pages share the application's toast host when available. */
+@Composable
+private fun GitPageToasts(modifier: Modifier, content: @Composable () -> Unit) {
+    val applicationToasts = LocalHarnessToastState.current
+    val localToasts = rememberHarnessToastState()
+    CompositionLocalProvider(LocalHarnessToastState provides (applicationToasts ?: localToasts)) {
+        Box(modifier) {
+            content()
+            if (applicationToasts == null) HarnessToastHost(localToasts, Modifier.align(Alignment.TopCenter))
+        }
+    }
+}
+
+@Composable
+private fun GitActionOutcomeToast(outcome: Any, message: String, isError: Boolean = false) {
+    val toasts = LocalHarnessToastState.current
+    LaunchedEffect(outcome, toasts) { toasts?.show(message, isError = isError) }
 }

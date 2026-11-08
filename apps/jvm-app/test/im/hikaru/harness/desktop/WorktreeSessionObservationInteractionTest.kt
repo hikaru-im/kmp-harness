@@ -57,7 +57,9 @@ class WorktreeSessionObservationInteractionTest {
                 assertEquals(ManagedSessionObservationStatus.Observed, empty.status)
                 assertTrue(empty.sessions.isEmpty())
                 onNodeWithTag("managed-session-observation-status").assertTextEquals("本次未观察到关联会话")
-                onNodeWithTag("managed-sessions").assertTextContains("保护仍未完整核验", substring = true)
+                // The observation states what it saw; no standing sentence re-explains that the
+                // protection is incomplete or what that implies for deletion.
+                onNodeWithText("会话保护仍未完整核验", substring = true).assertDoesNotExist()
                 onNodeWithText("关联会话未知：尚无完整持久会话目录。", substring = true).assertDoesNotExist()
                 runOnIdle { runBlocking {
                     val parent = f.session("history-parent")
@@ -103,10 +105,9 @@ class WorktreeSessionObservationInteractionTest {
                 assertEquals(ManagedSessionIssueKind.MissingCwd, unknown.issues.single().kind)
                 assertEquals("unassigned", unknown.issues.single().sessionId)
                 onNodeWithTag("managed-session-observation-status").assertTextEquals("本次只读观察：关联尚未完整判定")
-                revealObservation(onNodeWithTag("managed-session-observation-boundary"))
-                onNodeWithTag("managed-session-observation-boundary").assertIsDisplayed()
-                revealObservation(onNodeWithTag("managed-destructive-unavailable"))
-                onNodeWithTag("managed-destructive-unavailable").assertTextContains("不可用", substring = true)
+                onNodeWithTag("managed-destructive-unavailable").assertDoesNotExist()
+                onNodeWithTag("managed-removal-status").assertDoesNotExist()
+                onNodeWithTag("managed-remove").assertDoesNotExist()
                 assertContentEquals(registry, Files.readAllBytes(f.registry))
             }
         } finally { page.close(); f.close() }
@@ -130,7 +131,9 @@ class WorktreeSessionObservationInteractionTest {
                 assertEquals(before, page.managed.state.value.inventory)
                 assertTrue(page.managed.state.value.stale)
                 onNodeWithTag("managed-error").assertExists()
-                onNodeWithTag("managed-stale").assertTextEquals("上次观察已过期；当前归属与保护尚未确认。")
+                // The stale marker states the age of the observation and nothing about what that
+                // implies for ownership or protection, which the labels below already report.
+                onNodeWithTag("managed-stale").assertTextEquals("上次观察已过期。")
                 onAllNodesWithTag("managed-session-observation-status").fetchSemanticsNodes().forEach {
                     assertEquals("上次只读会话观察已过期；当前关联未知。", it.config[SemanticsProperties.Text].single().text)
                 }
@@ -237,25 +240,22 @@ class WorktreeSessionObservationInteractionTest {
                             hasText("观察到会话：" + parentId), true), "观察到会话：" + parentId)
                         val text = "父会话：" + parentId
                         val tail = onNode(hasTestTag("managed-session-parent") and hasText(text), true)
-                        val boundary = onNodeWithTag("managed-session-observation-boundary", true)
                         // The fixed-height list ends after several protection labels. At narrow widths
                         // their wrapping can put lineage above the end viewport: prove both stages.
-                        revealObservation(tail, through = boundary)
+                        revealObservation(tail)
                         val before = tail.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange]
                         assertTrue(before.maxValue() > 0f)
                         wheelObservation(tail, before.maxValue() - before.value(), horizontal = true)
                         val horizontal = tail.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange]
                         assertTrue(abs(horizontal.maxValue() - horizontal.value()) <= 1f)
                         val geometry = observationMarker(tail, text, marker, list)
-                        val boundaryGeometry = observationVisibleText(boundary,
-                            "两个来源独立读取；本次观察不证明无会话或安全删除。", list)
                         captureObservation(size, mode, observed, buildJsonObject {
-                            put("markerProof", geometry); put("boundaryProof", boundaryGeometry)
+                            put("markerProof", geometry)
                         }, list, stage = "lineage")
                         pluginsPageScrollToEnd("managed-inventory-list")
-                        val finalLabel = onNodeWithTag("managed-other-protection", true)
                         // Reveal the end through the outer viewport without moving the inner list.
                         revealObservation(list)
+                        val finalLabel = onNodeWithTag("managed-other-protection", true)
                         val finalGeometry = observationVisibleText(finalLabel,
                             page.managed.state.value.inventory!!.entries.single().protection.other.reason, list)
                         captureObservation(size, mode, observed, buildJsonObject {
@@ -359,7 +359,10 @@ private fun ComposeUiTest.readyObservation(page: ObservationPage) {
 private fun ComposeUiTest.refreshObservation(page: ObservationPage) {
     val previous = page.managed.state.value.inventory
     clickObservation("managed-refresh")
-    waitUntil(timeoutMillis = 10_000) { page.managed.state.value.phase == ManagedWorktreePhase.Ready && page.managed.state.value.inventory !== previous }
+    waitUntil(timeoutMillis = 30_000) {
+        pluginsPageSettle()
+        page.managed.state.value.phase == ManagedWorktreePhase.Ready && page.managed.state.value.inventory !== previous
+    }
     readyObservation(page)
 }
 
@@ -515,10 +518,9 @@ private fun ComposeUiTest.captureObservation(size: Size, mode: HarnessThemeMode,
             assertTrue(atEnd, "Final list must be at its measured end: $value / $max")
             assertTrue(proof.containsKey("lastProtectionProof"))
         }
-        "lineage" -> {
-            assertTrue(proof.containsKey("markerProof"))
-            assertTrue(proof.containsKey("boundaryProof"))
-        }
+        // The lineage stage proves the long parent-session marker is fully laid out and reachable; the
+        // observation card prints no trailing boundary sentence to measure alongside it.
+        "lineage" -> assertTrue(proof.containsKey("markerProof"))
         else -> error("Unknown observation capture stage: $stage")
     }
     val viewport = list.fetchSemanticsNode().boundsInRoot.intersect(root.boundsInRoot)

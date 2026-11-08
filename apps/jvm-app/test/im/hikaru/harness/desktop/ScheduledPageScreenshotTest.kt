@@ -91,7 +91,7 @@ class ScheduledPageScreenshotTest {
                                 save("history", scrollTarget = tag)
                                 onNodeWithTag("scheduled-execution-model").assertExists()
                                 if (case != Case.Detail) {
-                                    onNodeWithTag("scheduled-run-blocked").performScrollTo().assertIsDisplayed()
+                                    onNodeWithTag("scheduled-run-blocked").assertDoesNotExist()
                                     onNodeWithTag("scheduled-blocked-runs").performScrollTo().assertIsDisplayed()
                                 }
                             }

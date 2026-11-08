@@ -89,7 +89,7 @@ public fun PluginsManagementNavigator(
                     }
                 }
                 PluginLoadState.NotLoaded, PluginLoadState.Loading -> HarnessNavigatorHint("正在读取插件…")
-                is PluginLoadState.Unavailable -> HarnessNavigatorHint("插件服务未接入")
+                is PluginLoadState.Unavailable -> Unit
                 is PluginLoadState.AuthRequired -> HarnessNavigatorHint(list.message)
                 is PluginLoadState.UnsupportedHost -> HarnessNavigatorHint(list.message)
                 is PluginLoadState.Error -> {

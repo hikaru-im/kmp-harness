@@ -32,7 +32,6 @@ import im.hikaru.harness.client.settings.CloseConfirmationPolicy
 import im.hikaru.harness.client.settings.ENTER_BEHAVIOR_DESCRIPTION
 import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.GeneralSettingsState
-import im.hikaru.harness.client.settings.GeneralUnavailableReasons
 import im.hikaru.harness.client.settings.ShortcutPlatform
 import im.hikaru.harness.client.settings.label
 
@@ -60,14 +59,15 @@ public object SettingsGeneralModel {
             SettingsGeneralRow(
                 id = "default-permission",
                 title = "默认权限",
-                description = "允许读写工作空间中的文件；额外访问需要授权。",
+                description = "默认情况下，Harness 可以读取并编辑其工作区中的文件。必要时，它可以请求额外的访问权限",
                 control = SettingsGeneralControl.Toggle,
                 initiallyChecked = true,
             ),
             SettingsGeneralRow(
                 id = "full-disk-access",
-                title = "完整访问权限",
-                description = "允许访问工作空间以外的文件并运行联网命令，无需逐次批准。可能造成数据丢失或泄露。",
+                // `settings.agent.permissionsMode.fullAccess.title` = 完全访问权限.
+                title = "完全访问权限",
+                description = "当 Harness 以完全访问权限运行时，无需你批准，即可编辑你的电脑上的任何文件并运行联网命令。这会显著增加数据丢失、泄露或意外行为的风险。",
                 control = SettingsGeneralControl.Toggle,
                 initiallyChecked = true,
             ),
@@ -104,11 +104,10 @@ public fun SettingsGeneralPage(
     shortcutPlatform: ShortcutPlatform = ShortcutPlatform.Mac,
 ) {
     SettingsFormFrame("常规", "settings-general-title") {
-        if (state.loading || state.saving || state.loadError != null || state.saveError != null || !state.durable) {
+        if (state.loading || state.saving || state.loadError != null || state.saveError != null) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (state.loading) GeneralStatus("正在读取常规设置…", "general-loading")
                 if (state.saving) GeneralStatus("正在保存常规设置…", "general-saving")
-                if (!state.durable) GeneralStatus("设置仅在本次运行中保留", "general-session-only")
                 state.loadError?.let { GeneralStatus(it, "general-load-error") }
                 state.saveError?.let { GeneralStatus(it, "general-save-error") }
                 if (state.loadError != null || state.saveError != null) {
@@ -161,11 +160,6 @@ private fun SettingsRow(
     if (showDivider) HorizontalDivider(
         color = HarnessTokens.Colors.BorderSubtle,
     )
-    val unavailable = when (row.id) {
-        "confirm-close" -> if (state.closePolicyAvailable) null else "本平台尚未接入窗口关闭策略"
-        "plugins" -> if (onOpenPlugins != null) null else "本平台尚未接入插件管理"
-        else -> GeneralUnavailableReasons.forRow(row.id)
-    }
     val control: @Composable () -> Unit = {
         val tag = "settings-general-control-" + row.id
         when (row.control) {
@@ -203,8 +197,6 @@ private fun SettingsRow(
     SettingsFormRow(
         label = row.title, description = row.description,
         modifier = Modifier.semantics { testTag = "settings-general-row-" + row.id },
-        status = if (unavailable != null) "暂不可用" else null,
-        statusTag = "settings-general-unavailable-" + row.id,
         control = control,
     )
 }

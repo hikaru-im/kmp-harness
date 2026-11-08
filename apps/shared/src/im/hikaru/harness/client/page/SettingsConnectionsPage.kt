@@ -58,13 +58,6 @@ public fun SettingsConnectionsPage(
         if (detailsHost == null) detailsTarget = null
     }
     val refresh: () -> Unit = { if (state.canRefresh) onRefresh() }
-    val selectionReason = when {
-        state.transport == ConnectionTransport.Local ->
-            state.selectionUnavailableReason ?: "本机模式不支持切换远程 Host。"
-        state.selectionUnavailableReason != null -> state.selectionUnavailableReason
-        state.busy -> "正在刷新或连接，请等待操作完成后再选择 Host。"
-        else -> null
-    }
 
     Box(Modifier.fillMaxSize().semantics { testTag = "settings-connections-page" }) {
         SettingsFormFrame(title = "连接", testTag = "settings-connections-title") {
@@ -97,15 +90,10 @@ public fun SettingsConnectionsPage(
                             size = HarnessControlSize.Compact,
                         )
                     }
-                    state.refreshUnavailableReason?.let { ConnectionsNote(it) }
                 }
             }
 
             SettingsFormSection("已发现的编程 Host") {
-                if (state.transport == ConnectionTransport.Relay) {
-                    ConnectionsNote("发现结果不代表已建立连接。切换 Host 会丢弃旧 Host 的事件订阅，后续会话操作将使用所选 Host。")
-                }
-                selectionReason?.let { ConnectionsNote(it) }
                 state.error?.let { message ->
                     SettingsFormCard {
                         HarnessErrorState(message = message)
@@ -118,7 +106,6 @@ public fun SettingsConnectionsPage(
                             variant = HarnessButtonVariant.Secondary,
                             size = HarnessControlSize.Compact,
                         )
-                        state.refreshUnavailableReason?.let { ConnectionsNote(it) }
                     }
                 }
                 if (state.busy) {
@@ -133,12 +120,7 @@ public fun SettingsConnectionsPage(
                 if (state.hosts.isEmpty()) {
                     if (!state.busy) {
                         SettingsFormCard {
-                            HarnessEmptyState(
-                                title = "暂无已发现的 Host",
-                                description = if (state.transport == ConnectionTransport.Local)
-                                    "本机 Host 信息由当前连接提供；可用时通过刷新重新读取。"
-                                else "当前账号作用域没有可展示的发现结果；可用时通过刷新重新发现。",
-                            )
+                            HarnessEmptyState(title = "未找到设备连接。")
                         }
                     }
                 } else {
@@ -183,14 +165,18 @@ public fun SettingsConnectionsPage(
                 }
             }
 
+            // `settings.remoteConnections.ssh.empty`: Codex renders the SSH tab's empty state as a
+            // description with an 添加 button, and never explains why an adapter is missing — the
+            // buttons here are inert because the adapters are not wired yet, not because of a reason
+            // line. `settings.remoteConnections.ssh.header.title` is the section's own copy.
             SettingsFormSection("SSH / WSL") {
                 SettingsFormCard {
                     SettingsFormRow(
                         label = "SSH",
-                        description = "尚未接入 SSH 连接适配器，暂不可发现、添加或连接 SSH Host。",
+                        description = "通过 SSH 连接到远程设备",
                     ) {
                         HarnessButton(
-                            text = "添加 SSH",
+                            text = "添加",
                             onClick = {},
                             enabled = false,
                             testTag = "connections-ssh-add",
@@ -198,12 +184,9 @@ public fun SettingsConnectionsPage(
                             size = HarnessControlSize.Compact,
                         )
                     }
-                    SettingsFormRow(
-                        label = "WSL",
-                        description = "尚未接入 WSL 连接适配器，暂不可发现或连接 WSL Host。",
-                    ) {
+                    SettingsFormRow(label = "WSL") {
                         HarnessButton(
-                            text = "连接 WSL",
+                            text = "添加",
                             onClick = {},
                             enabled = false,
                             testTag = "connections-wsl-connect",
@@ -227,6 +210,7 @@ private fun connectionsHostMetadata(host: HostDescription): String =
     "Host ID：${host.hostId.value}\n协议：${host.protocolVersion.major}.${host.protocolVersion.minor}"
 
 @Composable
+/** A field caption inside the details dialog; the only remaining user of the muted small style. */
 private fun ConnectionsNote(text: String) {
     HarnessText(text, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
 }
@@ -261,7 +245,6 @@ private fun ConnectionsDetailsDialog(host: HostDescription, onDismiss: () -> Uni
                     host.capabilities.joinToString("\n") { "${it.id.value} · v${it.version}" }
                         .ifEmpty { "未声明协议能力" },
                 )
-                ConnectionsNote("协议能力声明不代表当前用户的使用权限，也不保证服务当前可用。")
             }
             HarnessButton(
                 text = "关闭",

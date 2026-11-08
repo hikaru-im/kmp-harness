@@ -41,14 +41,29 @@ public fun SettingsAppearancePage(
     var separateModes by remember { mutableStateOf(false) }
     var importOpen by remember { mutableStateOf(false) }
     var importDraft by remember { mutableStateOf("") }
-    var importError by remember { mutableStateOf<String?>(null) }
-    var pendingImport by remember { mutableStateOf<AppearanceSettings?>(null) }
-    var importRevision by remember { mutableStateOf(0L) }
-    var feedback by remember { mutableStateOf<String?>(null) }
+    var pendingImport by remember { mutableStateOf<Pair<AppearanceSettings, AppearanceMode>?>(null) }
+    var importOutcome by remember { mutableStateOf(0L) }
+    // Codex reports copy/import outcomes through its toaster (`chromeTheme.export.success`,
+    // `chromeTheme.import.error`, …). Nothing is pinned to the page: an outcome already shown is
+    // history, not a standing statement about the current theme.
+    val toasts = LocalHarnessToastState.current
     val clipboard = LocalClipboardManager.current
-    LaunchedEffect(state.saveRevision, state.settings, state.saving, pendingImport) {
-        if (pendingImport != null && !state.saving && state.saveRevision > importRevision && state.settings == pendingImport) {
-            importOpen = false; pendingImport = null; feedback = "主题已导入并保存"
+    var lastReported by remember { mutableStateOf(0L) }
+    LaunchedEffect(state.outcomeRevision, state.settings, state.saveError, pendingImport) {
+        val (candidate, importedMode) = pendingImport ?: return@LaunchedEffect
+        if (state.outcomeRevision <= importOutcome || state.outcomeRevision == lastReported) return@LaunchedEffect
+        lastReported = state.outcomeRevision
+        if (state.saveError != null) {
+            toasts?.show(themeOutcome("无法导入", importedMode), isError = true)
+        } else if (state.settings == candidate) {
+            importOpen = false; pendingImport = null
+            toasts?.show(themeOutcome("已导入", importedMode))
+        }
+    }
+    LaunchedEffect(state.outcomeRevision, state.saveError, pendingImport) {
+        if (pendingImport == null && state.outcomeRevision > 0 && state.outcomeRevision != lastReported) {
+            lastReported = state.outcomeRevision
+            state.saveError?.let { toasts?.show(it, isError = true) }
         }
     }
     fun changeVariant(mode: AppearanceMode, transform: (AppearanceVariant) -> AppearanceVariant) {
@@ -57,17 +72,17 @@ public fun SettingsAppearancePage(
     SettingsFormFrame("外观", "settings-appearance-title") {
         if (state.loading) HarnessText("正在读取外观设置…", color = HarnessTokens.Colors.TextMuted)
         if (!state.loaded && !state.loading && state.loadError == null) HarnessButton("重新读取外观设置", onRetry, testTag = "appearance-reload")
-        val error = state.loadError ?: state.saveError
+        val error = state.loadError
         if (error != null) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                HarnessText(error, Modifier.semantics { testTag = if (state.loadError != null) "appearance-load-error" else "appearance-save-error" },
+                HarnessText(error, Modifier.semantics { testTag = "appearance-load-error" },
                     color = HarnessTokens.Colors.Danger)
                 HarnessButton("重试", onRetry, enabled = !state.loading && !state.saving, testTag = "appearance-retry", variant = HarnessButtonVariant.Secondary)
             }
         }
         if (state.saving) HarnessText("正在保存…", color = HarnessTokens.Colors.TextMuted)
-        if (!state.durable) HarnessText("当前环境的外观设置仅在本次会话保留。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-        feedback?.let { HarnessText(it, Modifier.semantics { testTag = "appearance-feedback" }, color = HarnessTokens.Colors.TextMuted) }
+        // No session-only banner: Codex has no such line, and the production store is durable, so
+        // the sentence stated a limitation this build does not have.
         SettingsFormSection("视觉样式") {
             SettingsFormCard {
                 SettingsFormRow("模式") { ModePreviews(settings.mode, enabled) { onChange(settings.copy(mode = it)) } }
@@ -76,13 +91,15 @@ public fun SettingsAppearancePage(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // `chromeTheme.export` = 复制主题; the outcome is `chromeTheme.export.success` /
+                // `.error` in the toaster, exactly as Codex raises it.
                 HarnessButton("复制主题", {
                     try {
                         clipboard.setText(AnnotatedString(AppearanceThemeCodec.encode(currentMode, settings.variant(currentMode))))
-                        feedback = "主题已复制"
-                    } catch (error: Exception) { feedback = error.message ?: "无法复制主题" }
+                        toasts?.show(themeOutcome("已复制", currentMode))
+                    } catch (_: Exception) { toasts?.show(themeOutcome("无法复制", currentMode), isError = true) }
                 }, enabled = enabled, variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact, testTag = "appearance-copy")
-                HarnessButton("导入主题", { importOpen = true; importDraft = ""; importError = null; pendingImport = null },
+                HarnessButton("导入主题", { importOpen = true; importDraft = ""; pendingImport = null },
                     enabled = enabled, variant = HarnessButtonVariant.Secondary, size = HarnessControlSize.Compact, testTag = "appearance-import")
             }
         }
@@ -97,8 +114,13 @@ public fun SettingsAppearancePage(
             }
             if (advanced) {
                 SettingsFormCard {
-                    NumberRow("界面字号", settings.uiFontSize, 11..16, enabled, "appearance-ui-size") { onChange(settings.copy(uiFontSize = it)) }
-                    NumberRow("代码字号", settings.codeFontSize, 8..24, enabled, "appearance-code-size") { onChange(settings.copy(codeFontSize = it)) }
+                    // `settings.general.appearance.sansFontSize.row` = UI 字号, `.row.description`
+                    // 「调整 {appName} 界面使用的基准字号」; `codeFontSize.row` = 代码字体大小 with
+                    // 「调整聊天和差异视图中代码使用的基础字号」.
+                    NumberRow("UI 字号", settings.uiFontSize, 11..16, enabled, "appearance-ui-size",
+                        "调整 Harness 界面使用的基准字号") { onChange(settings.copy(uiFontSize = it)) }
+                    NumberRow("代码字体大小", settings.codeFontSize, 8..24, enabled, "appearance-code-size",
+                        "调整聊天和差异视图中代码使用的基础字号") { onChange(settings.copy(codeFontSize = it)) }
                     SettingsFormRow("分别调整浅色和深色模式") {
                         HarnessSwitch(separateModes, { separateModes = it }, "分别调整浅色和深色模式", enabled = enabled, testTag = "appearance-separate-modes")
                     }
@@ -112,50 +134,72 @@ public fun SettingsAppearancePage(
                     }
                 } }
                 SettingsFormCard {
-                    SettingsFormRow("差异标记") {
-                        SettingsFormSelect(settings.diffStyle, AppearanceDiffStyle.entries, { if (it == AppearanceDiffStyle.Color) "颜色" else "符号" },
+                    // `settings.general.appearance.diffMarkerStyle.*`: Codex labels the two options
+                    // 「颜色」 and 「+/-」, never a generic 「符号」.
+                    SettingsFormRow("差异标记", "使用颜色或 +/− 标记显示更改") {
+                        SettingsFormSelect(settings.diffStyle, AppearanceDiffStyle.entries,
+                            { if (it == AppearanceDiffStyle.Color) "颜色" else "+/-" },
                             enabled, "appearance-diff-style") { onChange(settings.copy(diffStyle = it)) }
                     }
-                    SettingsFormRow("减少动画", "当前应用于加载指示器；跟随系统尚未接入平台设置。") {
-                        SettingsFormSelect(settings.reducedMotion, AppearanceMotion.entries, { when (it) { AppearanceMotion.System -> "跟随系统"; AppearanceMotion.On -> "开启"; AppearanceMotion.Off -> "关闭" } },
+                    // `reducedMotion.label` / `.description`, options `.system` / `.on` / `.off`.
+                    SettingsFormRow("减少动态效果", "减少动画效果或匹配系统设置") {
+                        SettingsFormSelect(settings.reducedMotion, AppearanceMotion.entries, { when (it) { AppearanceMotion.System -> "系统"; AppearanceMotion.On -> "开启"; AppearanceMotion.Off -> "关闭" } },
                             enabled, "appearance-motion") { onChange(settings.copy(reducedMotion = it)) }
                     }
-                    SettingsFormRow("指针光标", "在共享按钮和开关上使用指针。") {
-                        HarnessSwitch(settings.usePointerCursors, { onChange(settings.copy(usePointerCursors = it)) }, "指针光标", enabled = enabled, testTag = "appearance-pointer")
+                    // `usePointerCursors.label` / `.description`.
+                    SettingsFormRow("使用指针光标", "悬停交互元素时切换为指针光标") {
+                        HarnessSwitch(settings.usePointerCursors, { onChange(settings.copy(usePointerCursors = it)) }, "使用指针光标", enabled = enabled, testTag = "appearance-pointer")
                     }
-                    SettingsFormRow("字体平滑", "当前由系统绘制，客户端尚未接入此设置。") {
-                        HarnessSwitch(settings.fontSmoothing, {}, "字体平滑不可用", enabled = false, testTag = "appearance-smoothing")
+                    // `fontSmoothing.description` describes what the switch does; the switch itself is
+                    // inert in this build, and a disabled control carries no reason of its own.
+                    SettingsFormRow("字体平滑", "使用 macOS 原生字体抗锯齿") {
+                        HarnessSwitch(settings.fontSmoothing, {}, "字体平滑", enabled = false, testTag = "appearance-smoothing")
                     }
-                    UnavailableRow("代码主题预设", "尚未接入预设目录")
-                    UnavailableRow("半透明窗口", "尚未接入原生窗口效果")
-                    UnavailableRow("Dock 图标", "尚未接入 macOS 图标设置")
+                    // `settings.general.appearance.codeTheme` / `chromeTheme.translucentSidebar` /
+                    // `dockIcon.label`: Codex renders each as a real control. None are wired in this
+                    // build, so each stays a disabled control of the same shape — and carries no
+                    // 「暂不可用」 text, because a disabled control is its own explanation.
+                    SettingsFormRow("代码主题") {
+                        HarnessSelectTrigger("默认", {}, enabled = false, testTag = "appearance-code-theme")
+                    }
+                    SettingsFormRow("半透明侧边栏") {
+                        HarnessSwitch(false, {}, "半透明侧边栏", enabled = false, testTag = "appearance-translucent-sidebar")
+                    }
+                    SettingsFormRow("程序坞图标", "选择应用在程序坞中使用的图标") {
+                        HarnessSelectTrigger("默认", {}, enabled = false, testTag = "appearance-dock-icon")
+                    }
                 }
             }
         }
     }
     HarnessDialog(importOpen, { if (!state.saving) { importOpen = false; pendingImport = null } }, "导入主题") {
-        HarnessText("支持本客户端的 harness-theme-v1 分享文本。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-        BasicTextField(importDraft, { importDraft = it; importError = null; pendingImport = null }, enabled = enabled,
+        // `settings.general.appearance.chromeTheme.import.dialog.*`: title 导入主题, submit 导入主题,
+        // cancel 取消, and the field is labelled by `ariaLabel`. Codex gates the submit on
+        // `canImportThemeString` rather than explaining the format in a paragraph, so the button is
+        // simply disabled until the draft decodes.
+        val decoded = runCatching { AppearanceThemeCodec.decode(importDraft) }.getOrNull()
+        BasicTextField(importDraft, { importDraft = it; pendingImport = null }, enabled = enabled,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = HarnessTokens.Colors.Text),
             cursorBrush = SolidColor(HarnessTokens.Colors.Text),
             modifier = Modifier.widthIn(min = 200.dp, max = 480.dp).fillMaxWidth().heightIn(min = 100.dp, max = 180.dp)
                 .verticalScroll(rememberScrollState()).border(1.dp, HarnessTokens.Colors.BorderStrong, RoundedCornerShape(8.dp))
                 .padding(12.dp).semantics { testTag = "appearance-import-input" })
-        (importError ?: state.saveError)?.let { HarnessText(it, color = HarnessTokens.Colors.Danger) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HarnessButton("取消", { importOpen = false; pendingImport = null }, enabled = !state.saving, variant = HarnessButtonVariant.Secondary)
-            HarnessButton("导入", {
-                try {
-                    val share = AppearanceThemeCodec.decode(importDraft)
-                    val candidate = settings.withVariant(share.mode, share.theme)
-                    importRevision = state.saveRevision; pendingImport = candidate; importError = null
-                    onChange(candidate)
-                } catch (error: Exception) { importError = error.message ?: "主题格式无效" }
-            }, enabled = enabled, testTag = "appearance-import-confirm")
+            HarnessButton("导入主题", {
+                val share = decoded ?: return@HarnessButton
+                val candidate = settings.withVariant(share.mode, share.theme)
+                importOutcome = state.outcomeRevision; pendingImport = candidate to share.mode
+                onChange(candidate)
+            }, enabled = enabled && decoded != null, testTag = "appearance-import-confirm")
             if (state.saveError != null && pendingImport != null) HarnessButton("重试保存", onRetry, enabled = enabled, testTag = "appearance-import-retry")
         }
     }
 }
+
+/** `settings.general.appearance.theme.light` / `.dark`; the prefix is `chromeTheme.*.success` / `.error`. */
+private fun themeOutcome(prefix: String, mode: AppearanceMode): String =
+    prefix + " " + (if (mode == AppearanceMode.Dark) "深色" else "浅色") + " 主题"
 
 private fun AppearanceMode.label(): String = when (this) { AppearanceMode.System -> "系统"; AppearanceMode.Light -> "浅色"; AppearanceMode.Dark -> "深色" }
 private fun AppearanceMode.slug(): String = name.lowercase()
@@ -216,7 +260,7 @@ private fun VisualThemeFields(mode: AppearanceMode, theme: AppearanceVariant, en
                 onCommit = { value -> val parsed = value.trim().ifEmpty { null }; onChange { when (index) { 0 -> it.copy(accent = parsed); 1 -> it.copy(background = parsed); else -> it.copy(foreground = parsed) } } })
         }
     }
-    SettingsFormRow("界面字体", "使用当前客户端支持的字体族。") {
+    SettingsFormRow("界面字体") {
         SettingsFormSelect(theme.uiFont, AppearanceFont.entries, { it.label() }, enabled, "appearance-ui-font-" + suffix) { font -> onChange { it.copy(uiFont = font) } }
     }
 }
@@ -233,15 +277,18 @@ private fun AdvancedThemeFields(mode: AppearanceMode, theme: AppearanceVariant, 
 }
 
 @Composable
-private fun NumberRow(label: String, value: Int, range: IntRange, enabled: Boolean, tag: String, onChange: (Int) -> Unit) {
-    SettingsFormRow(label) {
+private fun NumberRow(
+    label: String,
+    value: Int,
+    range: IntRange,
+    enabled: Boolean,
+    tag: String,
+    description: String? = null,
+    onChange: (Int) -> Unit,
+) {
+    SettingsFormRow(label, description) {
         SettingsFormInput(value.toString(), enabled, tag, validate = { text ->
             if (text.toIntOrNull()?.let { it in range } == true) null else "请输入 " + range.first + "–" + range.last + " 的整数"
         }, onCommit = { onChange(it.toInt()) })
     }
-}
-
-@Composable
-private fun UnavailableRow(label: String, reason: String) {
-    SettingsFormRow(label, reason) { HarnessText("暂不可用", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
 }

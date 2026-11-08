@@ -324,7 +324,9 @@ class ModelSettingsInteractionTest {
         onNodeWithTag("models-edit-openai").performClick()
         onNodeWithTag("models-discover-openai").performScrollTo().performClick()
         runOnIdle { assertEquals(1, backend.discoveries) }
-        onNodeWithText("模型目录已更新；来源与生效结果见下方状态。").performScrollTo().assertExists()
+        // Codex leaves the updated catalogue as the outcome: no page-level "saved / result below"
+        // sentence. The discovered row itself proves the operation completed.
+        onNodeWithText("模型目录已更新；来源与生效结果见下方状态。").assertDoesNotExist()
         onAllNodesWithText("Remote Model").assertCountEquals(1)
     }
 
@@ -542,7 +544,7 @@ class ModelSettingsInteractionTest {
         val repository = ModelSettingsRepository()
         runBlocking { repository.load() }
         setContent { OwnedModels(repository) }
-        onNodeWithTag("models-unavailable").assertIsDisplayed()
+        onNodeWithTag("models-unavailable").assertIsDisplayed().assertTextEquals("无法加载模型配置")
         onNodeWithTag("models-new-provider").assertIsNotEnabled()
         onNodeWithTag("models-provider-openai").assertDoesNotExist()
     }

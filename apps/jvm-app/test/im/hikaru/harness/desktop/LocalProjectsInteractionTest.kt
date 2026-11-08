@@ -201,8 +201,8 @@ class LocalProjectsInteractionTest {
                     onAllNodes(hasTestTag("local-project-attach-retry") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
                 }
                 onNodeWithTag("live-thread").assertExists()
-                onNodeWithTag("local-project-attach-pending").assertTextContains("关联待确认", substring = true)
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("local-project-attach-pending").assertTextContains("关联未能确认", substring = true)
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-editor").assertTextContains(draft)
                 val session = runBlocking { fixture.connection.session.list().single() }
                 val originalTarget = repository.attachTargets.single()
@@ -223,7 +223,7 @@ class LocalProjectsInteractionTest {
                 }
                 onNodeWithTag("local-project-attach-pending").assertExists()
                 onNodeWithTag("local-project-attach-retry").assertIsNotEnabled()
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-editor").assertTextContains(draft)
                 assertEquals(listOf(session.id.value), fixture.sessions.map { it.id.value })
                 assertEquals(1, repository.attachTargets.size)
@@ -241,8 +241,8 @@ class LocalProjectsInteractionTest {
                 assertEquals(fixture.host, restoredBinding.scope.hostId)
                 assertEquals(ConnectionTransport.Local, restoredBinding.transport)
                 assertTrue(restoredBinding.scope.generation > originalTarget.binding.scope.generation)
-                onNodeWithTag("local-project-attach-pending").assertTextContains("关联待确认", substring = true)
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("local-project-attach-pending").assertTextContains("关联未能确认", substring = true)
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-editor").assertTextContains(draft)
                 assertEquals(1, repository.attachTargets.size, "Reconnect must not automatically attach")
                 assertEquals(1, repository.validatedTargets.size, "Reconnect must not automatically revalidate")

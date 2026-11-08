@@ -320,8 +320,7 @@ private fun ComposeUiTest.selectSavedTask(task: ScheduledTask) {
 }
 
 private fun ComposeUiTest.assertInvalidatedExecution() {
-    reveal("scheduled-execution-unavailable")
-    onNodeWithTag("scheduled-execution-unavailable", true).assertExists().assertIsDisplayed()
+    onNodeWithTag("scheduled-execution-unavailable", true).assertDoesNotExist()
     reveal("scheduled-run-now")
     onNodeWithTag("scheduled-run-now", true).assertIsDisplayed().assertIsNotEnabled()
     reveal("scheduled-pause")
@@ -469,11 +468,13 @@ private fun ComposeUiTest.typeAscii(tag: String, text: String) {
     val target = onNodeWithTag(tag, true).assertIsFocused()
     val skiko = this as? SkikoComposeUiTest ?: error("Real Desktop character events require SkikoComposeUiTest")
     val eventSource = object : Component() {}
-    val deadline = System.nanoTime() + 10_000_000_000L
+    // Every character settles a rendered frame; budget scales with the real input length.
+    val budgetMillis = maxOf(10_000L, text.length.toLong() * 100L)
+    val deadline = System.nanoTime() + budgetMillis * 1_000_000L
     val alphabet = listOf(Key.A, Key.B, Key.C, Key.D, Key.E, Key.F, Key.G, Key.H, Key.I, Key.J, Key.K, Key.L, Key.M,
         Key.N, Key.O, Key.P, Key.Q, Key.R, Key.S, Key.T, Key.U, Key.V, Key.W, Key.X, Key.Y, Key.Z)
     text.forEachIndexed { index, character ->
-        check(System.nanoTime() < deadline) { "Real character input exceeded ten seconds: $tag at $index" }
+        check(System.nanoTime() < deadline) { "Real character input exceeded ${budgetMillis} ms: $tag at $index" }
         require(character == ' ' || character in 'a'..'z')
         val key = if (character == ' ') Key.Spacebar else alphabet[character.code - 'a'.code]
         // Send one physical key sequence in a single UI dispatch; settle between characters.
@@ -501,7 +502,7 @@ private fun ComposeUiTest.typeAscii(tag: String, text: String) {
     settle()
     target.assertIsFocused()
     assertEquals(text, target.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
-    check(System.nanoTime() < deadline) { "Real character input exceeded ten seconds: $tag after verification" }
+    check(System.nanoTime() < deadline) { "Real character input exceeded ${budgetMillis} ms: $tag after verification" }
 }
 
 /** Match the desktop pixel conversion; the Skiko dispatcher supplies scrollAmount = 1. */

@@ -110,7 +110,6 @@ class LiveConversationScreenshotTest {
             models = fixtureModels,
             selectedModel = model,
             onModelSelect = { model = it },
-            modelUnavailableReason = if (state.selectedSessionId != null) "已有会话沿用创建时的模型。" else null,
             submitUnavailableReason = null,
             selectedReasoningEffort = effort,
             onReasoningEffortSelect = { effort = it },

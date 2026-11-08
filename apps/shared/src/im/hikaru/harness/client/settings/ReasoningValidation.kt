@@ -50,5 +50,5 @@ public fun reasoningOptionsError(
 private fun supportError(support: ModelCapabilitySupport, label: String): String? = when (support) {
     ModelCapabilitySupport.SUPPORTED -> null
     ModelCapabilitySupport.UNSUPPORTED -> "当前模型不支持$label"
-    ModelCapabilitySupport.UNKNOWN -> "当前模型的${label}能力尚未确认，请跟随厂商默认"
+    ModelCapabilitySupport.UNKNOWN -> "当前模型的${label}能力尚未确认"
 }

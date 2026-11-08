@@ -62,7 +62,7 @@ public fun ProjectFileSearchDialog(
                 result = found; resultQuery = query
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) {
-                error = "无法搜索项目文件，请检查目录访问权限后重试。"
+                error = "无法搜索项目文件"
             } finally { loading = false }
         }
         LaunchedEffect(file, readRetry) {
@@ -116,7 +116,7 @@ public fun ProjectFileSearchDialog(
                             .background(HarnessTokens.Colors.Surface).padding(10.dp)
                             .semantics { testTag = "project-file-search-input"; contentDescription = "搜索项目文件路径" })
                     when {
-                        target == null -> HarnessText("请先在项目页或新聊天中选择项目，再搜索文件。")
+                        target == null -> HarnessText("未选择项目")
                         loading || (error == null && resultQuery != query) -> HarnessText("正在搜索…", Modifier.semantics { testTag = "project-file-search-loading" })
                         error != null -> {
                             HarnessText(error!!, Modifier.semantics { liveRegion = LiveRegionMode.Polite })

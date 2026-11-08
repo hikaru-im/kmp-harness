@@ -10,7 +10,13 @@ public enum class ConnectionsPhase(public val label: String) {
     Reconnecting("重新连接中"), Disconnected("已断开"), Incompatible("协议不兼容"), RequiresLogin("需要登录"),
 }
 
-/** All host objects come from describe/discovery; absence never produces example hosts. */
+/**
+ * All host objects come from describe/discovery; absence never produces example hosts.
+ *
+ * The two reasons exist only to gate [canRefresh] and [canSelect]. They are not rendered: Codex
+ * disables an unavailable action and states no cause beside it, and no `settings.remoteConnections.*`
+ * key names either of these states.
+ */
 public data class ConnectionsState(
     val scope: MemberIdentity? = null,
     val transport: ConnectionTransport = ConnectionTransport.Local,

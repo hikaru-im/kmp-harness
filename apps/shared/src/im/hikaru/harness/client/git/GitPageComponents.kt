@@ -364,8 +364,8 @@ internal fun GitDiffView(
     // Re-request when the diff itself changes: the controller drops its cache then, so the card
     // must ask again instead of showing text that belonged to the previous patch.
     LaunchedEffect(document, previewPaths) { if (previewPaths.isNotEmpty()) onRequestPreviews(previewPaths) }
-    HarnessText("可在 Diff 内分别上下与左右滚动；文本可选中复制。",
-        style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
+    // The diff surface is its toolbar and its patch; Codex prints no note about scrolling axes or
+    // text selection above the patch.
     Row(
         Modifier.fillMaxWidth().testTag("git-diff-toolbar"),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -417,10 +417,6 @@ internal fun GitDiffView(
                 reveal = null
             },
         )
-    }
-    if (document.leadingContent) {
-        HarnessText("补丁开头存在不属于任何文件的文本，未合并进文件卡片。",
-            Modifier.testTag("git-diff-leading"), color = HarnessTokens.Colors.TextMuted)
     }
     if (largeDiff) {
         HarnessText(GitDiffLargeBannerCopy, Modifier.fillMaxWidth().testTag("git-diff-large-banner")

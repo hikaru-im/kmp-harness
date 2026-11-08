@@ -27,7 +27,7 @@ class SettingsPanelCatalogTest {
             listOf(
                 "常规", "导入", "外观", "已归档的聊天", "语音", "存储", "配置", "个性化",
                 "Mini 与虚拟宠物", "键盘快捷键", "插件", "电脑操控", "应用快照", "浏览器", "钩子",
-                "连接", "Git", "环境", "Worktrees",
+                "连接", "Git", "环境", "工作树",
             ),
             SettingsPanelCatalog.codexPanels.map { it.label },
         )

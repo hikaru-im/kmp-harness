@@ -80,7 +80,7 @@ public object SettingsPanelCatalog {
         CodexSettingsPanel("connections", "连接", "SET-25", "connections", SettingsPanelAvailability.Implemented),
         CodexSettingsPanel("git-settings", "Git", "SET-26", "git", SettingsPanelAvailability.Implemented),
         CodexSettingsPanel("local-environments", "环境", "SET-27"),
-        CodexSettingsPanel("worktrees", "Worktrees", "SET-28", "worktrees", SettingsPanelAvailability.Implemented),
+        CodexSettingsPanel("worktrees", "工作树", "SET-28", "worktrees", SettingsPanelAvailability.Implemented),
     )
 
     /** Harness's 8 current Settings rows, in render order (SET-02). */

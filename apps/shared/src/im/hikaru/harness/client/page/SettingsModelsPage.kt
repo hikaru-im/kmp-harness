@@ -69,13 +69,7 @@ public fun SettingsModelsPage(
     var editing by remember { mutableStateOf<ProviderEditorSession?>(null) }
     var addEditorStates by remember { mutableStateOf<Map<ProviderAddMode, ProviderEditorState>>(emptyMap()) }
     var removing by remember { mutableStateOf<ProviderRemovalSession?>(null) }
-    var feedback by remember { mutableStateOf<String?>(null) }
     val snapshot = state.snapshot
-    LaunchedEffect(state.completedOperation, state.saving) {
-        if (!state.saving && state.completedOperation?.startsWith("models:") == true && !state.refreshRequired) {
-            feedback = "模型目录已更新；来源与生效结果见下方状态。"
-        }
-    }
     fun closeEditor() {
         editing = null
         addEditorStates = emptyMap()
@@ -148,9 +142,8 @@ public fun SettingsModelsPage(
             (state.loadError ?: state.saveError)?.let {
                 HarnessText(it, Modifier.semantics { testTag = "models-error" }, color = HarnessTokens.Colors.Danger)
             }
-            feedback?.let { HarnessText(it, Modifier.semantics { testTag = "models-feedback" }, color = HarnessTokens.Colors.TextMuted) }
             if (state.loaded && !snapshot.available) {
-                HarnessText(snapshot.unavailableReason ?: "模型配置服务不可用。", Modifier.semantics { testTag = "models-unavailable" }, color = HarnessTokens.Colors.TextMuted)
+                HarnessText("无法加载模型配置", Modifier.semantics { testTag = "models-unavailable" }, color = HarnessTokens.Colors.TextMuted)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     HarnessButton("添加厂商", { create(ProviderAddMode.Preset) },
                         enabled = false, variant = HarnessButtonVariant.Secondary, testTag = "models-new-provider")
@@ -159,7 +152,7 @@ public fun SettingsModelsPage(
                 }
             } else if (state.loaded && !state.loading) {
                 if (snapshot.providers.isEmpty() && editing?.creating != true) {
-                    HarnessText("此 Host 没有模型配置入口。", Modifier.semantics { testTag = "models-empty" }, color = HarnessTokens.Colors.TextMuted)
+                    HarnessText("尚无厂商", Modifier.semantics { testTag = "models-empty" }, color = HarnessTokens.Colors.TextMuted)
                 }
                 if (snapshot.providers.isNotEmpty()) {
                     SettingsFormSection("厂商") {
@@ -189,10 +182,7 @@ public fun SettingsModelsPage(
                                                     )
                                                 },
                                                 onDismiss = ::closeEditor,
-                                                onSaved = {
-                                                    closeEditor()
-                                                    feedback = "Provider 配置已保存；生效结果见厂商状态。"
-                                                },
+                                                onSaved = ::closeEditor,
                                                 onDiscoverDraft = onDiscoverDraft,
                                                 onConnect = onConnect,
                                                 onDiscoverModels = onDiscoverModels,
@@ -220,10 +210,7 @@ public fun SettingsModelsPage(
                                     query = query, onQueryChange = { query = it },
                                     onRefresh = onRefresh, onSave = onSave, onReload = { create(editing!!.mode, reload = true) },
                                     onDismiss = ::closeEditor,
-                                    onSaved = {
-                                        closeEditor()
-                                        feedback = "Provider 配置已保存；生效结果见厂商状态。"
-                                    },
+                                    onSaved = ::closeEditor,
                                     onDiscoverDraft = onDiscoverDraft,
                                     onConnect = onConnect,
                                     onDiscoverModels = onDiscoverModels,
@@ -244,13 +231,10 @@ public fun SettingsModelsPage(
                     }
                 }
             }
-            if (snapshot.providers.any { it.active }) {
-                HarnessText("配置已生效不代表远端连接已验证。", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-            }
         }
     }
     removing?.let { session ->
-        ProviderRemovalDialog(session, state, onRefresh, onRemove, { removing = null }, { removing = null; feedback = "Provider 配置已删除" })
+        ProviderRemovalDialog(session, state, onRefresh, onRemove, { removing = null }, { removing = null })
     }
 }
 
@@ -348,8 +332,6 @@ private fun ProviderModelList(
                 testTag = "models-discover-" + provider.id,
             )
         }
-        HarnessText("开关控制输入框中的可选模型；选中项为新会话默认模型。",
-            style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
         HarnessSearchField(query, onQueryChange, placeholder = "搜索模型", accessibilityLabel = "搜索模型",
             testTag = "models-search", enabled = !state.loading)
         provider.catalogSource?.let { HarnessText("目录来源：$it", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
@@ -358,7 +340,7 @@ private fun ProviderModelList(
         provider.catalogError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall) }
         val listed = provider.models.filter { query.isBlank() || it.id.contains(query, true) || it.name.contains(query, true) }
         if (listed.isEmpty()) {
-            HarnessText(if (query.isBlank()) "尚无模型，请获取模型列表。" else "没有匹配的模型。",
+            HarnessText(if (query.isBlank()) "尚无模型。" else "没有匹配的模型。",
                 Modifier.semantics { testTag = "models-empty" }, color = HarnessTokens.Colors.TextMuted)
         }
         listed.forEach { model ->
@@ -381,7 +363,6 @@ private fun ProviderModelList(
                         if (model.reasoningEfforts.isNotEmpty()) add("推理档位：" + model.reasoningEfforts.joinToString(" / "))
                     }
                     if (details.isNotEmpty()) HarnessText(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
-                    if (!model.selectable) HarnessText("不适用于当前聊天", style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
                     if (model.absentFromCatalog) HarnessText("最新目录未列出", style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
                 }
                 HarnessSwitch(enabled, { onModelEnabled(provider.id, model.id, it, snapshot.revision) },
@@ -503,6 +484,10 @@ private fun ProviderEditor(
                 "provider-editor-api-key", password = true,
             )
         }
+        if (!session.creating && !credentialWritable) {
+            HarnessText("凭据由 Host 管理；此处只保存凭据引用。",
+                color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        }
         if (session.creating && plugin != null && onDiscoverDraft != null && onConnect != null) {
             HarnessButton(if (discovering) "获取中…" else if (plugin.supportsDiscovery == false) "载入预置模型" else "获取模型列表", {
                 try {
@@ -525,14 +510,10 @@ private fun ProviderEditor(
                 HarnessText("目录来源：" + result.source, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
                 result.warnings.forEach { HarnessText(it, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
                 if (result.models.isEmpty()) HarnessText("此目录没有返回模型。", color = HarnessTokens.Colors.TextMuted)
-                else {
-                    HarnessText(if (result.complete || result.source.startsWith("bundled:")) "已获取 " + result.models.size + " 个模型，保存后默认开启。" else "获取未完成，请重试；本次结果不会替换已保存目录。", style = MaterialTheme.typography.bodySmall)
-                    Column(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState())) {
-                        result.models.forEach { HarnessText(it.name, style = MaterialTheme.typography.bodySmall) }
-                    }
+                else Column(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState())) {
+                    result.models.forEach { HarnessText(it.name, style = MaterialTheme.typography.bodySmall) }
                 }
             }
-            if (plugin.inferenceSupported == false) HarnessText("已支持模型目录；此插件的推理适配尚未接入。", color = HarnessTokens.Colors.TextMuted)
         }
         HarnessButton(if (advanced) "收起自定义设置" else "自定义设置", { advanced = !advanced }, enabled = enabled,
             variant = HarnessButtonVariant.Ghost, testTag = "provider-editor-advanced")
@@ -600,7 +581,7 @@ private fun ProviderRemovalDialog(
         HarnessText("删除 " + session.provider.displayName + " 的用户配置。已保存的凭据会保留。")
         (state.saveError ?: state.loadError)?.let { HarnessText(it, color = HarnessTokens.Colors.Danger) }
         val stale = session.revision != state.snapshot.revision
-        if (stale) HarnessText("配置已变化，请取消并重新打开确认窗口，检查最新配置后再删除。", color = HarnessTokens.Colors.TextMuted)
+        // Codex disables the destructive action when the revision is stale; no explanatory line.
         if (state.refreshRequired) HarnessButton("刷新", onRefresh, enabled = !state.loading && !state.saving, variant = HarnessButtonVariant.Secondary, testTag = "provider-delete-refresh")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             HarnessButton("取消", onDismiss, enabled = !state.saving, variant = HarnessButtonVariant.Secondary)

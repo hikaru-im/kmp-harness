@@ -3,12 +3,20 @@ package im.hikaru.harness.client.git
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import im.hikaru.harness.ui.foundation.*
 
@@ -38,8 +46,8 @@ public fun GitChangesPanel(
         GitChangesHeader(state, ready?.changes.orEmpty(), document, onSelectFilter, onRefresh)
         when (val content = gitChangesContent(state)) {
             is GitChangesContent.Unavailable -> GitChangesError(content.reason, refresh = null)
-            GitChangesContent.Loading -> HarnessText("正在加载更改", Modifier.padding(12.dp).testTag("git-changes-loading"),
-                color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+            // `ReviewLoadingState` is a spinner *and* its label; Harness's loading state is that pair.
+            GitChangesContent.Loading -> HarnessLoadingState("正在加载更改", Modifier.testTag("git-changes-loading"))
             is GitChangesContent.Failed -> GitChangesError(content.message, onRefresh.takeIf { state.canRefresh })
             is GitChangesContent.Empty -> HarnessEmptyState(
                 when (content.state) {
@@ -66,6 +74,12 @@ public fun GitChangesPanel(
     }
 }
 
+/**
+ * `ReviewSourceControls` + `ReviewOptionsMenuCompact`: the source dropdown, the line statistics and
+ * the refreshing indicator stay in the left cluster; the right cluster holds the 查看选项 menu
+ * (`.header.moreOptions`) that owns 刷新 — Codex keeps refresh inside that menu rather than as a
+ * standalone header button.
+ */
 @Composable
 private fun GitChangesHeader(
     state: GitState,
@@ -75,28 +89,96 @@ private fun GitChangesHeader(
     onRefresh: () -> Unit,
 ) {
     val counts = gitChangesCounts(changes)
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).testTag("git-changes-header"),
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).testTag("git-changes-header"),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        GitChangeFilter.entries.forEach { entry ->
-            val count = if (entry == GitChangeFilter.Unstaged) counts.unstaged else counts.staged
-            // `renderDiffFilterLabelWithCount`: the badge only appears when there is something to count.
-            val label = if (count > 0) "${entry.label} $count" else entry.label
-            HarnessButton(label, { onSelectFilter(entry) },
-                testTag = "git-changes-filter-" + entry.name.lowercase(),
-                variant = if (entry == state.changeFilter) HarnessButtonVariant.Secondary else HarnessButtonVariant.Ghost,
-                size = HarnessControlSize.Compact)
-        }
+        DiffFilterDropdown(state.changeFilter, counts, onSelectFilter)
         val stats = document?.let { gitChangesLineStats(it) }
         if (stats != null) HarnessText(stats, Modifier.testTag("git-changes-stats"),
             style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
-        Spacer(Modifier.weight(1f))
-        // `codex.review.refreshGitQueries`（刷新）/ `.inProgress`（正在刷新更改）.
         val refreshing = state.reviewDiff is GitRead.Loading || state.status is GitRead.Loading
-        HarnessButton(if (refreshing) "正在刷新更改" else "刷新",
-            onRefresh, testTag = "git-changes-refresh",
-            enabled = state.canRefresh && !state.pageMutationBusy,
-            variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact)
+        // `review-source-controls.tsx` `ReviewRefreshingIndicator`: a spinner whose label
+        // (`codex.review.refreshGitQueries.inProgress` = 正在刷新更改) lives in the accessible name, not
+        // as a sentence beside the stats.
+        if (refreshing) HarnessRefreshSpinner()
+        Spacer(Modifier.weight(1f))
+        ReviewOptionsMenu(state, onRefresh)
     }
+}
+
+/**
+ * `DiffFilterDropdown`: one ghost button that shows the selected option with its count badge and a
+ * chevron, opening the menu of every source the panel can actually read. Codex filters its option
+ * list with `availableDiffFilters`, so an option the host cannot serve is never listed.
+ */
+@Composable
+private fun DiffFilterDropdown(
+    selected: GitChangeFilter,
+    counts: GitChangesCounts,
+    onSelectFilter: (GitChangeFilter) -> Unit,
+) {
+    var expanded by remember(selected) { mutableStateOf(false) }
+    HarnessMenu(
+        expanded = expanded,
+        entries = GitChangeFilter.entries.map { entry ->
+            HarnessMenuEntry.Item(
+                key = entry.name,
+                text = gitChangeFilterLabel(entry, counts),
+                selected = entry == selected,
+                testTag = "git-changes-filter-" + entry.name.lowercase(),
+            )
+        },
+        onExpandedChange = { expanded = it },
+        onSelect = { key -> GitChangeFilter.entries.firstOrNull { it.name == key }?.let(onSelectFilter) },
+        popupModifier = Modifier.testTag("git-changes-filter-menu"),
+        anchor = { toggle ->
+            HarnessButton(gitChangeFilterLabel(selected, counts), toggle,
+                testTag = "git-changes-filter",
+                variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact)
+        },
+    )
+}
+
+/**
+ * `ReviewOptionsMenuCompact`: 查看选项 (`.header.moreOptions`) with the 刷新 item
+ * (`.refreshGitQueries` / `.inProgress`). The diff-wide options (换行 / 展开全部差异 / 加载完整文件)
+ * belong to the patch view itself, which already renders them for the document it holds.
+ */
+@Composable
+private fun ReviewOptionsMenu(
+    state: GitState,
+    onRefresh: () -> Unit,
+) {
+    var expanded by remember(state.selectedCwd) { mutableStateOf(false) }
+    val refreshing = state.reviewDiff is GitRead.Loading || state.status is GitRead.Loading
+    HarnessMenu(
+        expanded = expanded,
+        entries = listOf(
+            HarnessMenuEntry.Item("refresh", if (refreshing) "正在刷新更改" else "刷新",
+                enabled = state.canRefresh && !state.pageMutationBusy && !refreshing,
+                state = if (refreshing) HarnessControlState.Loading else HarnessControlState.Normal,
+                testTag = "git-changes-refresh"),
+        ),
+        onExpandedChange = { expanded = it },
+        onSelect = { if (it == "refresh") onRefresh() },
+        align = HarnessPopoverAlign.End,
+        popupModifier = Modifier.testTag("git-changes-options-menu"),
+        anchor = { toggle ->
+            HarnessIconButton("查看选项", toggle,
+                state = HarnessButtonState(), testTag = "git-changes-options") {
+                HarnessIcon(HarnessIconName.More, size = HarnessTokens.Control.NavigatorIcon)
+            }
+        },
+    )
+}
+
+/** `renderDiffFilterLabelWithCount`: the count only appears when there is something to count. */
+public fun gitChangeFilterLabel(filter: GitChangeFilter, counts: GitChangesCounts): String =
+    if (filter.count(counts) > 0) "${filter.label} ${filter.count(counts)}" else filter.label
+
+/** Which count the chip for this filter shows, so the label and the list can never disagree. */
+public fun GitChangeFilter.count(counts: GitChangesCounts): Int = when (this) {
+    GitChangeFilter.Unstaged -> counts.unstaged
+    GitChangeFilter.Staged -> counts.staged
 }
 
 @Composable
@@ -134,7 +216,7 @@ private fun GitChangesDiff(
 ) {
     val diff = state.reviewDiff
     when {
-        diff is GitRead.Failed -> HarnessText("无法加载差异",
+        diff is GitRead.Failed -> HarnessText(diff.failure.message,
             Modifier.padding(12.dp).testTag("git-changes-diff-failed"),
             color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall)
         document == null -> HarnessText("正在加载差异",
@@ -175,6 +257,22 @@ public fun gitChangesCounts(changes: List<GitChange>): GitChangesCounts = GitCha
     unstaged = GitChangeFilter.Unstaged.count(changes),
     staged = GitChangeFilter.Staged.count(changes),
 )
+
+/**
+ * `ReviewRefreshingIndicator`: the spinner Codex draws while review git data refreshes. The sentence
+ * 「正在刷新更改」 (`codex.review.refreshGitQueries.inProgress`) is its accessible name — Codex sets it as
+ * `aria-label` on a status span holding only a spinner — so it is never printed as text.
+ */
+@Composable
+private fun HarnessRefreshSpinner() {
+    CircularProgressIndicator(
+        Modifier.size(HarnessTokens.Control.Icon).testTag("git-changes-refreshing").semantics {
+            contentDescription = "正在刷新更改"
+            liveRegion = LiveRegionMode.Polite
+        },
+        color = HarnessTokens.Colors.TextMuted, strokeWidth = 2.dp,
+    )
+}
 
 /** `codex.review.stageFilter.empty.*`: which empty message the current half of the list needs. */
 public enum class GitChangesEmpty { NoChanges, NoUnstaged, NoStaged }

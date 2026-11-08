@@ -84,8 +84,15 @@ class GeneralSettingsInteractionTest {
         }
     }
 
+    /**
+     * `ComposerSubmitButton`: `blockedReason` outranks the shortcut hint in the tooltip
+     * (`w = C ? l : d` in Codex). A shell with no bound connection is exactly such a blocked
+     * composer, so the hover must surface the real block — not a hint advertising a chord that
+     * cannot fire. The saved EnterBehavior still reaches the hint; `LiveConversationInteractionTest`
+     * pins that with an unblocked composer, and `ComposerPresentationTest` pins the hint strings.
+     */
     @Test
-    fun savedEnterBehaviorReachesTheLiveComposerHint() = runSkikoComposeUiTest(size = Size(1200f, 900f)) {
+    fun savedEnterBehaviorBuildsTheComposerWhileAnUnboundShellAdvertisesItsBlock() = runSkikoComposeUiTest(size = Size(1200f, 900f)) {
         val repository = GeneralSettingsRepository(MemoryGeneralSettingsStore(
             GeneralSettings(CloseConfirmationPolicy.KeyboardOnly, EnterBehavior.CmdAlways)), true)
         runBlocking { repository.load() }
@@ -97,7 +104,9 @@ class GeneralSettingsInteractionTest {
         onNodeWithTag("live-composer-send").performMouseInput { moveTo(center) }
         mainClock.advanceTimeBy(300)
         waitForIdle()
-        onNodeWithText("发送 · ⌘ + Enter；换行 · Enter").assertIsDisplayed()
+        // The block wins the tooltip; the shortcut hint is not shown while a reason exists.
+        onNodeWithText("连接已断开").assertIsDisplayed()
+        onNodeWithText("发送 · ⌘ + Enter；换行 · Enter").assertDoesNotExist()
     }
 
     @Test
@@ -124,7 +133,8 @@ class GeneralSettingsInteractionTest {
         }
         runOnIdle { width = 420.dp }
         onNodeWithTag("settings-general-control-default-permission").assertIsNotEnabled().assertIsOff()
-        onNodeWithTag("settings-general-unavailable-default-permission").assertIsDisplayed().assertTextEquals("暂不可用")
+        // A disabled row carries no reason text — Codex has no 「暂不可用」/「尚未接入…」 status copy.
+        onNodeWithTag("settings-general-unavailable-default-permission").assertDoesNotExist()
         onNodeWithText("尚未接入 Host 权限配置").assertDoesNotExist()
         onNodeWithTag("settings-general-control-task-folder").performScrollTo().assertIsNotEnabled()
         onNodeWithTag("settings-general-control-terminal-location-bottom").performScrollTo().assertIsNotEnabled()
@@ -169,7 +179,7 @@ class GeneralSettingsInteractionTest {
         onNodeWithTag("settings-general-control-confirm-close").performScrollTo().assertIsEnabled()
         runOnIdle { state = state.copy(closePolicyAvailable = false) }
         onNodeWithTag("settings-general-control-confirm-close").assertIsNotEnabled()
-        onNodeWithTag("settings-general-unavailable-confirm-close").assertExists()
+        onNodeWithTag("settings-general-unavailable-confirm-close").assertDoesNotExist()
     }
 
     @Composable

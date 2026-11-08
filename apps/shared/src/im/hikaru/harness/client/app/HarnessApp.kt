@@ -470,7 +470,7 @@ public fun HarnessApp(
                     if (transport == ConnectionTransport.Relay) onRefreshHosts?.invoke() else descriptionRepository?.refresh()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
-                    if (currentSession == capturedSession) connectionActionError = "无法刷新连接，请重试。"
+                    if (currentSession == capturedSession) connectionActionError = "无法刷新远程连接"
                 }
             }
         }
@@ -828,14 +828,8 @@ public fun HarnessApp(
     }
     val effectiveNewReasoning = resolveComposerReasoning(effectiveNewModel, selectedNewReasoning)
     val effectiveNewEffort = effectiveNewReasoning.effort?.value
-    val modelReason = when {
-        transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
-        modelSettings.loading -> "正在读取本机模型目录。"
-        modelChoices.isEmpty() && modelSettings.snapshot.providers.any { it.applicationError != null } -> "Provider 配置未生效，请到设置中修复。"
-        // Nothing configured is the ordinary first-run state, not a fault: the reference composer
-        // keeps the slot silent for it (the model chip is the affordance), so it gets no notice.
-        else -> null
-    }
+    // The model slot carries no reason copy: Codex's `IntelligenceDropdown` renders the model list and
+    // its effort controls only, with no 「暂未提供模型目录」/「配置未生效」 line for any state.
     val composerBindingReady = conversationState.host == conversationHost &&
         conversationState.selectedSessionId == null
     val composerState = if (composerBindingReady) conversationState else
@@ -844,11 +838,11 @@ public fun HarnessApp(
         conversation.state.value.host == conversationHost &&
         conversation.state.value.selectedSessionId == null
     val submitReason = when {
-        !composerBindingReady -> "正在切换会话…"
-        !conversationState.connected -> "请连接可用的 Host 后发送消息。"
-        pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
-        page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "所选项目尚未加载，请刷新项目后再发送。"
-        page == PageId.Home && localProjectsState.mutation != null -> "正在保存项目变更，请稍候。"
+        !composerBindingReady -> "正在加载…"
+        !conversationState.connected -> if (transport == ConnectionTransport.Relay) "远程连接已断开" else "连接已断开"
+        pendingProjectAssociation != null -> "项目关联未能确认"
+        page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "正在加载…"
+        page == PageId.Home && localProjectsState.mutation != null -> "正在加载…"
         else -> null
     }
     // A local session cannot start without a provider/model, but the reference composer never prints
@@ -861,7 +855,7 @@ public fun HarnessApp(
     val pendingAssociationNotice: @Composable () -> Unit = {
         pendingProjectAssociation?.let { pending ->
             val pendingName = localProjectsState.snapshot?.project(pending.first.projectId)?.name ?: pending.first.projectId.value
-            HarnessText("会话已创建，项目「$pendingName」关联待确认；消息尚未发送。",
+            HarnessText("项目「$pendingName」关联未能确认",
                 Modifier.semantics { testTag = "local-project-attach-pending" }, color = HarnessTokens.Colors.Danger)
             HarnessButton("重试项目关联", {
                 if (!retryingProjectAssociation) {
@@ -901,7 +895,7 @@ public fun HarnessApp(
         pendingWorktreeChat?.takeIf { page == PageId.Home }?.let { directory ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HarnessText("将在该工作树目录新建聊天：$directory",
+                HarnessText(directory,
                     Modifier.weight(1f).semantics { testTag = "local-worktree-chat-pending" },
                     color = HarnessTokens.Colors.TextMuted)
                 HarnessButton("取消", { pendingWorktreeChat = null }, testTag = "local-worktree-chat-cancel")
@@ -953,7 +947,7 @@ public fun HarnessApp(
             onModelSelect = {
                 selectedNewReasoning = resolveComposerReasoning(it, effectiveNewReasoning)
                 selectedNewModel = it
-            }, modelUnavailableReason = modelReason,
+            },
             submitUnavailableReason = submitReason, submitBlocked = submitBlockedWithoutHint,
             selectedReasoningEffort = effectiveNewEffort,
             onReasoningEffortSelect = {
@@ -1199,13 +1193,15 @@ public fun HarnessApp(
                         effort = reasoning.effort?.value, modelConfigurationKnown = true)
                 }
             },
-            modelUnavailableReason = modelReason,
+            // `composer.submit.*`: Codex only ever phrases a blocked submit with the reasons its own
+            // locale carries. `loadingLocalConfig` is 「正在加载…」 and `remoteDisconnected` is
+            // 「远程连接已断开」; there is no key at all for an unavailable model, so that case blocks
+            // the submit silently — the model chip is the affordance (see `submitBlockedWithoutHint`).
             submitUnavailableReason = when {
-                pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
-                !bound -> "正在切换会话…"
-                !paneState.connected -> "请连接可用的 Host 后发送消息。"
-                selectedSummary?.archived == true -> "此会话已归档，取消归档后可继续发送。"
-                transport == ConnectionTransport.Local && !paneModelAvailable -> "当前模型已关闭或不可用，请重新选择模型。"
+                pendingProjectAssociation != null -> "项目关联未能确认"
+                !bound -> "正在加载…"
+                !paneState.connected -> if (transport == ConnectionTransport.Relay) "远程连接已断开" else "连接已断开"
+                selectedSummary?.archived == true -> "此会话已归档"
                 else -> null
             },
             selectedReasoningEffort = paneReasoning.effort?.value,
@@ -1698,6 +1694,8 @@ public fun HarnessApp(
             shortcuts.input.preview(input) || shortcuts.input.dispatch(input)
         }.focusable() else Modifier.fillMaxSize()
     CompositionLocalProvider(LocalShortcutsRepository provides shortcuts, LocalShortcutsEventRoot provides shortcuts.input,
+        // Codex's `toast()` is global: any surface under the window can raise a transient outcome.
+        im.hikaru.harness.ui.foundation.LocalHarnessToastState provides toasts,
         LocalConversationNavigationActions provides ConversationNavigationActions(
             sessionsById.mapKeys { it.key.value }, conversationState.managingSessionId != null,
             { id, command ->
@@ -1733,6 +1731,7 @@ public fun HarnessApp(
                 }
             },
             owner = conversationHost)) {
+        im.hikaru.harness.client.plugins.PluginManagementFeedback(pluginsState)
         Box(shortcutModifier) {
             HarnessTheme(appearanceState.settings.mode.themeMode(), appearanceState.settings.themeCustomization()) {
                 UiSnapshotProvider(uiSnapshot) {
@@ -1804,10 +1803,7 @@ private object UnavailableAppGitBackend : GitBackend {
     override suspend fun diff(repository: GitRepository, request: GitDiffRequest): GitDiffSnapshot = unavailable()
 }
 
-/**
- * The rail 资料库 placeholder. Codex's Library is a file product this client does not implement, so
- * the page states that plainly instead of showing fabricated file data.
- */
+/** The Library destination currently renders its title without fabricated file data. */
 @Composable
 private fun LibraryPlaceholderPage() {
     Column(
@@ -1817,9 +1813,6 @@ private fun LibraryPlaceholderPage() {
     ) {
         HarnessText("资料库", style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.semantics { testTag = "library-title" })
-        HarnessText("资料库是 Codex 的文件库；该能力当前未接入。", color = HarnessTokens.Colors.TextMuted,
-            modifier = Modifier.semantics { testTag = "library-unavailable" })
-        HarnessText("本页面为占位，不显示任何示例文件。", color = HarnessTokens.Colors.TextMuted)
     }
 }
 
@@ -2177,7 +2170,7 @@ private fun BoundGitSettingsPage(
     revealPath: String?,
     onRevealConsumed: () -> Unit,
 ) {
-    val title = if (worktrees) "Worktrees" else "Git"
+    val title = if (worktrees) "工作树" else "Git"
     val tag = if (worktrees) "worktrees-page" else "git-page"
     if (!bindingReady || unavailableReason != null) {
         SettingsFormFrame(title, tag) {

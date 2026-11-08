@@ -217,8 +217,9 @@ class LiveHarnessConversationInteractionTest {
                 onNodeWithTag("live-thread").assertExists()
                 onNodeWithTag("live-home").assertDoesNotExist()
                 onNodeWithTag("live-composer-editor").assertDraft("Retained reconnect draft")
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
-                // The disabled send button is the whole signal: no status sentence under the draft.
+                // `ComposerSubmitButton` dims a blocked submit to 50% but keeps it clickable, so the
+                // click can open `BlockedSubmitDialog`. Still no standing sentence under the draft.
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-submit-unavailable").assertDoesNotExist()
                 onNodeWithText("History from old connection").assertDoesNotExist()
                 runOnIdle { connection = replacement }

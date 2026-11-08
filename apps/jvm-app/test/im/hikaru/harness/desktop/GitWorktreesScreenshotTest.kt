@@ -110,7 +110,9 @@ class GitWorktreesScreenshotTest {
                                 "git-change" -> "git-changes-list"
                                 else -> null
                             }
-                            val target = scrollGitNodeIntoView(onAllNodesWithTag(tag)[index], listTag)
+                            val target = if (tag.startsWith("harness-toast-")) {
+                                onAllNodesWithTag(tag)[index].assertIsDisplayed()
+                            } else scrollGitNodeIntoView(onAllNodesWithTag(tag)[index], listTag)
                             val node = target.fetchSemanticsNode()
                             val bounds = node.boundsInRoot
                             val viewport = onNodeWithTag(viewportTag).fetchSemanticsNode().boundsInRoot
@@ -423,7 +425,9 @@ class GitWorktreesScreenshotTest {
                                     focus("managed-sessions-availability", "ownership-$index-sessions", index)
                                     focus("managed-pins-availability", "ownership-$index-pins", index)
                                 }
-                                onNodeWithTag("managed-destructive-unavailable").performScrollTo().assertIsDisplayed()
+                                onNodeWithTag("managed-destructive-unavailable").assertDoesNotExist()
+                                onNodeWithTag("managed-removal-status").assertDoesNotExist()
+                                onNodeWithTag("managed-remove").assertDoesNotExist()
                             }
                             Case.ManagedStaleLoading, Case.ManagedStaleError, Case.ManagedStaleUnavailable -> {
                                 runOnIdle {
@@ -454,12 +458,13 @@ class GitWorktreesScreenshotTest {
                                 clickGitNode(scrollGitNodeIntoView(onNodeWithTag("git-worktree-create-submit")))
                                 val target = when (case) {
                                     Case.CreateBusy -> "git-worktree-create-busy"
-                                    Case.CreatePathExists -> "git-worktree-create-error"
+                                    Case.CreatePathExists -> "harness-toast-error"
                                     Case.CreateNeedsRescan -> "git-worktree-create-needs-rescan"
-                                    else -> "git-worktree-create-success"
+                                    else -> "harness-toast-info"
                                 }
                                 waitUntil { onAllNodesWithTag(target).fetchSemanticsNodes().isNotEmpty() }
-                                onNodeWithTag(target).performScrollTo().assertIsDisplayed()
+                                if (target.startsWith("harness-toast-")) onNodeWithTag(target).assertIsDisplayed()
+                                else onNodeWithTag(target).performScrollTo().assertIsDisplayed()
                                 if (case == Case.CreateBusy || case == Case.CreateNeedsRescan) {
                                     onNodeWithTag("git-worktree-create-submit").assertIsNotEnabled()
                                     onNodeWithTag("git-worktree-create-path").assertIsNotEnabled()
@@ -467,10 +472,9 @@ class GitWorktreesScreenshotTest {
                                 if (case != Case.CreateSuccess) {
                                     onNodeWithTag("git-worktree-create-path").assertTextEquals(GitWorktreesPageFixture.longRoot)
                                     onNodeWithTag("git-worktree-create-success").assertDoesNotExist()
-                                    onNodeWithTag("git-worktree-created-boundary").assertDoesNotExist()
+                                    onNodeWithText("环境设置与会话关联尚未确认", substring = true).assertDoesNotExist()
                                 } else {
-                                    onNodeWithTag("git-worktree-created-branch").assertTextEquals("refs/heads/codex/screenshot-receipt")
-                                    onNodeWithTag("git-worktree-created-boundary").performScrollTo().assertIsDisplayed()
+                                    assertEquals("refs/heads/codex/screenshot-receipt", assertIs<GitWorktreeCreation.Created>(f.git.state.value.creation).receipt.worktree.branch)
                                     onNodeWithText("Managed 归属已核验").assertDoesNotExist()
                                 }
                                 assertEquals(1, f.backend.creations.size)
@@ -493,12 +497,12 @@ class GitWorktreesScreenshotTest {
                             Case.WorktreesLongReady -> "git-worktree-select"
                             Case.ManagedLoading -> "managed-loading"
                             Case.ManagedError -> "managed-error"
-                            Case.ManagedVariants -> "managed-destructive-unavailable"
+                            Case.ManagedVariants -> "managed-count"
                             Case.ManagedStaleLoading, Case.ManagedStaleError, Case.ManagedStaleUnavailable -> "managed-stale"
                             Case.CreateBusy -> "git-worktree-create-busy"
-                            Case.CreatePathExists -> "git-worktree-create-error"
+                            Case.CreatePathExists -> "harness-toast-error"
                             Case.CreateNeedsRescan -> "git-worktree-create-needs-rescan"
-                            Case.CreateSuccess -> "git-worktree-created-boundary"
+                            Case.CreateSuccess -> "git-worktree-create-submit"
                         }
                         // Error tags repeat per failed read; focus the last error (Diff or worktrees).
                         val focusedIndex = if (focusedTag == "git-error")
