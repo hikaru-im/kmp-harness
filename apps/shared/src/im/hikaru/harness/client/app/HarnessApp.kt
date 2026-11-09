@@ -971,6 +971,9 @@ public fun HarnessApp(
                     onQueryChange = localProjects::setQuery,
                     onManage = { navigation = navigation.navigate(PageId.Projects()) },
                     onConfigureEnvironment = { navigation = navigation.navigate(PageId.Settings(SettingsSection.Worktrees)) },
+                    gitState = gitState,
+                    onSelectBranch = git::selectBranch,
+                    onSwitchBranch = git::switchBranch,
                 )
             }) else null,
         )
