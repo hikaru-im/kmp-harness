@@ -28,6 +28,8 @@ import im.hikaru.harness.client.account.platformAccountEngine
 import im.hikaru.harness.boot.HarnessHost
 import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.client.connection.ConnectionTransport
+import im.hikaru.harness.desktop.chooseComposerAttachments
+import im.hikaru.harness.desktop.DesktopComposerAttachmentReader
 import im.hikaru.harness.desktop.git.DesktopGitBackend
 import im.hikaru.harness.desktop.git.DesktopManagedGitBackend
 import im.hikaru.harness.desktop.git.DesktopManagedWorktreeRepository
@@ -266,6 +268,8 @@ fun main(args: Array<String>) {
                     gitBackend = gitBackend,
                     managedWorktreeRepository = managedWorktrees,
                     installedPluginRepository = installedPlugins,
+                    composerAttachmentPicker = ::chooseComposerAttachments,
+                    composerAttachmentReader = DesktopComposerAttachmentReader,
                     localProjectRepository = localProjectRepository,
                     projectFileSearch = remember(localProjectRepository) {
                         im.hikaru.harness.desktop.projects.DesktopProjectFileSearch(localProjectRepository)

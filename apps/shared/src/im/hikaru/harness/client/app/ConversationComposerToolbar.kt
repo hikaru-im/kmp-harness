@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import im.hikaru.harness.client.conversation.ComposerAttachment
 import im.hikaru.harness.client.conversation.ConversationAction
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.ui.foundation.*
@@ -57,6 +59,9 @@ internal fun ConversationComposerToolbar(
      * never prints this as a standing line above the composer.
      */
     submitBlockedReason: String? = null,
+    attachments: List<ComposerAttachment> = emptyList(),
+    onAddAttachment: (() -> Unit)? = null,
+    onRemoveAttachment: (String) -> Unit = {},
 ) {
     var popupStack by remember(state.host, state.selectedSessionId) { mutableStateOf(emptyList<ComposerPopup>()) }
     // `BlockedSubmitDialog` is owned by the composer, not the caller: Codex opens it from the submit
@@ -85,18 +90,42 @@ internal fun ConversationComposerToolbar(
         }
     }
     LaunchedEffect(popup) { if (popup != ComposerPopup.Closed) first.requestFocus() }
+    if (attachments.isNotEmpty()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Composer.FooterPaddingX, vertical = 4.dp)
+                .semantics { testTag = "live-composer-attachments" },
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            attachments.forEach { attachment ->
+                Row(
+                    Modifier.clip(RoundedCornerShape(percent = 50)).background(ConversationAppearance.popup)
+                        .clickable { onRemoveAttachment(attachment.id) }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .semantics { testTag = "live-composer-attachment-${attachment.id}" },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    HarnessText(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = ConversationAppearance.ink)
+                    ConversationIcon(ConversationGlyph.CrossLarge, ConversationAppearance.tertiary, 12.dp)
+                }
+            }
+        }
+    }
     // Live `_ComposerLayoutFooter`: `0 8px`, left cluster 5px apart, the model chip flush against the
     // dictation slot, then an 8px margin before the 28px primary disc.
     Row(Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Composer.FooterPaddingX)
         .semantics { testTag = "live-composer-footer" },
         verticalAlignment = Alignment.CenterVertically) {
-        // Live plus glyph is `text-default` white inside a 28px transparent slot. Attachment is not
-        // wired yet, so the slot is simply inert: Codex has no 「暂不可用」-style wording for it.
-        HarnessTooltipTrigger(null) { tip ->
-            Box(tip.size(HarnessTokens.Composer.ActionSize).semantics {
-                testTag = "live-composer-attachment"; role = Role.Button; disabled()
-                contentDescription = "添加附件"
-            }, contentAlignment = Alignment.Center) {
+        // The control stays disabled when no local picker is supplied; it never prints a reason line.
+        HarnessTooltipTrigger(state.attachmentError) { tip ->
+            Box(tip.size(HarnessTokens.Composer.ActionSize)
+                .then(if (onAddAttachment != null) Modifier.clickable(onClick = onAddAttachment) else Modifier)
+                .semantics {
+                    testTag = "live-composer-attachment"; role = Role.Button
+                    if (onAddAttachment == null) disabled()
+                    contentDescription = "添加附件"
+                }, contentAlignment = Alignment.Center) {
                 ConversationIcon(ConversationGlyph.Plus, ConversationAppearance.ink, 16.dp)
             }
         }

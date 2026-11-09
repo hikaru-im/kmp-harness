@@ -56,6 +56,8 @@ import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.client.connection.AgentOptions
 import im.hikaru.harness.client.connection.SessionId
 import im.hikaru.harness.client.connection.CreateSessionOptions
+import im.hikaru.harness.client.conversation.ComposerAttachment
+import im.hikaru.harness.client.conversation.ComposerAttachmentReader
 import im.hikaru.harness.client.conversation.ConversationController
 import im.hikaru.harness.client.conversation.ConversationHostScope
 import im.hikaru.harness.client.conversation.ConversationState
@@ -279,6 +281,8 @@ public fun HarnessApp(
     shellLayoutRepository: ShellLayoutRepository? = null,
     shortcutsRepository: ShortcutsRepository? = null,
     installedPluginRepository: InstalledPluginRepository = UnavailablePluginRepository,
+    composerAttachmentPicker: (() -> List<ComposerAttachment>)? = null,
+    composerAttachmentReader: ComposerAttachmentReader = im.hikaru.harness.client.conversation.UnavailableComposerAttachmentReader,
     remoteStatus: RemoteConnectionStatus? = null,
     remoteSelectedHost: HostDescription? = null,
     remoteDiscovery: RemoteDiscoveryState = RemoteDiscoveryState(),
@@ -483,7 +487,9 @@ public fun HarnessApp(
     }
     val page = navigation.currentPage
     val conversationScope = rememberCoroutineScope()
-    val conversation = remember { ConversationController(conversationScope) }
+    val conversation = remember(composerAttachmentReader) {
+        ConversationController(conversationScope, attachmentReader = composerAttachmentReader)
+    }
     val conversationState by conversation.state.collectAsState()
     // Window-level transient notifications; conversation failures own them today. Codex keeps its
     // toaster at the top centre of the window, so the host is mounted once at the root.
@@ -961,6 +967,15 @@ public fun HarnessApp(
             useHostDefaultModel = transport == ConnectionTransport.Relay,
             permission = homePreferences.permission,
             onPermissionSelect = { if (homeComposerIsCurrent()) composerPreferences[null] = homePreferences.copy(permission = it) },
+            attachments = conversationState.attachments,
+            onAddAttachment = composerAttachmentPicker?.takeIf { transport == ConnectionTransport.Local }?.let { picker ->
+                {
+                    runCatching { picker() }
+                        .onSuccess(conversation::addAttachments)
+                        .onFailure { conversation.setAttachmentError(it.message ?: "无法选择附件") }
+                }
+            },
+            onRemoveAttachment = conversation::removeAttachment,
             topRail = if (page == PageId.Home && transport == ConnectionTransport.Local) ({
                 ComposerProjectRail(
                     state = localProjectsState,
@@ -1189,6 +1204,17 @@ public fun HarnessApp(
             },
             onCancel = { if (stillBound()) paneController.cancel() },
             onCancelEdit = { if (stillBound()) paneController.cancelEdit() },
+            attachments = if (bound) paneState.attachments else emptyList(),
+            onAddAttachment = composerAttachmentPicker?.takeIf { transport == ConnectionTransport.Local }?.let { picker ->
+                {
+                    if (bound && stillBound()) {
+                        runCatching { picker() }
+                            .onSuccess(paneController::addAttachments)
+                            .onFailure { paneController.setAttachmentError(it.message ?: "无法选择附件") }
+                    }
+                }
+            },
+            onRemoveAttachment = { id -> if (bound && stillBound()) paneController.removeAttachment(id) },
             models = modelChoices,
             selectedModel = paneModel,
             onManageModels = openModelManagement,

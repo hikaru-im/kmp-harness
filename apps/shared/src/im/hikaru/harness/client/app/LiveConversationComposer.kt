@@ -17,6 +17,7 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import im.hikaru.harness.client.conversation.ComposerAttachment
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.ShortcutPlatform
@@ -49,6 +50,9 @@ public fun LiveConversationComposer(
     selectedReasoning: im.hikaru.harness.client.connection.ReasoningOptions? = null,
     onReasoningSelect: ((im.hikaru.harness.client.connection.ReasoningOptions) -> Unit)? = null,
     onManageModels: (() -> Unit)? = null,
+    attachments: List<ComposerAttachment> = emptyList(),
+    onAddAttachment: (() -> Unit)? = null,
+    onRemoveAttachment: (String) -> Unit = {},
 ) {
     val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight)
     val suppliedViewport = LocalConversationViewportHeight.current
@@ -178,6 +182,8 @@ public fun LiveConversationComposer(
                     permission, onPermissionSelect, draftEmpty = editor.text.isBlank(),
                     selectedReasoning = selectedReasoning, onManageModels = onManageModels,
                     submitShortcut = submitShortcut,
+                    attachments = attachments, onAddAttachment = onAddAttachment,
+                    onRemoveAttachment = onRemoveAttachment,
                     // Codex never prints the blocked reason above the composer: it is the submit
                     // button's tooltip, and clicking the dimmed button opens `BlockedSubmitDialog`.
                     submitBlockedReason = submitUnavailableReason)
