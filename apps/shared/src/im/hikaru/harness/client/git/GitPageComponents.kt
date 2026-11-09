@@ -250,6 +250,8 @@ internal fun GitPatch(
     /** A path a transcript card asked to reveal; the view opens and scrolls to it once. */
     revealPath: String? = null,
     onRevealConsumed: () -> Unit = {},
+    hunkAction: GitStageAction? = null,
+    onHunkAction: (GitDiffFile, Int, String, GitStageAction) -> Unit = { _, _, _, _ -> },
 ) {
     val document = remember(patch) { parseGitDiff(patch) }
     val clipboard = LocalClipboardManager.current
@@ -273,7 +275,9 @@ internal fun GitPatch(
         copyFeedback = copyFeedback,
         contextExpansionAllowed = contextExpansionAllowed,
         initialRevealPath = revealPath,
-        onInitialRevealConsumed = onRevealConsumed)
+        onInitialRevealConsumed = onRevealConsumed,
+        hunkAction = hunkAction,
+        onHunkAction = onHunkAction)
 }
 
 /**
@@ -301,6 +305,8 @@ internal fun GitDiffView(
     /** A transcript card's one-shot request to open and scroll to [initialRevealPath]. */
     initialRevealPath: String? = null,
     onInitialRevealConsumed: () -> Unit = {},
+    hunkAction: GitStageAction? = null,
+    onHunkAction: (GitDiffFile, Int, String, GitStageAction) -> Unit = { _, _, _, _ -> },
 ) {
     var layout by remember { mutableStateOf(GitDiffLayout.Unified) }
     var richPreview by remember { mutableStateOf(false) }
@@ -473,6 +479,8 @@ internal fun GitDiffView(
                         },
                         contextExpansionAllowed = contextExpansionAllowed,
                         onRequestContextText = { onRequestPreviews(listOf(file.path)) },
+                        hunkAction = hunkAction,
+                        onHunkAction = onHunkAction,
                     )
                 }
             }
@@ -687,6 +695,8 @@ private fun GitDiffFileCard(
     onRevealLine: (Float) -> Unit = {},
     contextExpansionAllowed: Boolean = true,
     onRequestContextText: () -> Unit = {},
+    hunkAction: GitStageAction? = null,
+    onHunkAction: (GitDiffFile, Int, String, GitStageAction) -> Unit = { _, _, _, _ -> },
 ) {
     // A header stays at the top of the viewport while its own body passes underneath it. The next
     // header pushes it out, which is the same behaviour LazyColumn's stickyHeader gives, without
@@ -747,6 +757,22 @@ private fun GitDiffFileCard(
                 null
             }
             val hunks = remember(file.body) { parseGitDiffHunks(file.body) }
+            if (hunkAction != null && file.status != GitDiffFileStatus.Deleted && hunks.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().testTag("git-diff-hunk-actions-" + file.path),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    hunks.indices.forEach { index ->
+                        val patch = gitHunkPatch(file, index)
+                        if (patch != null) HarnessButton(
+                            text = (if (hunkAction == GitStageAction.Stage) "暂存" else "取消暂存") + "区块 ${index + 1}",
+                            onClick = { onHunkAction(file, index, patch, hunkAction) },
+                            testTag = "git-diff-hunk-${hunkAction.name.lowercase()}-${index + 1}-" + file.path,
+                            enabled = true,
+                            variant = HarnessButtonVariant.Ghost,
+                            size = HarnessControlSize.Compact,
+                        )
+                    }
+                }
+            }
             // Context comes from the working-tree file. The Index diff's new side lives in the index
             // instead, so the page disables expansion there rather than showing other content.
             val fullText = (previewFile as? GitPreviewFile.Ready)?.text

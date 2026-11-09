@@ -29,6 +29,36 @@ import kotlin.test.*
 @OptIn(ExperimentalTestApi::class)
 class GitChangesPanelInteractionTest {
     @Test
+    fun reviewDiffExposesValidatedHunkActionAndPassesSingleHunkPatch() {
+        var captured: String? = null
+        val binding = GitBinding(null, HostId("hunk-host"), 1, GitAccess.LocalReadOnly)
+        val repository = GitRepository(binding, "/fixture/project", "/fixture/project/.git", "/fixture/project/.git")
+        val state = GitState(
+            binding = binding,
+            selectedCwd = repository.root,
+            repository = GitRead.Ready(repository),
+            status = GitRead.Ready(GitStatusSnapshot(
+                listOf(GitChange("edited.kt", indexStatus = ' ', worktreeStatus = 'M')),
+                "refs/heads/main", "a".repeat(40))),
+            reviewDiff = GitRead.Ready(GitDiffSnapshot(
+                GitDiffRequest(source = GitDiffSource.WorkingTree), WORKTREE_PATCH, "a".repeat(40))),
+            stageAvailable = true,
+        )
+        runSkikoComposeUiTest(size = Size(640f, 800f)) {
+            setContent { HarnessTheme(themeMode = HarnessThemeMode.Light) {
+                GitChangesPanel(state, onHunkStageChange = { action, _, patch ->
+                    assertEquals(GitStageAction.Stage, action)
+                    captured = patch
+                })
+            } }
+            onNodeWithTag("git-diff-hunk-stage-1-edited.kt").performClick()
+        }
+        assertNotNull(captured)
+        assertTrue(captured!!.contains("diff --git a/edited.kt b/edited.kt"))
+        assertEquals(1, Regex("^@@ ", RegexOption.MULTILINE).findAll(captured!!).count())
+    }
+
+    @Test
     fun changesTabAppearsOnDemandClosesAndNeverWritesToTheRepository() {
         val fixture = GitChangesFixture()
         try {
@@ -49,7 +79,16 @@ class GitChangesPanelInteractionTest {
                 onNodeWithTag("git-changes-panel").assertIsDisplayed()
                 // Default filter is Codex's "unstaged" half, so only the worktree edit is listed.
                 onNodeWithTag("git-changes-file-edited.kt").assertExists()
-                onNodeWithTag("git-changes-file-added.kt").assertDoesNotExist()
+                onNodeWithTag("git-changes-stage-edited.kt").assertIsNotEnabled()
+                onNodeWithTag("git-changes-source").performClick()
+                onNodeWithTag("git-changes-source-workingtree").assertExists()
+                onNodeWithTag("git-changes-source-index").assertExists()
+                onNodeWithTag("git-changes-source-index").performMouseInput { click() }
+                waitUntil(timeoutMillis = 10_000) { fixture.backend.reviewReads.last() == GitDiffSource.Index }
+                onNodeWithTag("git-changes-file-added.kt").assertExists()
+                onNodeWithTag("git-changes-file-jump").performClick()
+                onNodeWithTag("git-changes-jump-added.kt").assertExists().performMouseInput { click() }
+                onNodeWithTag("git-changes-file-edited.kt").assertDoesNotExist()
                 onNodeWithTag("git-changes-empty").assertDoesNotExist()
 
                 // Switch to the staged half: only the staged file remains, and the diff read follows.
@@ -59,6 +98,7 @@ class GitChangesPanelInteractionTest {
                 onNodeWithTag("git-changes-filter-staged").performMouseInput { click() }
                 waitUntil { fixture.backend.reviewReads.last() == GitDiffSource.Index }
                 onNodeWithTag("git-changes-file-added.kt").assertExists()
+                onNodeWithTag("git-changes-unstage-added.kt").assertIsNotEnabled()
                 onNodeWithTag("git-changes-file-edited.kt").assertDoesNotExist()
 
                 // `ReviewOptionsMenuCompact` owns 刷新, so the header exposes it behind 查看选项
@@ -150,6 +190,9 @@ private fun ChangesFor(state: GitState, controller: GitController) {
     }
     GitChangesPanel(state, onSelectFilter = { filter ->
         controller.selectChangeFilter(filter)
+        controller.refreshReviewDiff()
+    }, onSelectSource = { source ->
+        controller.selectChangeFilter(if (source == GitDiffSource.Index) GitChangeFilter.Staged else GitChangeFilter.Unstaged)
         controller.refreshReviewDiff()
     }, onRefresh = { controller.refresh() })
 }

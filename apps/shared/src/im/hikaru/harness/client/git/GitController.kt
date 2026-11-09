@@ -208,7 +208,8 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         mutationBusy = true
         mutableState.value = state.value.copy(creationBusy = true, stageBusy = true,
             stage = GitStage.Applying(request), status = GitRead.Unselected, branches = GitRead.Unselected,
-            worktrees = GitRead.Unselected, diff = GitRead.Unselected, commitSnapshot = GitRead.Unselected)
+            worktrees = GitRead.Unselected, diff = GitRead.Unselected, reviewDiff = GitRead.Unselected,
+            commitSnapshot = GitRead.Unselected)
         var started = false
         val job = tasks.launch(start = CoroutineStart.LAZY) {
             started = true
@@ -298,7 +299,8 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         if (selected != null && uncertaintyKey(selected) == uncertaintyKey(repo)) {
             invalidate()
             mutableState.value = state.value.copy(status = GitRead.Unselected, branches = GitRead.Unselected,
-                worktrees = GitRead.Unselected, diff = GitRead.Unselected, commitSnapshot = GitRead.Unselected, selectedBranchRef = null)
+                worktrees = GitRead.Unselected, diff = GitRead.Unselected, reviewDiff = GitRead.Unselected,
+                commitSnapshot = GitRead.Unselected, selectedBranchRef = null)
             refreshData()
         } else if (selected == null && state.value.canRefresh && state.value.binding?.sameHost(repo.binding) == true) {
             invalidate()

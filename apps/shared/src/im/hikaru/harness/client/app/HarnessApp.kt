@@ -88,11 +88,14 @@ import im.hikaru.harness.client.git.GitBackend
 import im.hikaru.harness.client.git.GitBinding
 import im.hikaru.harness.client.git.GitController
 import im.hikaru.harness.client.git.GitDiffRequest
+import im.hikaru.harness.client.git.GitDiffSource
+import im.hikaru.harness.client.git.GitChangeFilter
 import im.hikaru.harness.client.git.GitChangesPanel
 import im.hikaru.harness.client.git.GitDiffSnapshot
 import im.hikaru.harness.client.git.diffSource
 import im.hikaru.harness.client.git.GitFailure
 import im.hikaru.harness.client.git.GitFailureKind
+import im.hikaru.harness.client.git.GitStageAction
 import im.hikaru.harness.client.git.GitReadException
 import im.hikaru.harness.client.git.GitRead
 import im.hikaru.harness.client.git.GitRepository
@@ -1288,8 +1291,9 @@ public fun HarnessApp(
             ptyController = ptyController, ptyState = ptyState,
             // GIT-01 review tab: a read-only projection of the app-owned GitController. The review
             // diff is its own read slot (`refreshReviewDiff`), so opening this tab or switching its
-            // stage filter never rewrites the Settings → Git page's diff source. It never stages,
-            // commits, checks out or creates a worktree.
+            // stage filter never rewrites the Settings → Git page's diff source. File-level staging
+            // uses the controller's fenced index-only API; the tab never commits, checks out or
+            // creates a worktree.
             changesContent = {
                 LaunchedEffect(git, gitState.selectedCwd, gitState.changeFilter, page) {
                     if (gitState.unavailableReason != null || gitState.repository !is GitRead.Ready) return@LaunchedEffect
@@ -1303,10 +1307,26 @@ public fun HarnessApp(
                         git.selectChangeFilter(filter)
                         git.refreshReviewDiff()
                     },
+                    onSelectSource = { source ->
+                        git.selectChangeFilter(if (source == GitDiffSource.Index) GitChangeFilter.Staged else GitChangeFilter.Unstaged)
+                        git.refreshReviewDiff()
+                    },
                     // `codex.review.refreshGitQueries` re-reads status, branches, diff and the review
                     // half in one pass; it is the controller's existing read-only refresh.
                     onRefresh = { git.refresh() },
                     onRequestPreviews = { paths -> git.refreshPreviewFiles(paths) },
+                    onStageChange = { action, path ->
+                        when (action) {
+                            GitStageAction.Stage -> git.stageFile(path)
+                            GitStageAction.Unstage -> git.unstageFile(path)
+                        }
+                    },
+                    onHunkStageChange = { action, path, patch ->
+                        when (action) {
+                            GitStageAction.Stage -> git.stageHunk(path, patch)
+                            GitStageAction.Unstage -> git.unstageHunk(path, patch)
+                        }
+                    },
                 )
             }) }
     }

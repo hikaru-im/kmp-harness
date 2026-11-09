@@ -1,5 +1,6 @@
 package im.hikaru.harness.client.git
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,25 +26,30 @@ import im.hikaru.harness.ui.foundation.*
  * (`review-side-panel-tab-content.tsx` + `review-content.tsx`): a stage-filter header with per-filter
  * counts, the changed-file list (`review-file-tree.tsx`) and the diff area.
  *
- * Nothing here writes: no stage/unstage, commit, checkout or worktree creation. The patch and the
- * file list are the ones the app-owned [GitController] already read; this panel never starts a read
- * on its own, and [onSelectFilter]/[onRefresh] are read-only controller calls supplied by the host.
+ * The panel only exposes the app-owned stage/unstage capability for the visible file; it never
+ * commits, checks out or creates a worktree. The patch and file list are the controller's reads, and
+ * [onSelectFilter]/[onRefresh]/[onStageChange] are supplied by the host so this composable owns no IO.
  */
 @Composable
 public fun GitChangesPanel(
     state: GitState,
     modifier: Modifier = Modifier,
     onSelectFilter: (GitChangeFilter) -> Unit = {},
+    onSelectSource: (GitDiffSource) -> Unit = {},
     onRefresh: () -> Unit = {},
     onRequestPreviews: (List<String>) -> Unit = {},
+    onStageChange: (GitStageAction, String) -> Unit = { _, _ -> },
+    onHunkStageChange: (GitStageAction, String, String) -> Unit = { _, _, _ -> },
 ) {
     val filter = state.changeFilter
     val ready = (state.status as? GitRead.Ready<GitStatusSnapshot>)?.value
     val readyDiff = (state.reviewDiff as? GitRead.Ready<GitDiffSnapshot>)?.value
         ?.takeIf { it.request.source == filter.diffSource }
     val document = if (readyDiff != null) remember(readyDiff.patch) { parseGitDiff(readyDiff.patch) } else null
+    var selectedPath by remember(filter, readyDiff?.patch) { mutableStateOf<String?>(null) }
     Column(modifier.fillMaxSize().testTag("git-changes-panel")) {
-        GitChangesHeader(state, ready?.changes.orEmpty(), document, onSelectFilter, onRefresh)
+        GitChangesHeader(state, ready?.changes.orEmpty(), document, onSelectFilter, onSelectSource,
+            onSelectPath = { selectedPath = it }, onRefresh)
         when (val content = gitChangesContent(state)) {
             is GitChangesContent.Unavailable -> GitChangesError(content.reason, refresh = null)
             // `ReviewLoadingState` is a spinner *and* its label; Harness's loading state is that pair.
@@ -66,9 +72,16 @@ public fun GitChangesPanel(
                 Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).testTag("git-changes-files")
                     .verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    content.visible.forEach { change -> GitChangesFileRow(change, document) }
+                    content.visible.forEach { change ->
+                        GitChangesFileRow(change, document, state.canStage,
+                            onSelect = { selectedPath = change.path }, onStageChange)
+                    }
                 }
-                Box(Modifier.fillMaxWidth().weight(1f)) { GitChangesDiff(state, document, onRefresh, onRequestPreviews) }
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    GitChangesDiff(state, document, onRefresh, onRequestPreviews, selectedPath,
+                        onRevealConsumed = { selectedPath = null },
+                        onHunkStageChange = onHunkStageChange)
+                }
             }
         }
     }
@@ -86,12 +99,16 @@ private fun GitChangesHeader(
     changes: List<GitChange>,
     document: GitDiffDocument?,
     onSelectFilter: (GitChangeFilter) -> Unit,
+    onSelectSource: (GitDiffSource) -> Unit,
+    onSelectPath: (String) -> Unit,
     onRefresh: () -> Unit,
 ) {
     val counts = gitChangesCounts(changes)
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).testTag("git-changes-header"),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         DiffFilterDropdown(state.changeFilter, counts, onSelectFilter)
+        ReviewSourceDropdown(state.changeFilter.diffSource, onSelectSource)
+        document?.let { GitChangesFileJumpDropdown(it, onSelectPath) }
         val stats = document?.let { gitChangesLineStats(it) }
         if (stats != null) HarnessText(stats, Modifier.testTag("git-changes-stats"),
             style = MaterialTheme.typography.bodySmall, color = HarnessTokens.Colors.TextMuted)
@@ -139,6 +156,73 @@ private fun DiffFilterDropdown(
 }
 
 /**
+ * Codex's Review source control is separate from the stage filter. Only the two local sources are
+ * offered here because those are the sources backed by the current verified Git contract; cloud,
+ * last-turn, commit and PR sources are not fabricated as empty data.
+ */
+@Composable
+private fun ReviewSourceDropdown(selected: GitDiffSource, onSelect: (GitDiffSource) -> Unit) {
+    var expanded by remember(selected) { mutableStateOf(false) }
+    val options = listOf(GitDiffSource.WorkingTree, GitDiffSource.Index)
+    HarnessMenu(
+        expanded = expanded,
+        entries = options.map { source ->
+            HarnessMenuEntry.Item(
+                key = source.name,
+                text = when (source) {
+                    GitDiffSource.WorkingTree -> "工作树"
+                    GitDiffSource.Index -> "暂存区"
+                    GitDiffSource.BaseBranch -> "基准分支"
+                },
+                selected = source == selected,
+                testTag = "git-changes-source-" + source.name.lowercase(),
+            )
+        },
+        onExpandedChange = { expanded = it },
+        onSelect = { key -> options.firstOrNull { it.name == key }?.let(onSelect) },
+        popupModifier = Modifier.testTag("git-changes-source-menu"),
+        anchor = { toggle -> HarnessButton(
+            text = when (selected) {
+                GitDiffSource.WorkingTree -> "工作树"
+                GitDiffSource.Index -> "暂存区"
+                GitDiffSource.BaseBranch -> "基准分支"
+            },
+            onClick = toggle,
+            testTag = "git-changes-source",
+            variant = HarnessButtonVariant.Ghost,
+            size = HarnessControlSize.Compact,
+        ) },
+    )
+}
+
+@Composable
+private fun GitChangesFileJumpDropdown(document: GitDiffDocument, onSelect: (String) -> Unit) {
+    var expanded by remember(document) { mutableStateOf(false) }
+    val files = document.files
+    if (files.isEmpty()) return
+    HarnessMenu(
+        expanded = expanded,
+        entries = files.map { file ->
+            HarnessMenuEntry.Item(
+                key = file.path,
+                text = file.path,
+                testTag = "git-changes-jump-" + file.path,
+            )
+        },
+        onExpandedChange = { expanded = it },
+        onSelect = { key -> files.firstOrNull { it.path == key }?.let { onSelect(it.path) } },
+        popupModifier = Modifier.testTag("git-changes-file-jump-menu"),
+        anchor = { toggle -> HarnessButton(
+            text = "跳转文件",
+            onClick = toggle,
+            testTag = "git-changes-file-jump",
+            variant = HarnessButtonVariant.Ghost,
+            size = HarnessControlSize.Compact,
+        ) },
+    )
+}
+
+/**
  * `ReviewOptionsMenuCompact`: 查看选项 (`.header.moreOptions`) with the 刷新 item
  * (`.refreshGitQueries` / `.inProgress`). The diff-wide options (换行 / 展开全部差异 / 加载完整文件)
  * belong to the patch view itself, which already renders them for the document it holds.
@@ -182,9 +266,22 @@ public fun GitChangeFilter.count(counts: GitChangesCounts): Int = when (this) {
 }
 
 @Composable
-private fun GitChangesFileRow(change: GitChange, document: GitDiffDocument?) {
+private fun GitChangesFileRow(
+    change: GitChange,
+    document: GitDiffDocument?,
+    canStage: Boolean,
+    onSelect: () -> Unit,
+    onStageChange: (GitStageAction, String) -> Unit,
+) {
     val file = document?.files?.firstOrNull { it.path == change.path || it.originalPath == change.path }
-    Row(Modifier.fillMaxWidth().testTag("git-changes-file-" + change.path),
+    val action = when {
+        GitStageAction.Stage.accepts(change) -> GitStageAction.Stage
+        GitStageAction.Unstage.accepts(change) -> GitStageAction.Unstage
+        else -> null
+    }
+    Row(Modifier.fillMaxWidth()
+        .clickable(onClick = onSelect)
+        .testTag("git-changes-file-" + change.path),
         verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.width(56.dp)) {
             GitStatusLabel(when {
@@ -204,6 +301,14 @@ private fun GitChangesFileRow(change: GitChange, document: GitDiffDocument?) {
                 "+${file.addedLines} −${file.deletedLines}", style = MaterialTheme.typography.bodySmall,
                 color = HarnessTokens.Colors.TextMuted)
         }
+        if (action != null) HarnessButton(
+            text = if (action == GitStageAction.Stage) "暂存" else "取消暂存",
+            onClick = { onStageChange(action, change.path) },
+            enabled = canStage,
+            testTag = "git-changes-${action.name.lowercase()}-${change.path}",
+            variant = HarnessButtonVariant.Ghost,
+            size = HarnessControlSize.Compact,
+        )
     }
 }
 
@@ -213,6 +318,9 @@ private fun GitChangesDiff(
     document: GitDiffDocument?,
     onRefresh: () -> Unit,
     onRequestPreviews: (List<String>) -> Unit,
+    revealPath: String? = null,
+    onRevealConsumed: () -> Unit = {},
+    onHunkStageChange: (GitStageAction, String, String) -> Unit = { _, _, _ -> },
 ) {
     val diff = state.reviewDiff
     when {
@@ -233,6 +341,12 @@ private fun GitChangesDiff(
                 onRequestPreviews = onRequestPreviews,
                 onRefresh = onRefresh,
                 refreshDisabled = !state.canRefresh || state.pageMutationBusy,
+                revealPath = revealPath,
+                onRevealConsumed = onRevealConsumed,
+                hunkAction = if (state.canStage) {
+                    if (state.changeFilter == GitChangeFilter.Unstaged) GitStageAction.Stage else GitStageAction.Unstage
+                } else null,
+                onHunkAction = { file, _, patch, action -> onHunkStageChange(action, file.path, patch) },
                 // Expansion/context widening is a diff-source feature; review keeps the patch it read.
                 contextExpansionAllowed = false)
         }
