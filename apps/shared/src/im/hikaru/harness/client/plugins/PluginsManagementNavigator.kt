@@ -25,15 +25,12 @@ import im.hikaru.harness.client.page.LocalWorkspaceNavigatorVisible
 /**
  * Page-owned navigator of the plugins page.
  *
- * The 2026-10-06 Codex capture (docs/desktop-ui/reference/captures/2026-10-06-user-pages/
- * plugins-marketplace.png) measures this column as: a title strip whose search action sits at the
- * right edge, two 30px leading-glyph rows on a 1px pitch, a muted group heading, then 30px item rows
- * with a 16px leading glyph and their label at +40. Every value below is taken from that capture
- * normalized to the navigator origin (x 52, y 74), the same method Batch P used for the scheduled
- * navigator.
+ * The navigator exposes the Codex management categories above this app's plugin-only search and
+ * filters. Only Plugins is backed by a Host adapter today; the other categories remain visibly
+ * disabled until their own read contracts exist.
  *
- * The group lists this app own registered plugins, read from the bound Host. It never renders an
- * entry the Host did not report, and it shows the truthful unavailable/error/empty state instead.
+ * The group lists this app's registered plugins, read from the bound Host. It never renders an entry
+ * the Host did not report, and it shows the truthful unavailable/error/empty state instead.
  */
 @Composable
 public fun PluginsManagementNavigator(
@@ -55,6 +52,30 @@ public fun PluginsManagementNavigator(
             Row(Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Spacing.Two),
                 verticalAlignment = Alignment.CenterVertically) {
                 HarnessText("插件", Modifier.weight(1f))
+            }
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(HarnessTokens.Control.NavigatorRowGap),
+            ) {
+                PluginsManagementCategoryRow(
+                    label = "Plugins",
+                    selected = true,
+                    enabled = true,
+                    testTag = "plugins-management-tab-plugins",
+                )
+                listOf(
+                    "Apps" to "plugins-management-tab-apps",
+                    "MCPs" to "plugins-management-tab-mcps",
+                    "Skills" to "plugins-management-tab-skills",
+                    "Marketplace" to "plugins-management-tab-marketplace",
+                ).forEach { (label, testTag) ->
+                    PluginsManagementCategoryRow(
+                        label = label,
+                        selected = false,
+                        enabled = false,
+                        testTag = testTag,
+                    )
+                }
             }
             HarnessSearchField(
                 value = state.searchQuery, onValueChange = onQueryChange,
@@ -111,6 +132,38 @@ private fun InstalledPluginsState.visibleFilterIsEmpty(): Boolean =
 private fun HarnessNavigatorHint(text: String, danger: Boolean = false) {
     HarnessText(text, Modifier.padding(horizontal = HarnessTokens.Spacing.Two),
         color = if (danger) HarnessTokens.Colors.Danger else HarnessTokens.Colors.TextMuted, maxLines = 3)
+}
+
+/**
+ * Top-level management category. Unsupported categories remain disabled without a standing reason
+ * string; their eventual adapters will own the content and enabled state when they exist.
+ */
+@Composable
+private fun PluginsManagementCategoryRow(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    testTag: String,
+) {
+    val tint = if (enabled) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextDisabled
+    Row(
+        Modifier.fillMaxWidth()
+            .height(HarnessTokens.Control.NavRow)
+            .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
+            .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+            .clickable(enabled = enabled, role = Role.Button, onClick = {})
+            .semantics {
+                this.testTag = testTag
+                this.selected = selected
+                if (!enabled) disabled()
+            }
+            .padding(horizontal = HarnessTokens.Spacing.Two),
+        horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HarnessIcon(HarnessIconName.Plug, tint = tint, size = HarnessTokens.Control.NavigatorIcon)
+        HarnessText(label, color = tint, maxLines = 1)
+    }
 }
 
 /**

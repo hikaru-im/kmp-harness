@@ -72,6 +72,47 @@ class PluginsPageInteractionTest {
         }
     }
 
+    @Test fun managementCategoriesStayHonestAtBothWidths() {
+        listOf(Size(1440f, 900f), Size(600f, 800f)).forEach { size ->
+            runSkikoComposeUiTest(size = size) {
+                val repository = PluginsPageFixtureRepository()
+                val connection = PluginsPageTestConnection("categories-${size.width}")
+                setContent {
+                    val app = @Composable {
+                        HarnessApp(connection,
+                            initialDestination = if (size.width == 600f) HarnessDestination.Account
+                            else HarnessDestination.PluginInventory,
+                            installedPluginRepository = repository,
+                            connectionTransport = ConnectionTransport.Local, themeMode = HarnessThemeMode.Light)
+                    }
+                    if (size.width == 600f) PluginsPageWindow(content = app) else app()
+                }
+                if (size.width == 600f) {
+                    pluginsPageAwaitTag("app-rail")
+                    pluginsPageMouseClick("rail-plugins")
+                    pluginsPageAwaitEnabled("plugins-search")
+                    pluginsPageToggleNavigator()
+                    pluginsPageSettle()
+                } else {
+                    pluginsPageAwaitEnabled("plugins-search")
+                }
+                pluginsPageAwaitTag("plugins-management-tab-plugins")
+                onAllNodesWithTag("plugins-management-tab-plugins")
+                    .assertAll(isSelected()).assertAll(isEnabled())
+                listOf("apps", "mcps", "skills", "marketplace").forEach { category ->
+                    onAllNodesWithTag("plugins-management-tab-$category")
+                        .assertAll(isNotEnabled())
+                        .onFirst()
+                        .performMouseInput { click() }
+                }
+                onAllNodesWithTag("plugins-management-tab-plugins").assertAll(isSelected())
+                onNodeWithTag(pluginsPageRowTag("installed-plugin-categories-${size.width}-0"))
+                    .assertIsDisplayed()
+                if (size.width == 600f) pluginsPageToggleNavigator()
+            }
+        }
+    }
+
     @Test fun compactPluginsRouteFloatsItsNavigatorAndKeepsTheRail() =
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             val repository = PluginsPageFixtureRepository()
