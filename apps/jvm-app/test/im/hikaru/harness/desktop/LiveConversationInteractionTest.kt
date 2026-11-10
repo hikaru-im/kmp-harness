@@ -713,8 +713,12 @@ class LiveConversationInteractionTest {
         setContent { HarnessTheme { LiveThreadSurface(
             readyState().copy(selectedSessionId = SessionId("thread"), history = listOf(answer),
                 historyPhase = ConversationDataPhase.Ready), onRetry = {}) } }
-        listOf("朗读", "评价回复", "从这里创建聊天分支").forEach { label ->
+        listOf("喜欢", "不喜欢", "分叉").forEach { label ->
             onNodeWithContentDescription(label, useUnmergedTree = true).assertIsNotEnabled()
+            onNodeWithContentDescription("$label（暂不可用）", useUnmergedTree = true).assertDoesNotExist()
+        }
+        listOf("朗读", "评价回复", "从这里创建聊天分支").forEach { label ->
+            onNodeWithContentDescription(label, useUnmergedTree = true).assertDoesNotExist()
             onNodeWithContentDescription("$label（暂不可用）", useUnmergedTree = true).assertDoesNotExist()
         }
     }

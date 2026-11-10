@@ -280,9 +280,9 @@ internal fun MessageCard(
             } else if (showActions && text.isNotBlank()) {
                 Row(Modifier.padding(top = 6.dp).offset(x = (-4).dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     ConversationActionButton(ConversationGlyph.Copy, "复制", { clipboard.setText(AnnotatedString(text)) })
-                    ConversationActionButton(ConversationGlyph.Speaker, "朗读")
-                    ConversationActionButton(ConversationGlyph.Feedback, "评价回复")
-                    ConversationActionButton(ConversationGlyph.Branch, "从这里创建聊天分支")
+                    ConversationActionButton(ConversationGlyph.Hand, "喜欢")
+                    ConversationActionButton(ConversationGlyph.Feedback, "不喜欢")
+                    ConversationActionButton(ConversationGlyph.Branch, "分叉")
                 }
             }
         }
