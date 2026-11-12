@@ -92,6 +92,7 @@ public object PromptSectionOrders {
     public const val HarnessIdentity: Int = -1000
     public const val DeploymentPersonaPrefix: Int = 0
     public const val AgentInstructions: Int = 100
+    public const val McpServers: Int = 3100
     public const val DeploymentPersonaSuffix: Int = 10200
 }
 

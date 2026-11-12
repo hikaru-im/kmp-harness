@@ -3,7 +3,12 @@ package im.hikaru.harness.profile.file
 import im.hikaru.contracts.harness.identity.HostDescription
 import im.hikaru.harness.boot.DesktopProfile
 import im.hikaru.harness.boot.HarnessHost
+import im.hikaru.harness.api.gateway.mcp.McpApiKey
+import im.hikaru.harness.api.gateway.mcp.registerMcpApi
+import im.hikaru.harness.runtime.service.ServiceKey
 import im.hikaru.harness.loader.PluginCatalog
+import im.hikaru.harness.home.HarnessHome
+import im.hikaru.harness.mcp.client.McpRegistryKey
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -23,6 +28,8 @@ public data class ProfileReloadFailure(
     val occurredAt: Instant,
     val cause: Throwable,
 )
+
+internal object McpAuthorizationProviderKey : ServiceKey<McpAuthorizationProvider>("mcp-authorization-provider")
 
 /** Host-owned JVM bootstrap session for one file-backed profile. */
 public class ProfiledHarnessHost private constructor(
@@ -47,6 +54,10 @@ public class ProfiledHarnessHost private constructor(
 
     public val isWatching: Boolean
         get() = watcher?.isActive == true
+
+    /** Filesystem root owned by this host and safe for management adapters to inspect. */
+    public val home: HarnessHome
+        get() = profileLoader.home
 
     init {
         require(pollMillis > 0) { "Profile watcher poll interval must be positive" }
@@ -124,6 +135,7 @@ public class ProfiledHarnessHost private constructor(
             pollMillis: Long = 250,
             onReloadFailure: (ProfileReloadFailure) -> Unit = {},
             defaultCwd: String? = null,
+            authorizationProvider: McpAuthorizationProvider? = null,
         ): ProfiledHarnessHost {
             val loaded = profileLoader.load(request)
             val host =
@@ -135,8 +147,9 @@ public class ProfiledHarnessHost private constructor(
                     ),
                     defaultCwd = defaultCwd,
                 )
+            authorizationProvider?.let { host.runtime.context.provide(McpAuthorizationProviderKey, it) }
             return try {
-                ProfiledHarnessHost(
+                val profiled = ProfiledHarnessHost(
                     host = host,
                     profileLoader = profileLoader,
                     request = request,
@@ -144,6 +157,16 @@ public class ProfiledHarnessHost private constructor(
                     pollMillis = pollMillis,
                     onReloadFailure = onReloadFailure,
                 )
+                host.runtime.context.provide(
+                    McpApiKey,
+                    McpProfilePatchMutationService(
+                        profiled,
+                        registry = host.runtime.context.get(McpRegistryKey),
+                        authorizationProvider = authorizationProvider,
+                    ),
+                )
+                host.gateway.registerMcpApi(host.runtime.context)
+                profiled
             } catch (error: Throwable) {
                 try {
                     host.close()

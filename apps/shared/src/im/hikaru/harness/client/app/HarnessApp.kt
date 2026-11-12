@@ -79,6 +79,10 @@ import im.hikaru.harness.client.plugins.InstalledPluginsAction
 import im.hikaru.harness.client.plugins.InstalledPluginsPage
 import im.hikaru.harness.client.plugins.InstalledPluginDetailPage
 import im.hikaru.harness.client.plugins.PluginsManagementNavigator
+import im.hikaru.harness.client.plugins.PluginsManagementCategory
+import im.hikaru.harness.client.plugins.McpExternalUrlOpener
+import im.hikaru.harness.client.plugins.McpManagementController
+import im.hikaru.harness.client.plugins.McpManagementPage
 import im.hikaru.harness.client.plugins.PluginScope
 import im.hikaru.harness.client.plugins.PluginAccountId
 import im.hikaru.harness.client.plugins.PluginId
@@ -281,6 +285,7 @@ public fun HarnessApp(
     shellLayoutRepository: ShellLayoutRepository? = null,
     shortcutsRepository: ShortcutsRepository? = null,
     installedPluginRepository: InstalledPluginRepository = UnavailablePluginRepository,
+    onOpenExternalUrl: McpExternalUrlOpener? = null,
     composerAttachmentPicker: (() -> List<ComposerAttachment>)? = null,
     composerAttachmentReader: ComposerAttachmentReader = im.hikaru.harness.client.conversation.UnavailableComposerAttachmentReader,
     remoteStatus: RemoteConnectionStatus? = null,
@@ -652,6 +657,7 @@ public fun HarnessApp(
     val pluginAccess = pluginScope?.let { scope ->
         verifiedConversationConnection?.let { PluginAccessBinding(scope, it, transport) }
     }
+    var pluginsCategory by remember { mutableStateOf(PluginsManagementCategory.Plugins) }
     val managedPlugins = installedPluginRepository as? LocalPluginManagementRepository
     val plugins = remember(installedPluginRepository) {
         InstalledPluginsController(conversationScope, installedPluginRepository)
@@ -659,6 +665,22 @@ public fun HarnessApp(
     val observedPluginsState = key(plugins) { plugins.state.collectAsState().value }
     val pluginsState = observedPluginsState.takeIf { it.scope == pluginScope }
         ?: InstalledPluginsState(scope = pluginScope)
+    val mcpManagement = remember(conversationScope, onOpenExternalUrl, toasts) {
+        McpManagementController(
+            conversationScope,
+            openExternalUrl = onOpenExternalUrl,
+            onError = { toasts.show(it, isError = true) },
+        )
+    }
+    val observedMcpState = key(mcpManagement) { mcpManagement.state.collectAsState().value }
+    val mcpState = observedMcpState.takeIf { it.scope == pluginScope }
+        ?: im.hikaru.harness.client.plugins.McpManagementState(scope = pluginScope)
+    DisposableEffect(mcpManagement) {
+        onDispose { mcpManagement.close() }
+    }
+    LaunchedEffect(mcpManagement, pluginScope, verifiedConversationConnection, transport) {
+        mcpManagement.bind(pluginScope, verifiedConversationConnection?.mcp)
+    }
     DisposableEffect(plugins, managedPlugins) {
         onDispose {
             managedPlugins?.bindAccess(null)
@@ -970,9 +992,13 @@ public fun HarnessApp(
             attachments = conversationState.attachments,
             onAddAttachment = composerAttachmentPicker?.takeIf { transport == ConnectionTransport.Local }?.let { picker ->
                 {
-                    runCatching { picker() }
-                        .onSuccess(conversation::addAttachments)
-                        .onFailure { conversation.setAttachmentError(it.message ?: "无法选择附件") }
+                    try {
+                        conversation.addAttachments(picker())
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        conversation.setAttachmentError(error.message ?: "无法选择附件")
+                    }
                 }
             },
             onRemoveAttachment = conversation::removeAttachment,
@@ -1208,9 +1234,13 @@ public fun HarnessApp(
             onAddAttachment = composerAttachmentPicker?.takeIf { transport == ConnectionTransport.Local }?.let { picker ->
                 {
                     if (bound && stillBound()) {
-                        runCatching { picker() }
-                            .onSuccess(paneController::addAttachments)
-                            .onFailure { paneController.setAttachmentError(it.message ?: "无法选择附件") }
+                        try {
+                            paneController.addAttachments(picker())
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            paneController.setAttachmentError(error.message ?: "无法选择附件")
+                        }
                     }
                 }
             },
@@ -1475,7 +1505,12 @@ public fun HarnessApp(
                         testTag = SettingsPanelCatalog.panelTestTag("plugins")
                     },
                 ) {
-                    InstalledPluginsPage(pluginsState, pluginAction)
+                    if (pluginsCategory == PluginsManagementCategory.Mcps) {
+                        McpManagementPage(mcpState, mcpManagement,
+                            externalUrlAvailable = onOpenExternalUrl != null)
+                    } else {
+                        InstalledPluginsPage(pluginsState, pluginAction)
+                    }
                 }
                 is PageId.PluginDetail -> InstalledPluginDetailPage(pluginsState, pluginAction)
 
@@ -1644,6 +1679,11 @@ public fun HarnessApp(
                         },
                         onSelect = { pluginAction(InstalledPluginsAction.Select(it)) },
                         onRetry = { pluginAction(InstalledPluginsAction.Refresh) },
+                        selectedCategory = pluginsCategory,
+                        onSelectCategory = { category ->
+                            pluginsCategory = category
+                            dismissFloatingPluginsNavigator()
+                        },
                     )
                 }
             },

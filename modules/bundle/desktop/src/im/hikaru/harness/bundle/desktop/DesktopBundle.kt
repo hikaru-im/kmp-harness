@@ -29,6 +29,12 @@ import im.hikaru.harness.llm.LlmPluginDefinition
 import im.hikaru.harness.llm.koog.openai.OPENAI_KOOG_PLUGIN_NAME
 import im.hikaru.harness.llm.koog.openai.OpenAiKoogPluginDefinition
 import im.hikaru.harness.llm.retry.LlmRetryPluginDefinition
+import im.hikaru.harness.mcp.client.MCP_CLIENT_PLUGIN_NAME
+import im.hikaru.harness.mcp.client.MCP_REGISTRY_PLUGIN_NAME
+import im.hikaru.harness.mcp.client.McpClientPluginDefinition
+import im.hikaru.harness.mcp.client.McpRegistryPluginDefinition
+import im.hikaru.harness.mcp.resources.MCP_RESOURCES_PLUGIN_NAME
+import im.hikaru.harness.mcp.resources.McpResourcesPluginDefinition
 import im.hikaru.harness.loader.Entry
 import im.hikaru.harness.loader.PluginCatalog
 import im.hikaru.harness.loader.PluginDefinition
@@ -105,6 +111,9 @@ private fun desktopPluginCatalog(defaultHarnessHome: HarnessHome): PluginCatalog
             ),
             ToolSchedulePluginDefinition,
             LlmRetryPluginDefinition,
+            McpRegistryPluginDefinition,
+            McpResourcesPluginDefinition,
+            McpClientPluginDefinition,
         )
     )
 
@@ -142,6 +151,8 @@ internal fun desktopProfileBundle(isWindows: Boolean): ProfileBundle =
                             Entry(SETTINGS_FILE_PLUGIN_NAME, SETTINGS_FILE_PLUGIN_NAME),
                             Entry(CREDENTIALS_LOCAL_PLUGIN_NAME, CREDENTIALS_LOCAL_PLUGIN_NAME),
                             Entry(LLM_PLUGIN_NAME, LLM_PLUGIN_NAME),
+                            Entry(MCP_REGISTRY_PLUGIN_NAME, MCP_REGISTRY_PLUGIN_NAME),
+                            Entry(MCP_RESOURCES_PLUGIN_NAME, MCP_RESOURCES_PLUGIN_NAME),
                             Entry(OPENAI_KOOG_PLUGIN_NAME, OPENAI_KOOG_PLUGIN_NAME),
                             Entry("session", "session"),
                             Entry("agent", "agent"),

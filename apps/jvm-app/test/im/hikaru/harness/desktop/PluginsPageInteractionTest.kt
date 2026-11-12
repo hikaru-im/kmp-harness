@@ -99,12 +99,13 @@ class PluginsPageInteractionTest {
                 pluginsPageAwaitTag("plugins-management-tab-plugins")
                 onAllNodesWithTag("plugins-management-tab-plugins")
                     .assertAll(isSelected()).assertAll(isEnabled())
-                listOf("apps", "mcps", "skills", "marketplace").forEach { category ->
+                listOf("apps", "skills", "marketplace").forEach { category ->
                     onAllNodesWithTag("plugins-management-tab-$category")
                         .assertAll(isNotEnabled())
                         .onFirst()
                         .performMouseInput { click() }
                 }
+                onAllNodesWithTag("plugins-management-tab-mcps").assertAll(isEnabled())
                 onAllNodesWithTag("plugins-management-tab-plugins").assertAll(isSelected())
                 onNodeWithTag(pluginsPageRowTag("installed-plugin-categories-${size.width}-0"))
                     .assertIsDisplayed()

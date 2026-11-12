@@ -49,6 +49,9 @@ import im.hikaru.harness.desktop.connection.LocalConnection
 import im.hikaru.harness.desktop.createOwnedAccount
 import im.hikaru.harness.desktop.openDesktopResources
 import im.hikaru.harness.desktop.shutdownDesktopResources
+import im.hikaru.harness.client.plugins.McpExternalUrlOpener
+import java.awt.Desktop
+import java.net.URI
 import im.hikaru.harness.desktop.window.DesktopHarnessWindow
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
 import im.hikaru.harness.ui.foundation.HarnessConfirmDialog
@@ -268,6 +271,17 @@ fun main(args: Array<String>) {
                     gitBackend = gitBackend,
                     managedWorktreeRepository = managedWorktrees,
                     installedPluginRepository = installedPlugins,
+                    onOpenExternalUrl = McpExternalUrlOpener { value ->
+                        val uri = runCatching { URI(value) }.getOrNull() ?: return@McpExternalUrlOpener false
+                        if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank() ||
+                            uri.rawUserInfo != null || uri.rawFragment != null ||
+                            (uri.port != -1 && uri.port !in 1..65_535)
+                        ) return@McpExternalUrlOpener false
+                        val desktop = runCatching { Desktop.getDesktop() }.getOrNull()
+                            ?.takeIf { it.isSupported(Desktop.Action.BROWSE) }
+                            ?: return@McpExternalUrlOpener false
+                        runCatching { desktop.browse(uri) }.isSuccess
+                    },
                     composerAttachmentPicker = ::chooseComposerAttachments,
                     composerAttachmentReader = DesktopComposerAttachmentReader,
                     localProjectRepository = localProjectRepository,

@@ -26,12 +26,14 @@ import im.hikaru.harness.client.page.LocalWorkspaceNavigatorVisible
  * Page-owned navigator of the plugins page.
  *
  * The navigator exposes the Codex management categories above this app's plugin-only search and
- * filters. Only Plugins is backed by a Host adapter today; the other categories remain visibly
- * disabled until their own read contracts exist.
+ * filters. Plugins and MCPs have Host-backed pages; the other categories remain visibly disabled
+ * until their own read contracts exist.
  *
  * The group lists this app's registered plugins, read from the bound Host. It never renders an entry
  * the Host did not report, and it shows the truthful unavailable/error/empty state instead.
  */
+public enum class PluginsManagementCategory { Plugins, Mcps }
+
 @Composable
 public fun PluginsManagementNavigator(
     state: InstalledPluginsState,
@@ -39,6 +41,8 @@ public fun PluginsManagementNavigator(
     onSetEnabledOnly: (Boolean) -> Unit,
     onSelect: (PluginId) -> Unit,
     onRetry: () -> Unit,
+    selectedCategory: PluginsManagementCategory = PluginsManagementCategory.Plugins,
+    onSelectCategory: (PluginsManagementCategory) -> Unit = {},
 ) {
     val list = state.list
     Column(
@@ -59,13 +63,25 @@ public fun PluginsManagementNavigator(
             ) {
                 PluginsManagementCategoryRow(
                     label = "Plugins",
-                    selected = true,
+                    selected = selectedCategory == PluginsManagementCategory.Plugins,
                     enabled = true,
                     testTag = "plugins-management-tab-plugins",
+                    onClick = { onSelectCategory(PluginsManagementCategory.Plugins) },
+                )
+                PluginsManagementCategoryRow(
+                    label = "Apps",
+                    selected = false,
+                    enabled = false,
+                    testTag = "plugins-management-tab-apps",
+                )
+                PluginsManagementCategoryRow(
+                    label = "MCPs",
+                    selected = selectedCategory == PluginsManagementCategory.Mcps,
+                    enabled = true,
+                    testTag = "plugins-management-tab-mcps",
+                    onClick = { onSelectCategory(PluginsManagementCategory.Mcps) },
                 )
                 listOf(
-                    "Apps" to "plugins-management-tab-apps",
-                    "MCPs" to "plugins-management-tab-mcps",
                     "Skills" to "plugins-management-tab-skills",
                     "Marketplace" to "plugins-management-tab-marketplace",
                 ).forEach { (label, testTag) ->
@@ -144,6 +160,7 @@ private fun PluginsManagementCategoryRow(
     selected: Boolean,
     enabled: Boolean,
     testTag: String,
+    onClick: () -> Unit = {},
 ) {
     val tint = if (enabled) HarnessTokens.Colors.Text else HarnessTokens.Colors.TextDisabled
     Row(
@@ -151,7 +168,7 @@ private fun PluginsManagementCategoryRow(
             .height(HarnessTokens.Control.NavRow)
             .clip(RoundedCornerShape(HarnessTokens.Control.NavigatorRowRadius))
             .background(if (selected) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
-            .clickable(enabled = enabled, role = Role.Button, onClick = {})
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics {
                 this.testTag = testTag
                 this.selected = selected

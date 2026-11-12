@@ -2,9 +2,21 @@ package im.hikaru.harness.desktop.connection
 
 import im.hikaru.contracts.common.ApiResult
 import im.hikaru.contracts.harness.identity.HostDescription
+import im.hikaru.contracts.harness.mcp.McpAuthenticateRequest
+import im.hikaru.contracts.harness.mcp.McpAuthenticateResponse
+import im.hikaru.contracts.harness.mcp.McpEnabledRequest
+import im.hikaru.contracts.harness.mcp.McpListResponse
+import im.hikaru.contracts.harness.mcp.McpMutationResponse
+import im.hikaru.contracts.harness.mcp.McpRemoveRequest
+import im.hikaru.contracts.harness.mcp.McpUpsertRequest
 import im.hikaru.harness.api.gateway.ApiEndpoint
 import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.host.HostDescribeEndpoint
+import im.hikaru.harness.api.gateway.mcp.McpAuthenticateEndpoint
+import im.hikaru.harness.api.gateway.mcp.McpEnabledEndpoint
+import im.hikaru.harness.api.gateway.mcp.McpListEndpoint
+import im.hikaru.harness.api.gateway.mcp.McpRemoveEndpoint
+import im.hikaru.harness.api.gateway.mcp.McpUpsertEndpoint
 import im.hikaru.harness.api.gateway.session.SessionCancelEndpoint
 import im.hikaru.harness.api.gateway.session.SessionCancelRequest
 import im.hikaru.harness.api.gateway.session.SessionForkEndpoint
@@ -28,6 +40,7 @@ import im.hikaru.harness.api.gateway.session.SessionBackgroundCloseInputEndpoint
 import im.hikaru.harness.api.gateway.session.SessionBackgroundCancelEndpoint
 import im.hikaru.harness.client.connection.BackgroundProcessId
 import im.hikaru.harness.client.connection.BackgroundProcessesResult
+import im.hikaru.harness.client.connection.McpApi
 import im.hikaru.harness.client.connection.BackgroundOutputResult
 import im.hikaru.harness.client.connection.BackgroundInputResult
 import im.hikaru.harness.client.connection.BackgroundControlResult
@@ -100,6 +113,24 @@ public class LocalConnection(
                     endpoint = HostDescribeEndpoint,
                     request = Unit,
                 )
+        }
+
+    override val mcp: McpApi =
+        object : McpApi {
+            override suspend fun list(): ApiResult<McpListResponse> =
+                gateway.invoke(McpListEndpoint, Unit)
+
+            override suspend fun upsert(request: McpUpsertRequest): ApiResult<McpMutationResponse> =
+                gateway.invoke(McpUpsertEndpoint, request)
+
+            override suspend fun setEnabled(request: McpEnabledRequest): ApiResult<McpMutationResponse> =
+                gateway.invoke(McpEnabledEndpoint, request)
+
+            override suspend fun remove(request: McpRemoveRequest): ApiResult<McpMutationResponse> =
+                gateway.invoke(McpRemoveEndpoint, request)
+
+            override suspend fun authenticate(request: McpAuthenticateRequest): ApiResult<McpAuthenticateResponse> =
+                gateway.invoke(McpAuthenticateEndpoint, request)
         }
 
     override val session: SessionApi =

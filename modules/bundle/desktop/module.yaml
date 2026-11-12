@@ -17,6 +17,8 @@ dependencies:
   - ../../llm-koog
   - ../../llm-koog-openai
   - ../../llm-retry
+  - ../../mcp-client
+  - ../../mcp-resources
   - ../../loader
   - ../../logger
   - ../../profile

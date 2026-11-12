@@ -16,6 +16,8 @@ import kotlin.uuid.Uuid
 public interface Connection {
     public val host: HostApi
     public val session: SessionApi
+    public val mcp: McpApi
+        get() = UnavailableMcpApi
 }
 
 @JvmInline
