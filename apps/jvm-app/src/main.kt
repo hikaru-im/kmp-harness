@@ -42,6 +42,8 @@ import im.hikaru.harness.desktop.scheduling.DesktopScheduleCalendar
 import im.hikaru.harness.desktop.scheduling.DesktopScheduledExecution
 import im.hikaru.harness.client.scheduling.ScheduledExecutorConfig
 import im.hikaru.harness.client.scheduling.ScheduledShutdownResult
+import im.hikaru.harness.client.notifications.launchScheduledNotifications
+import im.hikaru.harness.desktop.notifications.DesktopSystemNotificationService
 import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.desktop.connection.DesktopHostRelay
 import im.hikaru.harness.desktop.connection.HostEventStream
@@ -53,6 +55,12 @@ import im.hikaru.harness.client.plugins.McpExternalUrlOpener
 import java.awt.Desktop
 import java.net.URI
 import im.hikaru.harness.desktop.window.DesktopHarnessWindow
+import im.hikaru.harness.desktop.window.QuickChatWindow
+import im.hikaru.harness.desktop.window.DesktopGlobalHotkeyRegistrar
+import im.hikaru.harness.client.conversation.CompletionCapability
+import im.hikaru.harness.client.conversation.ConversationController
+import im.hikaru.harness.client.conversation.ConversationHostScope
+import im.hikaru.harness.client.conversation.ConversationStreams
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
 import im.hikaru.harness.ui.foundation.HarnessConfirmDialog
 import im.hikaru.harness.ui.foundation.HarnessConfirmSubmitState
@@ -69,6 +77,7 @@ import im.hikaru.harness.client.settings.WorktreeSettingsRepository
 import im.hikaru.harness.client.settings.DesktopWorktreeSettingsStore
 import im.hikaru.harness.client.settings.ShortcutsRepository
 import im.hikaru.harness.client.settings.DesktopShortcutsStore
+import im.hikaru.harness.client.settings.GlobalHotkeyController
 import im.hikaru.harness.client.shell.DesktopShellLayoutStore
 import im.hikaru.harness.client.shell.ShellLayoutRepository
 import im.hikaru.harness.desktop.window.desktopShortcutPlatform
@@ -100,6 +109,7 @@ fun main(args: Array<String>) {
         DesktopShortcutsStore(resolveDesktopHarnessHome(options.home).directory.resolve("client-shortcuts.json"), shortcutPlatform),
         shortcutPlatform,
     )
+    val globalHotkeys = GlobalHotkeyController(DesktopGlobalHotkeyRegistrar())
     runBlocking { shortcuts.load() }
     val resources =
         runBlocking {
@@ -204,6 +214,8 @@ fun main(args: Array<String>) {
     }
     val hostRelay = createDesktopHostRelay(harnessHost)
     val executionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val quickChatScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val quickChatController = ConversationController(quickChatScope)
     val scheduledExecution = DesktopScheduledExecution(
         context = harnessHost.runtime.context,
         expectedHostId = harnessHost.profile.hostDescription.hostId,
@@ -215,11 +227,29 @@ fun main(args: Array<String>) {
         config = ScheduledExecutorConfig(verifiedCronExecution = true),
     )
     val scheduledExecutorOwner = scheduledExecution.owner
+    val systemNotificationService = DesktopSystemNotificationService()
+    var scheduledNotificationJob: kotlinx.coroutines.Job? = null
     var resourcesReleased = false
 
     try {
         hostRelay.start(account)
-        runBlocking { scheduledExecution.start() }
+        quickChatController.bind(
+            connection = connection,
+            host = ConversationHostScope(harnessHost.profile.hostDescription.hostId, 1, null),
+            completionCapability = CompletionCapability.LocalIdle,
+            streams = ConversationStreams(
+                events = sessionEvents.events,
+                recoveries = kotlinx.coroutines.flow.emptyFlow(),
+                subscribe = { sessionEvents.subscribe(it) },
+                unsubscribe = { sessionEvents.unsubscribe(it) },
+            ),
+        )
+        runBlocking {
+            scheduledExecution.start()
+            scheduledNotificationJob = executionScope.launchScheduledNotifications(
+                scheduledExecutorOwner, systemNotificationService,
+            )
+        }
         // `exitProcessOnExit = false` keeps this process under our control: closing the window ends
         // the Compose application through the close request below, the finally block releases the
         // host/client resources, and only then does main exit.
@@ -227,6 +257,7 @@ fun main(args: Array<String>) {
             val closeScope = rememberCoroutineScope()
             var closing by remember { mutableStateOf(false) }
             var closeFailure by remember { mutableStateOf<String?>(null) }
+            var quickChatOpen by remember { mutableStateOf(false) }
             val requestClose: () -> Unit = {
                 if (!closing) {
                     closing = true
@@ -271,6 +302,8 @@ fun main(args: Array<String>) {
                     gitBackend = gitBackend,
                     managedWorktreeRepository = managedWorktrees,
                     installedPluginRepository = installedPlugins,
+                    onOpenQuickChat = { quickChatOpen = true },
+                    globalHotkeyController = globalHotkeys,
                     onOpenExternalUrl = McpExternalUrlOpener { value ->
                         val uri = runCatching { URI(value) }.getOrNull() ?: return@McpExternalUrlOpener false
                         if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank() ||
@@ -320,8 +353,21 @@ fun main(args: Array<String>) {
                     testTag = "scheduled-close-gate",
                 )
             }
+            if (quickChatOpen) {
+                QuickChatWindow(
+                    controller = quickChatController,
+                    themeMode = appearanceState.settings.mode.themeMode(),
+                    customization = appearanceState.settings.themeCustomization(),
+                    onCloseRequest = { quickChatOpen = false },
+                )
+            }
         }
     } finally {
+        scheduledNotificationJob?.cancel()
+        systemNotificationService.close()
+        globalHotkeys.close()
+        quickChatController.close()
+        quickChatScope.cancel()
         runBlocking {
             val stopped = scheduledExecutorOwner.shutdown()
             if (stopped is ScheduledShutdownResult.UnsafeToRelease) {

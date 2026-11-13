@@ -15,6 +15,8 @@ public enum class ShortcutCommand(public val label: String, public val descripti
     @SerialName("closeWindow") CloseWindow("关闭窗口", "按常规设置中的确认策略关闭窗口"),
     @SerialName("manageTasks") ManageTasks("管理定时任务", "打开定时任务页面"),
     @SerialName("searchFiles") SearchFiles("搜索文件", "搜索当前项目中的文件"),
+    @SerialName("findInConversation") FindInConversation("查找", "在当前对话中查找文本"),
+    @SerialName("openQuickChat") OpenQuickChat("快捷聊天", "打开独立快捷聊天窗口"),
 }
 
 /** One physical key, never a sequence or a modifier by itself. */
@@ -77,15 +79,24 @@ public object ShortcutRegistry {
             ShortcutCommand.CloseWindow -> ShortcutKey.W
             ShortcutCommand.ManageTasks -> return emptyList()
             ShortcutCommand.SearchFiles -> ShortcutKey.P
+            ShortcutCommand.FindInConversation -> ShortcutKey.F
+            ShortcutCommand.OpenQuickChat -> ShortcutKey.S
         }
-        return listOf(ShortcutChord(key, ctrl = platform != ShortcutPlatform.Mac, meta = platform == ShortcutPlatform.Mac,
-            shift = command == ShortcutCommand.ToggleSidebar))
+        return listOf(
+            ShortcutChord(
+                key,
+                ctrl = platform != ShortcutPlatform.Mac,
+                meta = platform == ShortcutPlatform.Mac,
+                alt = command == ShortcutCommand.OpenQuickChat,
+                shift = command == ShortcutCommand.ToggleSidebar,
+            ),
+        )
     }
 
-    public fun chordError(chord: ShortcutChord): String? {
+    public fun chordError(chord: ShortcutChord, command: ShortcutCommand? = null): String? {
         if (!chord.ctrl && !chord.meta && !chord.alt) return "请使用 Ctrl、Command 或 Alt 加一个按键；不支持单键或仅 Shift。"
         // Keep editing, formatting, Find and OS window/quit shortcuts in their original contexts.
-        if ((chord.ctrl || chord.meta) && chord.key in setOf(
+        if (command != ShortcutCommand.FindInConversation && (chord.ctrl || chord.meta) && chord.key in setOf(
                 ShortcutKey.A, ShortcutKey.B, ShortcutKey.C, ShortcutKey.F, ShortcutKey.G, ShortcutKey.I,
                 ShortcutKey.U, ShortcutKey.V, ShortcutKey.X, ShortcutKey.Y, ShortcutKey.Z, ShortcutKey.Q,
                 ShortcutKey.H, ShortcutKey.M,
@@ -96,6 +107,19 @@ public object ShortcutRegistry {
         return null
     }
 
+    public fun globalHotkeyError(
+        settings: ShortcutsSettings,
+        platform: ShortcutPlatform,
+        chord: ShortcutChord,
+    ): String? {
+        chordError(chord, ShortcutCommand.OpenQuickChat)?.let { return it }
+        for (command in commands) {
+            if (command == ShortcutCommand.OpenQuickChat) continue
+            if (chord in settings.bindings(command, platform)) return "已被 ${command.label} 使用"
+        }
+        return null
+    }
+
     public fun validationError(settings: ShortcutsSettings, platform: ShortcutPlatform): String? {
         if (settings.schemaVersion != 1) return "不支持此快捷键配置版本。"
         val owners = mutableMapOf<ShortcutChord, ShortcutCommand>()
@@ -103,7 +127,7 @@ public object ShortcutRegistry {
             val bindings = settings.bindings(command, platform)
             if (bindings.size != bindings.distinct().size) return "同一命令的组合不能重复。"
             for (chord in bindings) {
-                chordError(chord)?.let { return it }
+                chordError(chord, command)?.let { return it }
                 val owner = owners.put(chord, command)
                 if (owner != null && owner != command) return "已被 ${owner.label} 使用"
             }

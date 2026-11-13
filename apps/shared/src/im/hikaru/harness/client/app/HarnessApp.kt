@@ -161,6 +161,8 @@ import im.hikaru.harness.client.page.SettingsModelsPage
 import im.hikaru.harness.client.page.SettingsShortcutsPage
 import im.hikaru.harness.client.settings.ShortcutsRepository
 import im.hikaru.harness.client.settings.ShortcutCommand
+import im.hikaru.harness.client.settings.GlobalHotkeyController
+import im.hikaru.harness.client.settings.GlobalHotkeyState
 import im.hikaru.harness.client.settings.LocalShortcutsRepository
 import im.hikaru.harness.client.settings.LocalShortcutsEventRoot
 import im.hikaru.harness.client.settings.toShortcutInput
@@ -307,6 +309,8 @@ public fun HarnessApp(
     managedWorktreeRepository: im.hikaru.harness.client.git.ManagedWorktreeRepository? = null,
     terminalLaunchProvider: im.hikaru.harness.client.panels.TerminalLaunchProvider =
         im.hikaru.harness.client.panels.UnavailableTerminalLaunchProvider,
+    onOpenQuickChat: (() -> Unit)? = null,
+    globalHotkeyController: GlobalHotkeyController? = null,
 ) {
     val appearance = appearanceRepository ?: remember {
         val initial = AppearanceSettings(mode = AppearanceMode.from(themeMode))
@@ -335,6 +339,7 @@ public fun HarnessApp(
     LaunchedEffect(shortcuts) { if (!shortcuts.state.value.loaded) shortcuts.load() }
     val ownsShortcutRoot = LocalShortcutsEventRoot.current !== shortcuts.input
     var navigation by remember { mutableStateOf(NavigationState(currentPage = initialDestination.toPageId())) }
+    var conversationFindOpen by remember { mutableStateOf(false) }
     var workspaceState by remember { mutableStateOf(WorkspaceNavigatorState()) }
     // Page-owned navigators. They are separate from [workspaceState] so a Settings/Plugins/Hosts
     // page never reuses the Workspace search, project tree or recent-task state.
@@ -491,6 +496,9 @@ public fun HarnessApp(
         if (connectionsState.canSelect) onSelectHost?.invoke(candidate)
     }
     val page = navigation.currentPage
+    LaunchedEffect(page) {
+        if (page !is PageId.Thread) conversationFindOpen = false
+    }
     val conversationScope = rememberCoroutineScope()
     val conversation = remember(composerAttachmentReader) {
         ConversationController(conversationScope, attachmentReader = composerAttachmentReader)
@@ -1140,6 +1148,14 @@ public fun HarnessApp(
         navigation = navigation.openOverlay(OverlayId.FileSearch)
     }
     val shortcutSettings by shortcuts.state.collectAsState()
+    val globalHotkeyState = globalHotkeyController?.state?.collectAsState()?.value ?: GlobalHotkeyState()
+    val currentOpenQuickChat by rememberUpdatedState(onOpenQuickChat)
+    LaunchedEffect(globalHotkeyController) {
+        globalHotkeyController?.triggers?.collect { currentOpenQuickChat?.invoke() }
+    }
+    LaunchedEffect(globalHotkeyController, shortcutSettings.settings, shortcutSettings.platform) {
+        globalHotkeyController?.sync(shortcutSettings.settings, shortcutSettings.platform)
+    }
     val fileSearchShortcut = shortcutSettings.settings.bindings(ShortcutCommand.SearchFiles, shortcuts.platform)
         .firstOrNull()?.label(shortcuts.platform).orEmpty()
     val searchProject = when (val current = page) {
@@ -1166,6 +1182,12 @@ public fun HarnessApp(
             }
             ShortcutCommand.ManageTasks -> { selectPage(PageId.ScheduledTasks()); true }
             ShortcutCommand.SearchFiles -> { openFileSearch(); true }
+            ShortcutCommand.FindInConversation -> {
+                if (page is PageId.Thread) { conversationFindOpen = true; true } else false
+            }
+            ShortcutCommand.OpenQuickChat -> {
+                onOpenQuickChat?.invoke() != null
+            }
             ShortcutCommand.CloseWindow -> false // The desktop root owns the sole close consumer.
         }
     })
@@ -1420,6 +1442,7 @@ public fun HarnessApp(
                 PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = homeComposer)
 
                 PageId.NewTab -> NewTabPage(
+                    sideChatAvailable = onOpenQuickChat != null,
                     onOpenTool = { tool ->
                         when (tool) {
                             // 变更 is the one 工具 card this client has a destination for: the
@@ -1432,7 +1455,8 @@ public fun HarnessApp(
                             NewTabTool.Changes ->
                                 if (paneStrip != null) paneStrip.add(HarnessChangesPage)
                                 else selectPage(HarnessChangesPage.page ?: PageId.Settings(SettingsSection.Git))
-                            NewTabTool.Terminal, NewTabTool.Files, NewTabTool.SideChat -> Unit
+                            NewTabTool.Terminal, NewTabTool.Files -> Unit
+                            NewTabTool.SideChat -> onOpenQuickChat?.invoke()
                         }
                     },
                 )
@@ -1488,6 +1512,8 @@ public fun HarnessApp(
                     onRetry = { paneConversation.refresh() },
                     onEditMessage = { message -> paneConversation.beginEdit(message.id) },
                     onApprovalChoice = { requestId, choice -> paneConversation.respondApproval(requestId, choice) },
+                    findOpen = conversationFindOpen,
+                    onCloseFind = { conversationFindOpen = false },
                     onOpenInGit = { path ->
                         gitRevealPath = path
                         // Same destination the 变更 tool card uses: keep the conversation visible and
@@ -1555,6 +1581,7 @@ public fun HarnessApp(
                     onConnectionsRefresh = refreshConnections,
                     onConnectionSelect = selectConnection,
                     shortcutsRepository = shortcuts,
+                    globalHotkeyState = globalHotkeyState,
                     pluginsState = pluginsState,
                     onPluginAction = pluginAction,
                     gitRevealPath = gitRevealPath,
@@ -2189,6 +2216,7 @@ private fun SettingsScreen(
     onConnectionsRefresh: () -> Unit,
     onConnectionSelect: (HostDescription) -> Unit,
     shortcutsRepository: ShortcutsRepository,
+    globalHotkeyState: GlobalHotkeyState,
     pluginsState: InstalledPluginsState,
     onPluginAction: (InstalledPluginsAction) -> Unit,
     git: GitController,
@@ -2215,7 +2243,7 @@ private fun SettingsScreen(
         SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover,
             onModelsDiscoverDraft, onProviderConnect, onModelEnabled, onModelSelected)
         SettingsSection.Connections -> SettingsConnectionsPage(connectionsState, onConnectionsRefresh, onConnectionSelect)
-        SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository)
+        SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository, globalHotkeyState)
         SettingsSection.Plugins -> InstalledPluginsPage(pluginsState, onPluginAction)
         SettingsSection.Git, SettingsSection.Worktrees -> BoundGitSettingsPage(
             git, gitState, gitBindingReady, gitUnavailableReason, gitCwdChoices,

@@ -188,9 +188,11 @@ public fun LiveThreadPane(
     onEditMessage: ((Message) -> Unit)? = null,
     onApprovalChoice: (requestId: String, choice: ApprovalChoice) -> Unit = { _, _ -> },
     onOpenInGit: ((path: String) -> Unit)? = null,
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
 ) {
     val transcript by live.collectAsState()
-    LiveThreadSurface(state, transcript, onRetry, onEditMessage, onApprovalChoice, onOpenInGit)
+    LiveThreadSurface(state, transcript, onRetry, onEditMessage, onApprovalChoice, onOpenInGit, findOpen, onCloseFind)
 }
 
 /** Timeline only. The app owns the selected route, controller and separate shared composer. */
@@ -202,6 +204,8 @@ public fun LiveThreadSurface(
     onEditMessage: ((Message) -> Unit)? = null,
     onApprovalChoice: (requestId: String, choice: ApprovalChoice) -> Unit = { _, _ -> },
     onOpenInGit: ((path: String) -> Unit)? = null,
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
 ) {
     val liveMessages = live.messages.takeIf { it.isNotEmpty() }?.takeIf { live.sessionId == state.selectedSessionId }.orEmpty()
     Column(Modifier.fillMaxSize().padding(HarnessTokens.Spacing.Four).semantics { testTag = "live-thread" },
@@ -224,7 +228,7 @@ public fun LiveThreadSurface(
             key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {
                 ConversationViewport(state.history, Modifier.weight(1f).semantics { testTag = "live-thread-timeline" },
                     live = liveMessages, onEditMessage = onEditMessage?.takeIf { state.canEdit },
-                    onOpenInGit = onOpenInGit)
+                    onOpenInGit = onOpenInGit, findOpen = findOpen, onCloseFind = onCloseFind)
             }
         } else {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {

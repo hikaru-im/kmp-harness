@@ -12,8 +12,13 @@ class ShortcutsRepositoryTest {
         val store = MemoryShortcutsStore()
         val repository = ShortcutsRepository(store, platform)
         repository.load()
-        assertEquals(7, ShortcutRegistry.commands.size)
+        assertEquals(9, ShortcutRegistry.commands.size)
         assertEquals(ShortcutCommand.SearchFiles, repository.commandFor(ShortcutChord(ShortcutKey.P, meta = true)))
+        assertEquals(ShortcutCommand.FindInConversation, repository.commandFor(ShortcutChord(ShortcutKey.F, meta = true)))
+        assertEquals(
+            ShortcutCommand.OpenQuickChat,
+            repository.commandFor(ShortcutChord(ShortcutKey.S, meta = true, alt = true)),
+        )
         assertEquals(listOf(ShortcutChord(ShortcutKey.P, ctrl = true)),
             ShortcutRegistry.defaults(ShortcutCommand.SearchFiles, ShortcutPlatform.Windows))
         assertEquals(emptyList(), repository.state.value.settings.bindings(ShortcutCommand.ManageTasks, platform))

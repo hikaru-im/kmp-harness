@@ -433,6 +433,30 @@ class LiveConversationInteractionTest {
     }
 
     @Test
+    fun conversationFindCountsMatchesNavigatesAndClosesWithEscape() = runSkikoComposeUiTest(size = Size(600f, 500f)) {
+        val messages = (0..2).map { index -> Message(
+            "find-$index", MessageRole.USER, listOf(TextContent("needle $index and needle")), UserMessageSource,
+        ) }
+        var closed by mutableStateOf(false)
+        setContent { HarnessTheme {
+            LiveThreadSurface(
+                readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
+                onRetry = { error("No retry expected") },
+                findOpen = !closed,
+                onCloseFind = { closed = true },
+            )
+        } }
+        onNodeWithTag("conversation-find").assertExists()
+        onNodeWithTag("conversation-find-field").performTextInput("needle")
+        onNodeWithTag("conversation-find-count").assertTextEquals("1 / 6")
+        onNodeWithTag("conversation-find-next").performClick()
+        onNodeWithTag("conversation-find-count").assertTextEquals("2 / 6")
+        onNodeWithTag("conversation-find-field").performKeyInput { pressKey(Key.Escape) }
+        runOnIdle { assertTrue(closed) }
+        onNodeWithTag("conversation-find").assertDoesNotExist()
+    }
+
+    @Test
     fun codexPrintsOneTimeSeparatorPerTurnInsteadOfAPerMessageTimestamp() = runSkikoComposeUiTest(size = Size(600f, 900f)) {
         setContent { HarnessTheme { LiveThreadSurface(
             readyState().copy(selectedSessionId = SessionId("thread"), history = timedHistory(),

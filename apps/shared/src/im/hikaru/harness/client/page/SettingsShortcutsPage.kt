@@ -18,7 +18,10 @@ import kotlinx.coroutines.launch
 
 /** Only executable commands from the static registry appear here. */
 @Composable
-public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
+public fun SettingsShortcutsPage(
+    repository: ShortcutsRepository,
+    globalHotkeyState: GlobalHotkeyState = GlobalHotkeyState(),
+) {
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -66,6 +69,19 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
         SettingsFormFrame("键盘快捷键", "settings-shortcuts-title") {
             HarnessButton("全部重置为默认值", repository::requestReset, enabled = state.canEdit && state.editor == null,
                 variant = HarnessButtonVariant.Secondary, testTag = "shortcuts-reset-all")
+            HarnessSurface(
+                Modifier.fillMaxWidth().semantics { testTag = "shortcuts-global-hotkey-status" },
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    HarnessText("系统级快捷键：${globalHotkeyState.label}")
+                    globalHotkeyState.chord?.let { chord ->
+                        HarnessText("快捷聊天：${chord.label(state.platform)}", color = HarnessTokens.Colors.TextMuted)
+                    }
+                    globalHotkeyState.message?.let { message ->
+                        HarnessText(message, color = HarnessTokens.Colors.TextMuted)
+                    }
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 HarnessSearchField(query, { query = it }, "搜索命令", "搜索快捷键命令",
                     modifier = Modifier.fillMaxWidth(),

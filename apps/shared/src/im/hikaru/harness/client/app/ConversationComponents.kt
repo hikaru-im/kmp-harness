@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import im.hikaru.harness.client.connection.*
+import im.hikaru.harness.client.find.ConversationFindBar
+import im.hikaru.harness.client.find.findConversationMatches
 import im.hikaru.harness.ui.foundation.*
 import kotlinx.coroutines.launch
 import kotlin.time.Instant
@@ -56,6 +58,8 @@ internal fun ConversationViewport(
     live: List<Message> = emptyList(),
     /** Opens a changed file on the Git page; a deleted file never offers it. */
     onOpenInGit: ((path: String) -> Unit)? = null,
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -82,6 +86,19 @@ internal fun ConversationViewport(
     val zone = remember { TimeZone.currentSystemDefault() }
     val turns = remember(shown) { conversationTurns(shown) }
     val liveIds = remember(live) { live.mapTo(mutableSetOf()) { it.id } }
+    var findQuery by remember(findOpen) { mutableStateOf("") }
+    val findResult = remember(shown, findQuery) { findConversationMatches(shown, findQuery) }
+    var activeFindIndex by remember(shown, findQuery) { mutableStateOf(0) }
+    val activeFindMatch = findResult.matches.getOrNull(activeFindIndex)
+    LaunchedEffect(findOpen, activeFindMatch, turns) {
+        if (!findOpen) return@LaunchedEffect
+        val match = activeFindMatch ?: return@LaunchedEffect
+        val turnIndex = turns.indexOfFirst { turn -> turn.messages.any { it.id == match.messageId } }
+        if (turnIndex >= 0) list.animateScrollToItem(turnIndex)
+    }
+    LaunchedEffect(findOpen) {
+        if (!findOpen) findQuery = ""
+    }
     val lastTextMessage = remember(settledTurns) { turnLastTextMessageIds(settledTurns) }
     // CONV-02 step two: while the reader is parked above the bottom, remember the topmost turn and
     // its intra-item offset so later content and layout changes cannot move what they are reading.
@@ -160,6 +177,24 @@ internal fun ConversationViewport(
             }
             error?.let { message -> item { ConversationErrorCard(message, onRetry) } }
             item(key = "conversation-end") { Spacer(Modifier.height(0.dp)) }
+        }
+        if (findOpen) {
+            ConversationFindBar(
+                query = findQuery,
+                result = findResult,
+                activeIndex = activeFindIndex.coerceIn(0, (findResult.matches.size - 1).coerceAtLeast(0)),
+                onQueryChange = { next -> findQuery = next; activeFindIndex = 0 },
+                onPrevious = {
+                    if (findResult.matches.isNotEmpty()) {
+                        activeFindIndex = (activeFindIndex - 1 + findResult.matches.size) % findResult.matches.size
+                    }
+                },
+                onNext = {
+                    if (findResult.matches.isNotEmpty()) activeFindIndex = (activeFindIndex + 1) % findResult.matches.size
+                },
+                onClose = onCloseFind,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp, start = 12.dp, end = 12.dp),
+            )
         }
         if (scrollbarMetrics.visible) {
             HarnessOverlayScrollbar(
