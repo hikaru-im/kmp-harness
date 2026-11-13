@@ -20,7 +20,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.shadow.Shadow
@@ -92,6 +102,8 @@ public fun AppShell(
     // The header search action opens the workspace command menu.
     navigatorSearchOpen: Boolean = false,
     onToggleNavigatorSearch: () -> Unit = {},
+    onSearchFiles: () -> Unit = {},
+    fileSearchShortcut: String = "⌘P",
     onToggleProject: (String) -> Unit,
     onSelectNode: (WorkspaceItemNode) -> Unit,
     onSelectRecent: (RecentTaskItem) -> Unit,
@@ -132,9 +144,23 @@ public fun AppShell(
     HarnessTheme(themeMode = themeMode) {
         var shellOrigin by remember { mutableStateOf(Offset.Zero) }
         var accountBounds by remember { mutableStateOf(Rect.Zero) }
+        val exploreTriggerFocus = remember { FocusRequester() }
+        var exploreKeyboardEntry by remember { mutableStateOf<Int?>(null) }
         BoxWithConstraints(
             modifier = modifier.fillMaxSize().background(HarnessTokens.Colors.ShellBackground)
-                .onGloballyPositioned { shellOrigin = it.boundsInWindow().topLeft },
+                .onGloballyPositioned { shellOrigin = it.boundsInWindow().topLeft }
+                .onPreviewKeyEvent { event ->
+                    if (!state.exploreMenu.isOpen || exploreKeyboardEntry != null || event.type != KeyEventType.KeyDown ||
+                        event.isAltPressed || event.isCtrlPressed || event.isMetaPressed || event.isShiftPressed) false
+                    else when (event.key) {
+                        Key.DirectionDown, Key.DirectionUp, Key.Tab -> {
+                            exploreKeyboardEntry = if (event.key == Key.DirectionUp) -1 else 0
+                            true
+                        }
+                        Key.Escape -> { onDismissExploreMenu(); exploreTriggerFocus.requestFocus(); true }
+                        else -> false
+                    }
+                },
         ) {
             // Window-rect of the 探索 item, so the popup can anchor beside it.
             var exploreAnchor by remember { mutableStateOf(ExploreMenuAnchor(0, 0)) }
@@ -152,7 +178,10 @@ public fun AppShell(
             // `contentHovered` and keep the rail trigger painted as open; clear the hover state
             // whenever the menu is no longer open.
             LaunchedEffect(state.exploreMenu.isOpen) {
-                if (!state.exploreMenu.isOpen) explorePopover.close()
+                if (!state.exploreMenu.isOpen) {
+                    explorePopover.close()
+                    exploreKeyboardEntry = null
+                }
             }
             // The page owns the navigator: only the kind named by the current page mounts, and a page
             // with NavigatorKind.None has no drawer at all, so it can never show the Workspace tree.
@@ -353,6 +382,24 @@ public fun AppShell(
                             onOpenExploreMenu = onOpenExploreMenu,
                             onDismissExploreMenu = onDismissExploreMenu,
                             onExploreAnchor = { exploreAnchor = it },
+                            exploreTriggerModifier = Modifier.focusRequester(exploreTriggerFocus).onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown || event.isAltPressed || event.isCtrlPressed ||
+                                    event.isMetaPressed || event.isShiftPressed) false
+                                else when (event.key) {
+                                    Key.DirectionDown, Key.DirectionUp, Key.Enter, Key.Spacebar -> {
+                                        exploreKeyboardEntry = if (event.key == Key.DirectionUp) -1 else 0
+                                        explorePopover.openForKeyboard("explore")
+                                        onOpenExploreMenu()
+                                        true
+                                    }
+                                    Key.Tab -> if (state.exploreMenu.isOpen) {
+                                        exploreKeyboardEntry = 0
+                                        explorePopover.openForKeyboard("explore")
+                                        true
+                                    } else false
+                                    else -> false
+                                }
+                            },
                             onExploreHoverChanged = { hov -> explorePopover.onTriggerHover("explore", hov) },
                             onNavHoverChanged = { item, hov -> previewPopover.onTriggerHover(item.id, hov) },
                             // A preview replaces this item's tip: while the current page shows no
@@ -603,6 +650,12 @@ public fun AppShell(
                     selected = state.navigation.currentPage,
                     pinned = state.pinnedRailDestinations,
                     onDismiss = onDismissExploreMenu,
+                    keyboardEntry = exploreKeyboardEntry,
+                    onEscape = {
+                        onDismissExploreMenu()
+                        exploreTriggerFocus.requestFocus()
+                    },
+                    onFocusChanged = { explorePopover.onContentFocus(it) },
                     onOpenDestination = onOpenExploreDestination,
                     onTogglePin = onTogglePinRailDestination,
                     onHoverChanged = { hov -> explorePopover.onContentHover(hov) },
@@ -639,6 +692,11 @@ public fun AppShell(
                         closeNavigatorSearch()
                         onSelectRecent(task)
                     },
+                    onSearchFiles = {
+                        closeNavigatorSearch()
+                        onSearchFiles()
+                    },
+                    fileSearchShortcut = fileSearchShortcut,
                     onDismiss = closeNavigatorSearch,
                 )
             }
@@ -658,6 +716,7 @@ public fun AppRail(
     onOpenExploreMenu: () -> Unit = {},
     onDismissExploreMenu: () -> Unit = {},
     onExploreAnchor: (ExploreMenuAnchor) -> Unit = {},
+    exploreTriggerModifier: Modifier = Modifier,
     /** 探索 is hover-opened; the rail reports its hover so the owner can keep or drop the menu. */
     onExploreHoverChanged: (Boolean) -> Unit = {},
     /** Every destination reports its hover so the owner can preview a page navigator. */
@@ -716,7 +775,7 @@ public fun AppRail(
                         },
                         modifier =
                             if (exploreTrigger) {
-                                Modifier.onGloballyPositioned { coordinates ->
+                                exploreTriggerModifier.onGloballyPositioned { coordinates ->
                                     val bounds = coordinates.boundsInWindow()
                                     onExploreAnchor(
                                         ExploreMenuAnchor(
@@ -924,6 +983,9 @@ private fun ExploreMenuOverlay(
     pinned: Set<RailDestination>,
     selected: PageId,
     onDismiss: () -> Unit,
+    keyboardEntry: Int?,
+    onEscape: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
     onOpenDestination: (PageId) -> Unit,
     onTogglePin: (RailDestination) -> Unit,
     onHoverChanged: (Boolean) -> Unit,
@@ -939,14 +1001,16 @@ private fun ExploreMenuOverlay(
                     ): IntOffset = IntOffset(anchor.left, anchor.top)
                 }
             },
-        // Non-focusable: a focusable popup steals focus from the rail item, which drops its hover and
-        // flickers the menu. Maintaining the hover is the owner's job, not the popup's.
-        properties = PopupProperties(focusable = false),
+        // Hover must not steal the page's focus; keyboard entry opts into popup focus.
+        properties = PopupProperties(focusable = keyboardEntry != null),
         onDismissRequest = onDismiss,
     ) {
         ExploreMenu(
             pinned = pinned,
             selected = selected,
+            keyboardEntry = keyboardEntry,
+            onEscape = onEscape,
+            onFocusChanged = onFocusChanged,
             onOpenDestination = onOpenDestination,
             onTogglePin = onTogglePin,
             onHoverChanged = onHoverChanged,
@@ -963,15 +1027,30 @@ private fun ExploreMenuOverlay(
 private fun ExploreMenu(
     pinned: Set<RailDestination>,
     selected: PageId,
+    keyboardEntry: Int?,
+    onEscape: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
     onOpenDestination: (PageId) -> Unit,
     onTogglePin: (RailDestination) -> Unit,
     onHoverChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val entries = explorePinMenuItems(pinned)
     val shape = RoundedCornerShape(HarnessTokens.Control.ExploreMenuRadius)
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
+    val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
+    val inputMode = LocalInputModeManager.current
+    val focus = remember(entries.map { it.option.id }) { List(entries.size) { List(2) { FocusRequester() } } }
+    var focusedRow by remember { mutableStateOf(0) }
+    var focusedColumn by remember { mutableStateOf(0) }
     LaunchedEffect(hovered) { onHoverChanged(hovered) }
+    LaunchedEffect(keyboardEntry, focus) {
+        if (keyboardEntry != null && entries.isNotEmpty()) {
+            inputMode.requestInputMode(InputMode.Keyboard)
+            focus[if (keyboardEntry < 0) entries.lastIndex else 0][0].requestFocus()
+        }
+    }
     Column(
         modifier =
             modifier
@@ -991,11 +1070,39 @@ private fun ExploreMenu(
                 .background(HarnessTokens.Colors.SurfaceElevated)
                 .padding(HarnessTokens.Control.MenuPadding)
                 .hoverable(source)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown || event.isAltPressed || event.isCtrlPressed ||
+                        event.isMetaPressed || event.isShiftPressed || entries.isEmpty()) false
+                    else {
+                        var row = focusedRow.coerceIn(entries.indices)
+                        var column = focusedColumn
+                        when (event.key) {
+                            Key.Escape -> { onEscape(); return@onPreviewKeyEvent true }
+                            Key.DirectionDown -> row = (row + 1) % entries.size
+                            Key.DirectionUp -> row = (row - 1 + entries.size) % entries.size
+                            Key.DirectionLeft, Key.DirectionRight -> {
+                                val forward = (event.key == Key.DirectionRight) != (direction == LayoutDirection.Rtl)
+                                column = (column + if (forward) 1 else -1).coerceIn(0, 1)
+                            }
+                            Key.MoveHome -> { row = 0; column = 0 }
+                            Key.MoveEnd -> { row = entries.lastIndex; column = 0 }
+                            else -> return@onPreviewKeyEvent false
+                        }
+                        inputMode.requestInputMode(InputMode.Keyboard)
+                        focus[row][column].requestFocus()
+                        true
+                    }
+                }
+                .onFocusChanged { onFocusChanged(it.hasFocus) }
+                .focusGroup()
                 .semantics { testTag = "explore-menu" },
     ) {
-        explorePinMenuItems(pinned).forEach { entry ->
+        entries.forEachIndexed { index, entry ->
             ExploreMenuRow(
                 entry = entry,
+                destinationFocus = focus[index][0],
+                pinFocus = focus[index][1],
+                onFocused = { column -> focusedRow = index; focusedColumn = column },
                 // Codex marks the row of the page that is open with `aria-current="page"` and a
                 // half-strength ghost wash, so the menu shows where the user already is.
                 current = entry.option.selects(selected),
@@ -1013,6 +1120,9 @@ private fun ExploreMenu(
 @Composable
 private fun ExploreMenuRow(
     entry: PinMenuItem,
+    destinationFocus: FocusRequester,
+    pinFocus: FocusRequester,
+    onFocused: (Int) -> Unit,
     /** The destination of this row is the page currently open. */
     current: Boolean = false,
     onOpenDestination: () -> Unit,
@@ -1020,10 +1130,15 @@ private fun ExploreMenuRow(
 ) {
     // Codex draws the 探索 row as `rounded-xl` (12px), matching the menu panel's 20px corner family.
     val shape = RoundedCornerShape(HarnessTokens.Corners.Large)
-    // One interactive surface for the whole row: the ripple and the hover fill span the trailing pin
-    // too, so the row reads as a single control instead of a ripple cut off at the pin.
+    // The row shares hover/focus feedback; destination and pin keep separate actions.
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
+    val pinSource = remember { MutableInteractionSource() }
+    val pinHovered by pinSource.collectIsHoveredAsState()
+    val destinationFocused by source.collectIsFocusedAsState()
+    val pinFocused by pinSource.collectIsFocusedAsState()
+    val keyboardFocus = LocalInputModeManager.current.inputMode == InputMode.Keyboard && (destinationFocused || pinFocused)
+    val pinVisible = entry.pinned || hovered || pinHovered || keyboardFocus || !platformSupportsHover()
     Row(
         modifier =
             Modifier
@@ -1032,22 +1147,14 @@ private fun ExploreMenuRow(
                 .clip(shape)
                 .background(
                     when {
-                        hovered -> HarnessTokens.Colors.SurfaceSelected
+                        hovered || pinHovered || keyboardFocus -> HarnessTokens.Colors.SurfaceSelected
                         current -> HarnessTokens.Colors.CurrentRowBackground
                         else -> Color.Transparent
                     },
                 )
-                .then(if (hovered) Modifier.border(1.dp, HarnessTokens.Colors.Border, shape) else Modifier)
-                .clickable(
-                    interactionSource = source,
-                    indication = LocalIndication.current,
-                    onClick = onOpenDestination,
-                )
-                .semantics {
-                    role = Role.Button
-                    selected = current
-                    testTag = "explore-destination-${entry.option.id}"
-                },
+                .then(if (hovered || pinHovered || keyboardFocus) Modifier.border(1.dp, HarnessTokens.Colors.Border, shape) else Modifier)
+                .hoverable(source)
+                .semantics { testTag = "explore-row-${entry.option.id}" },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -1055,6 +1162,14 @@ private fun ExploreMenuRow(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .focusRequester(destinationFocus)
+                    .onFocusChanged { if (it.isFocused) onFocused(0) }
+                    .clickable(interactionSource = source, indication = LocalIndication.current, onClick = onOpenDestination)
+                    .semantics {
+                        role = Role.Button
+                        selected = current
+                        testTag = "explore-destination-${entry.option.id}"
+                    }
                     .padding(horizontal = HarnessTokens.Control.MenuItemPaddingX),
             horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
             verticalAlignment = Alignment.CenterVertically,
@@ -1062,21 +1177,24 @@ private fun ExploreMenuRow(
             HarnessIcon(entry.option.icon, tint = HarnessTokens.Colors.Text)
             HarnessText(entry.option.label, maxLines = 1)
         }
-        // Trailing pin control: nested on top of the row surface so its tap toggles the pin instead
-        // of navigating, while the row's ripple still runs underneath it.
-        val pinSource = remember { MutableInteractionSource() }
-        val pinHovered by pinSource.collectIsHoveredAsState()
+        // Keep the trailing slot's geometry when hidden; only the destination navigates.
         Box(
             modifier =
                 Modifier
                     .padding(end = HarnessTokens.Spacing.One)
                     .size(HarnessTokens.Control.Icon)
+                    .alpha(if (pinVisible) 1f else 0f)
+                    .focusRequester(pinFocus)
+                    .onFocusChanged { if (it.isFocused) onFocused(1) }
                     .clip(RoundedCornerShape(percent = 50))
-                    .background(if (pinHovered) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
-                    .hoverable(pinSource)
-                    .clickable(onClick = onTogglePin)
+                    .background(if (pinHovered || (pinFocused && keyboardFocus)) HarnessTokens.Colors.SurfaceSelected else Color.Transparent)
+                    .hoverable(pinSource, enabled = pinVisible)
+                    .clickable(interactionSource = pinSource, indication = LocalIndication.current, onClick = {
+                        if (pinVisible) onTogglePin()
+                    })
                     .semantics {
                         role = Role.Button
+                        if (!pinVisible) hideFromAccessibility()
                         contentDescription = if (entry.pinned) "从侧边栏取消置顶" else "固定到侧边栏"
                         testTag = "explore-pin-${entry.option.id}"
                     },
@@ -2462,6 +2580,8 @@ private fun WorkspaceCommandMenu(
     onNewTask: () -> Unit,
     onNewProject: () -> Unit,
     onSelectRecent: (RecentTaskItem) -> Unit,
+    onSearchFiles: () -> Unit,
+    fileSearchShortcut: String,
     onDismiss: () -> Unit,
 ) {
     val trimmed = query.trim()
@@ -2476,8 +2596,7 @@ private fun WorkspaceCommandMenu(
         listOf(
             CommandMenuAction("新聊天", "⌘N", HarnessIconName.NewChat, onNewTask),
             CommandMenuAction("打开文件夹", "⌘O", HarnessIconName.Folder, onNewProject),
-            // Harness has no file search surface yet; the row keeps the measured action list.
-            CommandMenuAction("搜索文件", "⌘P", HarnessIconName.Search, {}),
+            CommandMenuAction("搜索文件", fileSearchShortcut, HarnessIconName.Search, onSearchFiles),
         ).filter { trimmed.isEmpty() || it.label.contains(trimmed, ignoreCase = true) }
     val itemCount = chats.size + actions.size
     var selectedIndex by remember(trimmed) { mutableStateOf(0) }

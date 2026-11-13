@@ -22,12 +22,12 @@ import kotlin.test.*
  */
 class PluginDetailUnsupportedLabelTest {
     private val canonical = listOf(
-        "apps (unsupported)" to "Apps：此声明无法在本地枚举（例如 apps 目录或未识别的 apps 文件），本地服务尚未读取。",
-        "MCP (unsupported)" to "MCP：声明的 server 配置无法在本地枚举，本地服务不会连接或启动它。",
-        "hooks (unsupported)" to "Hooks：hooks 目录或文件尚未接入本地服务，不会被读取或执行。",
-        "scripts (unsupported)" to "Scripts：scripts 目录尚未接入本地服务，不会被读取或执行。",
-        "skill attachments (unsupported)" to "技能附件：除 SKILL.md 外的文件不会被读取。",
-        "other capabilities (unsupported)" to "其他能力（commands / agents / lspServers / assets）：暂不支持。",
+        "apps (unsupported)" to "Apps 不可用",
+        "MCP (unsupported)" to "MCP 不可用",
+        "hooks (unsupported)" to "Hooks 不可用",
+        "scripts (unsupported)" to "Scripts 不可用",
+        "skill attachments (unsupported)" to "技能附件不可用",
+        "other capabilities (unsupported)" to "其他能力不可用",
     )
 
     @Test fun canonicalTokensAreLocalizedAndUnknownDescriptorsPassThrough() =

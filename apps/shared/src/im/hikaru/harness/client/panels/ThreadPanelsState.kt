@@ -3,7 +3,7 @@ package im.hikaru.harness.client.panels
 /** Controlled snapshot. The owner reduces local actions and supplies scoped external responses. */
 public data class ThreadPanelsState(
     val scope: ThreadPanelScope,
-    val openTabs: List<ThreadPanelTab> = ThreadPanelTab.entries.toList(),
+    val openTabs: List<ThreadPanelTab> = ThreadPanelTab.defaultOpenTabs,
     val selectedTab: ThreadPanelTab? = openTabs.firstOrNull(),
     val terminal: PanelLoad<BackgroundTerminalOutput> = PanelLoad.Unavailable(scope, PanelUnavailableReason.TerminalServiceMissing),
     val subagents: PanelLoad<SubagentOverview> = PanelLoad.Unavailable(scope, PanelUnavailableReason.ChildrenServiceMissing),
@@ -119,6 +119,9 @@ public fun ThreadPanelsState.reduce(action: ThreadPanelAction): ThreadPanelsStat
                     detailGeneration = detailGeneration + 1, showAllActive = false, showAllDone = false,
                     overviewRefreshing = false,
                     subagents = PanelLoad.Unavailable(scope, PanelUnavailableReason.ChildrenServiceMissing))
+                // The review tab owns no service read of its own: closing it fences nothing and
+                // leaves the terminal, subagent and (host-owned) Git reads exactly as they were.
+                ThreadPanelTab.Changes -> closed
             }
         }
         is ThreadPanelAction.ShowMore -> if (subagents is PanelLoad.Ready && ThreadPanelTab.Subagents in openTabs) {

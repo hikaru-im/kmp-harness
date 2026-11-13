@@ -40,6 +40,52 @@ import kotlin.test.*
 @OptIn(ExperimentalTestApi::class)
 class LocalProjectsInteractionTest {
     @Test
+    fun commandMenuSearchReadsOnlyTheCurrentRegisteredProject() {
+        val fixture = ProjectInteractionFixture()
+        try {
+            Files.writeString(fixture.root.resolve("search-target.kt"), "current project preview")
+            Files.writeString(fixture.directory.resolve("outside.kt"), "outside project")
+            runSkikoComposeUiTest(size = Size(1440f, 900f)) {
+                setContent {
+                    HarnessApp(fixture.connection, connectionTransport = ConnectionTransport.Local,
+                        localProjectRepository = fixture.repository, modelSettingsRepository = fixture.models,
+                        projectFileSearch = im.hikaru.harness.desktop.projects.DesktopProjectFileSearch(fixture.repository),
+                        themeMode = HarnessThemeMode.Light)
+                }
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("local-project-picker-open").performClick()
+                onNodeWithTag("local-project-manage").performClick()
+                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-projects-empty").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithTag("local-project-create").performClick()
+                fillProjectRegistration("Search project", fixture.root.toString())
+                onNodeWithTag("local-project-editor-save").performClick()
+                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("local-project-editor-save").fetchSemanticsNodes().isEmpty() }
+                onNodeWithTag("rail-home").performClick()
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodes(hasTestTag("local-project-picker-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("new-task").performClick()
+                onNodeWithTag("local-project-picker-open").assertTextEquals("Search project")
+                onNodeWithTag("workspace-search-toggle").performClick()
+                onNodeWithTag("workspace-command-input").performTextInput("搜索文件")
+                onNodeWithTag("command-action-0").performClick()
+                onNodeWithTag("workspace-command-menu").assertDoesNotExist()
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodesWithTag("project-file-result-search-target.kt").fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithTag("project-file-result-outside.kt").assertDoesNotExist()
+                onNodeWithTag("project-file-result-search-target.kt").performClick()
+                waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("project-file-preview").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithTag("project-file-preview").assertTextEquals("current project preview")
+                assertTrue(fixture.creates.isEmpty())
+                assertTrue(fixture.prompts.isEmpty())
+            }
+        } finally { fixture.close() }
+    }
+
+    @Test
     fun registerExistingDirectorySelectHomeProjectAndPersistConfirmedMembershipBeforePrompt() {
         val fixture = ProjectInteractionFixture()
         try {
@@ -155,8 +201,8 @@ class LocalProjectsInteractionTest {
                     onAllNodes(hasTestTag("local-project-attach-retry") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
                 }
                 onNodeWithTag("live-thread").assertExists()
-                onNodeWithTag("local-project-attach-pending").assertTextContains("关联待确认", substring = true)
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("local-project-attach-pending").assertTextContains("关联未能确认", substring = true)
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-editor").assertTextContains(draft)
                 val session = runBlocking { fixture.connection.session.list().single() }
                 val originalTarget = repository.attachTargets.single()
@@ -177,7 +223,7 @@ class LocalProjectsInteractionTest {
                 }
                 onNodeWithTag("local-project-attach-pending").assertExists()
                 onNodeWithTag("local-project-attach-retry").assertIsNotEnabled()
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-editor").assertTextContains(draft)
                 assertEquals(listOf(session.id.value), fixture.sessions.map { it.id.value })
                 assertEquals(1, repository.attachTargets.size)
@@ -195,8 +241,8 @@ class LocalProjectsInteractionTest {
                 assertEquals(fixture.host, restoredBinding.scope.hostId)
                 assertEquals(ConnectionTransport.Local, restoredBinding.transport)
                 assertTrue(restoredBinding.scope.generation > originalTarget.binding.scope.generation)
-                onNodeWithTag("local-project-attach-pending").assertTextContains("关联待确认", substring = true)
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
+                onNodeWithTag("local-project-attach-pending").assertTextContains("关联未能确认", substring = true)
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-editor").assertTextContains(draft)
                 assertEquals(1, repository.attachTargets.size, "Reconnect must not automatically attach")
                 assertEquals(1, repository.validatedTargets.size, "Reconnect must not automatically revalidate")
@@ -340,8 +386,10 @@ private fun SemanticsNodeInteractionsProvider.fillProjectRegistration(name: Stri
 
 private fun SemanticsNodeInteractionsProvider.chooseProjectInteractionModel() {
     onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
+    onNodeWithTag("live-composer-model-select").performClick()
     onNodeWithTag("menu:conversation-model:${PROJECT_PROVIDER.length}:$PROJECT_PROVIDER:${PROJECT_MODEL.length}:$PROJECT_MODEL")
         .performClick()
+    onNodeWithTag("live-composer-model-select").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Escape) }
 }
 
 private const val PROJECT_PROVIDER = "projects-test-provider"

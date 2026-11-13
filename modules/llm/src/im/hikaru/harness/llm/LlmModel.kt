@@ -2,6 +2,7 @@ package im.hikaru.harness.llm
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /** 一个适配器已经注册并能够处理的 provider route。 */
 @Serializable
@@ -68,4 +69,9 @@ data class LlmResolvedModelInfo(
     val context: LlmModelContext? = null,
     val defaultMaxTokens: Long? = null,
     val reasoning: LlmModelReasoningInfo? = null,
+    val reasoningCapabilities: ReasoningCapabilities? = null,
+    /** Model output capacity, distinct from the configured per-call default. */
+    val maxOutputTokens: Long? = null,
+    /** Public catalog facts for versioned plugin rules, never credentials or executable code. */
+    val metadata: JsonObject = JsonObject(emptyMap()),
 )

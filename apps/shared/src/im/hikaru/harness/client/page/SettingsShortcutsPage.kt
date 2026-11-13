@@ -18,7 +18,10 @@ import kotlinx.coroutines.launch
 
 /** Only executable commands from the static registry appear here. */
 @Composable
-public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
+public fun SettingsShortcutsPage(
+    repository: ShortcutsRepository,
+    globalHotkeyState: GlobalHotkeyState = GlobalHotkeyState(),
+) {
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -64,8 +67,21 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
         .onKeyEvent { standalone && repository.input.dispatch(it.toShortcutInput()) }
         .focusable().semantics { testTag = "shortcuts-key-target" }) {
         SettingsFormFrame("键盘快捷键", "settings-shortcuts-title") {
-            HarnessButton("重置所有快捷键", repository::requestReset, enabled = state.canEdit && state.editor == null,
+            HarnessButton("全部重置为默认值", repository::requestReset, enabled = state.canEdit && state.editor == null,
                 variant = HarnessButtonVariant.Secondary, testTag = "shortcuts-reset-all")
+            HarnessSurface(
+                Modifier.fillMaxWidth().semantics { testTag = "shortcuts-global-hotkey-status" },
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    HarnessText("系统级快捷键：${globalHotkeyState.label}")
+                    globalHotkeyState.chord?.let { chord ->
+                        HarnessText("快捷聊天：${chord.label(state.platform)}", color = HarnessTokens.Colors.TextMuted)
+                    }
+                    globalHotkeyState.message?.let { message ->
+                        HarnessText(message, color = HarnessTokens.Colors.TextMuted)
+                    }
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 HarnessSearchField(query, { query = it }, "搜索命令", "搜索快捷键命令",
                     modifier = Modifier.fillMaxWidth(),
@@ -78,16 +94,16 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
                     enabled = state.platform != ShortcutPlatform.Unavailable && !state.saving && state.editor == null && !state.resetConfirmation,
                     variant = HarnessButtonVariant.Secondary, testTag = "shortcuts-key-search")
                 if (state.capture == ShortcutCaptureMode.Search) {
-                    HarnessText(state.keyQuery?.label(state.platform) ?: "按下一组组合键搜索；Escape 退出。",
+                    HarnessText(state.keyQuery?.label(state.platform) ?: "按下搜索快捷键",
                         Modifier.semantics { testTag = "shortcuts-key-query" }, color = HarnessTokens.Colors.TextMuted)
                 }
-                HarnessText("每个绑定只支持一组组合键，不支持多段序列。查找、剪贴板、常规格式与系统操作保留。",
-                    color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                // `settings.keyboardShortcuts.*` contains no paragraph about single chords or which
+                // commands are kept; those were Harness caveats, not Codex page copy.
             }
-            if (state.loading) HarnessText("正在读取快捷键配置…", Modifier.semantics { testTag = "shortcuts-loading" })
-            if (state.saving) HarnessText("正在保存快捷键配置…", Modifier.semantics { testTag = "shortcuts-saving" })
+            // `settings.keyboardShortcuts.loading` = 正在加载快捷键…; Codex has no separate
+            // saving/status line or session-only durability note.
+            if (state.loading) HarnessText("正在加载快捷键…", Modifier.semantics { testTag = "shortcuts-loading" })
             state.unavailableReason?.let { HarnessText(it, Modifier.semantics { testTag = "shortcuts-unavailable" }, color = HarnessTokens.Colors.TextMuted) }
-            if (!state.durable) HarnessText("快捷键仅在本次运行中保留。", color = HarnessTokens.Colors.TextMuted)
             (state.loadError ?: state.saveError ?: state.captureError)?.let { message ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ShortcutError(message, "shortcuts-error")
@@ -97,7 +113,7 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
                     }
                 }
             }
-            if (visible.isEmpty()) HarnessText("没有匹配的快捷键。", Modifier.semantics { testTag = "shortcuts-no-match" }, color = HarnessTokens.Colors.TextMuted)
+            if (visible.isEmpty()) HarnessText("没有匹配的快捷键", Modifier.semantics { testTag = "shortcuts-no-match" }, color = HarnessTokens.Colors.TextMuted)
             SettingsFormCard {
                 visible.forEach { command -> key(command) {
                     val bindings = state.settings.bindings(command, state.platform)
@@ -107,7 +123,7 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             HarnessText(if (command in state.settings.overrides) "自定义" else "默认",
                                 color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-                            if (bindings.isEmpty()) HarnessText("未分配快捷键", Modifier.semantics { testTag = "shortcut-empty-${command.name}" }, color = HarnessTokens.Colors.TextMuted)
+                            if (bindings.isEmpty()) HarnessText("未指定", Modifier.semantics { testTag = "shortcut-empty-${command.name}" }, color = HarnessTokens.Colors.TextMuted)
                             bindings.forEachIndexed { index, chord ->
                                 val bindingFocus = remember(command, index) { FocusRequester() }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -132,7 +148,7 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
                                 enabled = state.canEdit && state.editor == null, variant = HarnessButtonVariant.Ghost,
                                 size = HarnessControlSize.Compact, testTag = "shortcut-reset-${command.name}")
                             if (editor != null) {
-                                HarnessText(editor.chord?.label(state.platform) ?: "按下一组组合键；Escape 取消。",
+                                HarnessText(editor.chord?.label(state.platform) ?: "按下快捷键",
                                     Modifier.semantics { testTag = "shortcut-recording-${command.name}" })
                                 editor.error?.let { ShortcutError(it, "shortcut-record-error-${command.name}") }
                                 HarnessButton("重新录制", { repository.beginRecording(command, editor.replaceIndex) },
@@ -150,9 +166,11 @@ public fun SettingsShortcutsPage(repository: ShortcutsRepository) {
         }
     }
     HarnessConfirmDialog(
-        visible = state.resetConfirmation, onDismissRequest = repository::cancelReset, title = "重置所有快捷键？",
-        description = "删除所有自定义绑定和已移除状态，恢复这六个命令的默认组合。保存成功后生效。",
-        cancelLabel = "取消", confirmLabel = "重置",
+        // `settings.keyboardShortcuts.resetAllConfirm.*` is the whole dialog copy; Codex does not
+        // enumerate Harness's six commands or promise when its optimistic save takes effect.
+        visible = state.resetConfirmation, onDismissRequest = repository::cancelReset, title = "重置所有键盘快捷键？",
+        description = "这将丢弃所有自定义快捷键并恢复默认设置",
+        cancelLabel = "取消", confirmLabel = "全部重置",
         submitState = when {
             state.saving -> HarnessConfirmSubmitState.Submitting
             state.saveError != null -> HarnessConfirmSubmitState.Failed(state.saveError!!)

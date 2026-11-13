@@ -33,9 +33,12 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import im.hikaru.harness.client.connection.*
+import im.hikaru.harness.client.find.ConversationFindBar
+import im.hikaru.harness.client.find.findConversationMatches
 import im.hikaru.harness.ui.foundation.*
 import kotlinx.coroutines.launch
 import kotlin.time.Instant
@@ -55,15 +58,20 @@ internal fun ConversationViewport(
     live: List<Message> = emptyList(),
     /** Opens a changed file on the Git page; a deleted file never offers it. */
     onOpenInGit: ((path: String) -> Unit)? = null,
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val bottom = LocalConversationBottomInset.current
     val atBottom by remember { derivedStateOf { !list.canScrollForward } }
     var following by remember { mutableStateOf(true) }
+    // CONV-02: history is grouped into human-delimited turns before anything is rendered. Activity
+    // headers and actions belong to a turn, and each turn is one lazy item in the transcript.
+    val settledTurns = remember(messages) { conversationTurns(messages) }
     // Live Codex prints one `用时 {duration}` header at the top of a turn's activity; the duration is the
     // turn's own wall clock, which our messages already carry as event timestamps.
-    val workedFor = remember(messages) { turnWorkedFor(messages) }
+    val workedFor = remember(settledTurns) { turnWorkedFor(settledTurns) }
     val toolCalls = remember(messages) {
         messages.flatMap { it.content }.filterIsInstance<ToolCallContent>().associateBy { it.id }
     }
@@ -72,64 +80,121 @@ internal fun ConversationViewport(
     val toolResults = remember(messages) { toolResultIndex(messages) }
     // Settled-only maps stay cached while the tail grows; only this appended reference changes per frame.
     val shown = remember(messages, toolResults, live) { messages.filterNot { it.isFoldedToolResult(toolResults) } + live }
-    // Time markers are first-class rows so their height participates in both scrolling and the
-    // scrollbar document range. Streaming messages without a durable timestamp never create one.
-    // One zone for both grouping and the printed label, so a marker's day and its clock agree.
+    // Each turn owns its time marker, so the marker's height still participates in scrolling.
+    // Streaming messages without a durable timestamp never create one. One zone for both grouping
+    // and the printed label, so a marker's day and its clock agree.
     val zone = remember { TimeZone.currentSystemDefault() }
-    val timeline = remember(shown, zone) { conversationTimeline(shown, zone) }
+    val turns = remember(shown) { conversationTurns(shown) }
     val liveIds = remember(live) { live.mapTo(mutableSetOf()) { it.id } }
-    val lastTextMessage = remember(messages) { turnLastTextMessageIds(messages) }
-    val rowCount = timeline.size + (if (error != null) 1 else 0) + 1
+    var findQuery by remember(findOpen) { mutableStateOf("") }
+    val findResult = remember(shown, findQuery) { findConversationMatches(shown, findQuery) }
+    var activeFindIndex by remember(shown, findQuery) { mutableStateOf(0) }
+    val activeFindMatch = findResult.matches.getOrNull(activeFindIndex)
+    LaunchedEffect(findOpen, activeFindMatch, turns) {
+        if (!findOpen) return@LaunchedEffect
+        val match = activeFindMatch ?: return@LaunchedEffect
+        val turnIndex = turns.indexOfFirst { turn -> turn.messages.any { it.id == match.messageId } }
+        if (turnIndex >= 0) list.animateScrollToItem(turnIndex)
+    }
+    LaunchedEffect(findOpen) {
+        if (!findOpen) findQuery = ""
+    }
+    val lastTextMessage = remember(settledTurns) { turnLastTextMessageIds(settledTurns) }
+    // CONV-02 step two: while the reader is parked above the bottom, remember the topmost turn and
+    // its intra-item offset so later content and layout changes cannot move what they are reading.
+    val latestTurns by rememberUpdatedState(turns)
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+    var anchor by remember { mutableStateOf<TurnScrollAnchor?>(null) }
+    // The end anchor is a zero-height spacer and is deliberately excluded from the scrollbar's
+    // document estimate, which now counts turns instead of individual messages.
+    val contentItemCount = turns.size + (if (error != null) 1 else 0)
+    val itemCount = contentItemCount + 1
     LaunchedEffect(list) {
         var wasScrolling = false
         snapshotFlow { list.isScrollInProgress to !list.canScrollForward }.collect { (scrolling, reachedBottom) ->
             // Content and composer remeasurement must not cancel an existing follow intent.
             if (scrolling || wasScrolling) following = reachedBottom
             wasScrolling = scrolling
+            if (!scrolling) {
+                // Take the anchor only at rest: a moving list is already showing the user's intent.
+                // Bottom-follow re-applies itself, so it never keeps an anchor of its own.
+                val captured = if (following) null else list.turnScrollAnchor(latestTurns)
+                if (following || captured != null) anchor = captured
+            }
         }
     }
-    LaunchedEffect(rowCount, shown.lastOrNull()?.content, error, bottom) {
-        if (shown.isNotEmpty() && following) list.scrollToItem(rowCount - 1)
+    LaunchedEffect(itemCount, shown.lastOrNull()?.content, error, bottom) {
+        if (shown.isNotEmpty() && following) list.scrollToItem(itemCount - 1)
+    }
+    // Observe the measured viewport from a coroutine instead of writing state in onSizeChanged: that
+    // callback runs inside the layout pass, and a scroll started there remeasures during measure.
+    LaunchedEffect(list) {
+        snapshotFlow { list.layoutInfo.viewportSize }.collect { viewportSize = it }
+    }
+    // Re-apply the turn anchor when the transcript list, viewport or composer inset changes. Bottom
+    // follow owns the other direction; an active gesture is never interrupted. If the anchored turn
+    // is still where it was, this is a no-op, so history refresh and streaming growth stay put.
+    LaunchedEffect(turns, error, bottom, viewportSize, anchor) {
+        val target = anchor ?: return@LaunchedEffect
+        if (following || list.isScrollInProgress) return@LaunchedEffect
+        val index = turns.indexOfFirst { it.id == target.turnId }
+        if (index < 0) return@LaunchedEffect
+        val first = list.layoutInfo.visibleItemsInfo.firstOrNull()
+        if (first?.index == index && list.firstVisibleItemScrollOffset == target.offset) return@LaunchedEffect
+        list.scrollToItem(index, target.offset)
     }
     val scrollbarMetrics by remember {
-        derivedStateOf { conversationScrollbarMetrics(list, rowCount) }
+        derivedStateOf { conversationScrollbarMetrics(list, contentItemCount) }
     }
     Box(modifier.fillMaxWidth()) {
         LazyColumn(
             state = list,
             // Codex reserves `scrollbar-gutter: stable both-edges` on the transcript, so the
             // measured 11px gutter sits on both sides of the centred content column.
-            modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp).semantics { contentDescription = "会话" },
+            modifier = Modifier.fillMaxSize()
+                .padding(horizontal = 11.dp)
+                .semantics { contentDescription = "会话" },
             // The 12dp gap before the end anchor completes the measured 32dp transcript inset.
             contentPadding = PaddingValues(top = 32.dp, bottom = bottom + 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            items(timeline.size, key = { timeline[it].key }) { position ->
-                when (val row = timeline[position]) {
-                    is ConversationTimelineRow.TimeMarkerRow ->
-                        ConversationTimeMarker(row.timestampMillis, row.anchorMessageId, zone)
-                    is ConversationTimelineRow.MessageRow -> {
-                        val message = row.message
-                        val streaming = message.id in liveIds
-                        Box(Modifier.widthIn(max = 768.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
-                            MessageCard(
-                                message = message,
-                                workedForMillis = workedFor[message.id],
-                                toolCalls = toolCalls,
-                                toolResults = toolResults,
-                                showActions = !streaming && message.id in lastTextMessage,
-                                onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
-                                    ?.let { edit -> { edit(message) } },
-                                live = streaming,
-                                onOpenInGit = onOpenInGit,
-                            )
-                        }
-                    }
-                }
+            // CONV-02: one lazy item per turn, not one per message. Each turn owns its marker and
+            // messages, so the anchor above and any future visible-turn range work on this unit.
+            // Virtualization below a turn (message-level) is still a recorded gap.
+            items(turns.size, key = { "conversation-turn:${turns[it].id}" }) { position ->
+                ConversationTurnSection(
+                    turn = turns[position],
+                    zone = zone,
+                    workedFor = workedFor,
+                    toolCalls = toolCalls,
+                    toolResults = toolResults,
+                    liveIds = liveIds,
+                    lastTextMessage = lastTextMessage,
+                    onEditMessage = onEditMessage,
+                    onOpenInGit = onOpenInGit,
+                )
             }
             error?.let { message -> item { ConversationErrorCard(message, onRetry) } }
             item(key = "conversation-end") { Spacer(Modifier.height(0.dp)) }
+        }
+        if (findOpen) {
+            ConversationFindBar(
+                query = findQuery,
+                result = findResult,
+                activeIndex = activeFindIndex.coerceIn(0, (findResult.matches.size - 1).coerceAtLeast(0)),
+                onQueryChange = { next -> findQuery = next; activeFindIndex = 0 },
+                onPrevious = {
+                    if (findResult.matches.isNotEmpty()) {
+                        activeFindIndex = (activeFindIndex - 1 + findResult.matches.size) % findResult.matches.size
+                    }
+                },
+                onNext = {
+                    if (findResult.matches.isNotEmpty()) activeFindIndex = (activeFindIndex + 1) % findResult.matches.size
+                },
+                onClose = onCloseFind,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp, start = 12.dp, end = 12.dp),
+            )
         }
         if (scrollbarMetrics.visible) {
             HarnessOverlayScrollbar(
@@ -152,6 +217,50 @@ internal fun ConversationViewport(
                 ConversationActionButton(ConversationGlyph.Down, "滚动到底部", {
                     scope.launch { list.animateScrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
                 }, size = 32.dp, tint = ConversationAppearance.ink)
+            }
+        }
+    }
+}
+
+/**
+ * One turn as a single lazy item: its time separator (when it has a durable timestamp) followed by
+ * every message it owns. The inner spacing matches the former per-row `LazyColumn` arrangement, so
+ * grouping does not change the transcript's visual rhythm.
+ */
+@Composable
+private fun ConversationTurnSection(
+    turn: ConversationTurn,
+    zone: TimeZone,
+    workedFor: Map<String, Long>,
+    toolCalls: Map<String, ToolCallContent>,
+    toolResults: Map<String, ToolResultEntry>,
+    liveIds: Set<String>,
+    lastTextMessage: Set<String>,
+    onEditMessage: ((Message) -> Unit)?,
+    onOpenInGit: ((path: String) -> Unit)?,
+) {
+    Column(
+        Modifier.fillMaxWidth().semantics { testTag = "conversation-turn:${turn.id}" },
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        turn.anchorTimestampMillis?.let { timestamp ->
+            ConversationTimeMarker(timestamp, turn.id, zone)
+        }
+        turn.messages.forEach { message ->
+            val streaming = message.id in liveIds
+            Box(Modifier.widthIn(max = 768.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
+                MessageCard(
+                    message = message,
+                    workedForMillis = workedFor[message.id],
+                    toolCalls = toolCalls,
+                    toolResults = toolResults,
+                    showActions = !streaming && message.id in lastTextMessage,
+                    onEdit = onEditMessage?.takeIf { message.role == MessageRole.USER && message.source == UserMessageSource }
+                        ?.let { edit -> { edit(message) } },
+                    live = streaming,
+                    onOpenInGit = onOpenInGit,
+                )
             }
         }
     }
@@ -206,17 +315,14 @@ internal fun MessageCard(
             } else if (showActions && text.isNotBlank()) {
                 Row(Modifier.padding(top = 6.dp).offset(x = (-4).dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     ConversationActionButton(ConversationGlyph.Copy, "复制", { clipboard.setText(AnnotatedString(text)) })
-                    ConversationActionButton(ConversationGlyph.Speaker, "朗读（暂不可用）")
-                    ConversationActionButton(ConversationGlyph.Feedback, "评价回复（暂不可用）")
-                    ConversationActionButton(ConversationGlyph.Branch, "从这里创建聊天分支（暂不可用）")
+                    ConversationActionButton(ConversationGlyph.Hand, "喜欢")
+                    ConversationActionButton(ConversationGlyph.Feedback, "不喜欢")
+                    ConversationActionButton(ConversationGlyph.Branch, "分叉")
                 }
             }
         }
     }
 }
-
-private fun isHumanMessage(message: Message): Boolean =
-    message.role == MessageRole.USER && message.source == UserMessageSource
 
 /**
  * One row of the rendered timeline: either a message slot or a Codex time separator.
@@ -228,7 +334,7 @@ private fun isHumanMessage(message: Message): Boolean =
 internal sealed interface ConversationTimelineRow {
     val key: String
 
-    data class MessageRow(val message: Message) : ConversationTimelineRow {
+    data class MessageRow(val message: Message, val turnId: String) : ConversationTimelineRow {
         override val key: String get() = message.id
     }
 
@@ -238,26 +344,24 @@ internal sealed interface ConversationTimelineRow {
 }
 
 /**
- * Inserts one separator before each turn's first row, carrying that turn's first durable time.
- * Turns are delimited the same way as [turnWorkedFor] — a human message starts one, everything
- * after it belongs to it — so a turn with no timestamp prints nothing rather than borrowing the
- * previous turn's clock.
+ * Flattens the turn model back into rows: one separator before each turn, then the messages it
+ * owns. Kept as the row-level projection used by timeline tests and by any future visible-range
+ * calculation; the viewport itself renders one lazy item per [ConversationTurn].
  */
 internal fun conversationTimeline(
     messages: List<Message>,
     zone: TimeZone = TimeZone.currentSystemDefault(),
-): List<ConversationTimelineRow> {
+): List<ConversationTimelineRow> = conversationTimelineRows(conversationTurns(messages))
+
+internal fun conversationTimelineRows(turns: List<ConversationTurn>): List<ConversationTimelineRow> {
     val rows = mutableListOf<ConversationTimelineRow>()
-    var index = 0
-    while (index < messages.size) {
-        val head = messages[index]
-        // One turn: the human prompt plus every following non-human message.
-        var cursor = index + 1
-        while (cursor < messages.size && !isHumanMessage(messages[cursor])) cursor++
-        val anchor = messages.subList(index, cursor).firstNotNullOfOrNull { it.timestampMillis }
-        if (anchor != null) rows += ConversationTimelineRow.TimeMarkerRow(head.id, anchor)
-        for (position in index until cursor) rows += ConversationTimelineRow.MessageRow(messages[position])
-        index = cursor
+    turns.forEach { turn ->
+        turn.anchorTimestampMillis?.let { anchor ->
+            rows += ConversationTimelineRow.TimeMarkerRow(turn.id, anchor)
+        }
+        turn.messages.forEach { message ->
+            rows += ConversationTimelineRow.MessageRow(message, turn.id)
+        }
     }
     return rows
 }
@@ -312,40 +416,6 @@ private fun ConversationTimeMarker(epochMillis: Long, anchorMessageId: String, z
     }
 }
 
-/**
- * Live Codex prints one `用时 {duration}` line above the activity of a turn (`localConversation.workedFor`
- * = `用时 {time}`, zh-CN catalogue). The duration is the turn's own wall clock, measured here from the human
- * prompt to the turn's last event, both of which our messages already carry as event timestamps. The header is
- * attached to the first message of the turn that holds activity so a turn prints it once.
- */
-private fun turnWorkedFor(messages: List<Message>): Map<String, Long> {
-    val headers = mutableMapOf<String, Long>()
-    var index = 0
-    while (index < messages.size) {
-        if (isHumanMessage(messages[index])) { index++; continue }
-        var firstActivity: String? = null
-        var last: Long? = null
-        var cursor = index
-        while (cursor < messages.size && !isHumanMessage(messages[cursor])) {
-            val current = messages[cursor]
-            if (firstActivity == null && current.content.any {
-                    it is ReasoningContent || it is ToolCallContent || it is ToolResultContent
-                }) firstActivity = current.id
-            val time = current.timestampMillis
-            if (time != null && (last == null || time > last!!)) last = time
-            cursor++
-        }
-        val start = messages.getOrNull(index - 1)?.takeIf(::isHumanMessage)?.timestampMillis
-            ?: messages.subList(index, cursor).firstNotNullOfOrNull { it.timestampMillis }
-        val end = last
-        if (firstActivity != null && start != null && end != null && end > start) {
-            headers[firstActivity] = end - start
-        }
-        index = cursor
-    }
-    return headers
-}
-
 internal class ToolResultEntry(val messageId: String, val index: Int, val content: ToolResultContent)
 
 /** Results whose call is present in the same history: they belong to that call's activity row. */
@@ -366,23 +436,21 @@ private fun toolResultIndex(messages: List<Message>): Map<String, ToolResultEntr
 private fun Message.isFoldedToolResult(results: Map<String, ToolResultEntry>): Boolean =
     content.isNotEmpty() && content.all { it is ToolResultContent && results[it.toolCallId]?.messageId == id }
 
-/** The action row sits under the last text of a turn, not under every message inside it. */
-private fun turnLastTextMessageIds(messages: List<Message>): Set<String> {
-    val ids = mutableSetOf<String>()
-    var index = 0
-    while (index < messages.size) {
-        if (isHumanMessage(messages[index])) { index++; continue }
-        var lastText: String? = null
-        var cursor = index
-        while (cursor < messages.size && !isHumanMessage(messages[cursor])) {
-            val current = messages[cursor]
-            if (current.content.any { it is TextContent }) lastText = current.id
-            cursor++
-        }
-        lastText?.let(ids::add)
-        index = cursor
-    }
-    return ids
+/**
+ * CONV-02 step two: the reader's resting position, expressed in the same units the lazy list uses
+ * for `scrollToItem` — turn id plus how far that turn's top is scrolled past the viewport top.
+ * Turn ids survive refresh and streaming, so the anchor survives both even when indices shift.
+ */
+private data class TurnScrollAnchor(val turnId: String, val offset: Int)
+
+/**
+ * Anchors only on a turn: the error card and the zero-height end spacer are not reading positions.
+ * The first visible item is where the reader is looking, so no message-level anchor is attempted.
+ */
+private fun LazyListState.turnScrollAnchor(turns: List<ConversationTurn>): TurnScrollAnchor? {
+    val first = layoutInfo.visibleItemsInfo.firstOrNull() ?: return null
+    if (first.index !in turns.indices) return null
+    return TurnScrollAnchor(turns[first.index].id, firstVisibleItemScrollOffset)
 }
 
 private fun conversationScrollbarMetrics(state: LazyListState, itemCount: Int): HarnessScrollbarMetrics {
@@ -392,8 +460,11 @@ private fun conversationScrollbarMetrics(state: LazyListState, itemCount: Int): 
     if (viewport <= 0 || itemCount <= 0 || visible.isEmpty()) {
         return HarnessScrollbarMetrics(0f, 1f, visible = false)
     }
-    val measuredExtent = visible.sumOf { it.size }.toFloat()
-    val averageItemExtent = (measuredExtent / visible.size).coerceAtLeast(1f)
+    // The end anchor has zero height; averaging it in would halve the estimated document extent
+    // once turns (not messages) became the lazy items.
+    val measured = visible.filter { it.size > 0 }.ifEmpty { visible }
+    val measuredExtent = measured.sumOf { it.size }.toFloat()
+    val averageItemExtent = (measuredExtent / measured.size).coerceAtLeast(1f)
     val contentExtent = (itemCount * averageItemExtent).coerceAtLeast(viewport.toFloat())
     val maxScroll = (contentExtent - viewport).coerceAtLeast(0f)
     val first = visible.first()

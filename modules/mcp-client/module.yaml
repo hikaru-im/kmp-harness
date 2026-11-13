@@ -1,0 +1,14 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../../contracts/harness-protocol
+  - ../llm
+  - ../loader
+  - ../runtime
+  - ../session
+  - ../system-prompt
+  - ../tools
+  - io.modelcontextprotocol:kotlin-sdk-client:0.11.0
+  - io.ktor:ktor-client-cio:3.5.1

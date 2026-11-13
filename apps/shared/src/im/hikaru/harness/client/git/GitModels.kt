@@ -84,6 +84,43 @@ public data class GitStatusSnapshot(
     public val untrackedCount: Int get() = changes.count { it.untracked }
 }
 
+/**
+ * Codex `review.stageFilter` (GIT-10): the review list is split by whether a change is already in
+ * the index. Labels come from the zh-CN locale (`codex.review.stageFilter.staged|unstaged`).
+ */
+public enum class GitChangeFilter(public val label: String) {
+    Unstaged("未暂存"),
+    Staged("已暂存"),
+}
+
+/**
+ * Pure predicate shared by filter chips, counts and the list itself, matching Codex's
+ * staged/unstaged split exactly: Unstaged = untracked or a worktree difference; Staged = an index
+ * difference. A conflicted entry carries a real letter on both sides, so it appears in both lists
+ * until the conflict is resolved; it is never hidden by either filter.
+ */
+public fun GitChangeFilter.matches(change: GitChange): Boolean = when (this) {
+    GitChangeFilter.Unstaged -> change.untracked || change.unstaged
+    GitChangeFilter.Staged -> change.staged
+}
+
+/**
+ * The diff half that backs this filter, mirroring Codex's review query key: the unstaged list is
+ * compared against the worktree and the staged list against the index. Review reads switch the
+ * controller's diff request to this source, so the file tree and the patch never describe
+ * different halves of the same repository.
+ */
+public val GitChangeFilter.diffSource: GitDiffSource
+    get() = when (this) {
+        GitChangeFilter.Unstaged -> GitDiffSource.WorkingTree
+        GitChangeFilter.Staged -> GitDiffSource.Index
+    }
+
+public fun GitChangeFilter.filter(changes: List<GitChange>): List<GitChange> = changes.filter { matches(it) }
+
+/** Count for the filter chip; derived from [matches] so the chip and the list never disagree. */
+public fun GitChangeFilter.count(changes: List<GitChange>): Int = changes.count { matches(it) }
+
 public data class GitBranch(val ref: String, val oid: String, val current: Boolean, val remote: Boolean)
 public data class GitWorktree(
     val path: String, val headOid: String?, val branch: String?, val detached: Boolean = false,
@@ -309,6 +346,81 @@ public interface GitCommitter {
     public suspend fun commit(repository: GitRepository, request: GitCommitRequest): GitCommitResult
 }
 
+/**
+ * Codex `review.patch` stage/unstage (GIT-10): both actions write only the index.
+ * Stage = apply the worktree patch into the index (`git apply --cached`); Unstage = apply the
+ * index patch in reverse (`git apply --cached -R`). No worktree file is ever rewritten.
+ */
+public enum class GitStageAction { Stage, Unstage }
+
+/**
+ * Exactly one reviewed path per request, so no caller can name a second path that was never shown.
+ * A staged rename's source is not part of this value: the backend rereads the change list and names
+ * that side itself, which keeps every argv element derived from a validated status read.
+ */
+public sealed interface GitStageTarget {
+    /** A whole path: modified, added, untracked or deleted. */
+    public data class File(override val path: String) : GitStageTarget
+
+    /**
+     * One hunk of one file. The patch must be a self-contained single-file, single-hunk unified
+     * diff whose path matches [path]; the backend rejects anything else before running Git.
+     */
+    public data class Hunk(override val path: String, val patch: String) : GitStageTarget
+
+    public val path: String
+}
+
+/**
+ * `expectedHeadOid == null` means the caller observed an unborn branch (no commit yet); the backend
+ * verifies that exact state instead of trusting a stale read. [expectedBranch] is the symbolic ref
+ * (`refs/heads/…`) or null for a detached HEAD.
+ */
+public data class GitStageRequest(
+    val binding: GitBinding,
+    val root: String,
+    val expectedBranch: String?,
+    val expectedHeadOid: String?,
+    val action: GitStageAction,
+    val target: GitStageTarget,
+)
+
+/** The post-command status is a real reread; it is never derived from the patch or the exit code. */
+public data class GitStageReceipt(
+    val repository: GitRepository,
+    val request: GitStageRequest,
+    val status: GitStatusSnapshot,
+)
+
+public sealed interface GitStageResult {
+    public data class Applied(val receipt: GitStageReceipt) : GitStageResult
+    public data class Rejected(val failure: GitFailure) : GitStageResult
+    public data class UnknownOutcome(val failure: GitFailure) : GitStageResult
+}
+
+public sealed interface GitStage {
+    public data object Idle : GitStage
+    public data class Applying(val request: GitStageRequest) : GitStage
+    public data class Applied(val receipt: GitStageReceipt) : GitStage
+    public data class Rejected(val failure: GitFailure) : GitStage
+    public data class UnknownOutcome(val failure: GitFailure) : GitStage
+    public data object Rescanned : GitStage
+}
+
+/** Optional local capability, separate from the read-only GitBackend. */
+public interface GitStager {
+    public fun canStage(binding: GitBinding): Boolean
+    public suspend fun applyStage(repository: GitRepository, request: GitStageRequest): GitStageResult
+}
+
+/**
+ * A path a staging command may name. Repository-relative only: no absolute path, no `.`/`..`
+ * segment, no backslash, no NUL, and no leading `-` (which Git would read as an option even after
+ * `--`-free argv positions). Backends pass it only as an argv element after `--`, never via a shell.
+ */
+public fun gitStagePathIsSafe(path: String): Boolean =
+    !path.startsWith("-") && gitPreviewPathIsSafe(path)
+
 public enum class GitDiffSource { WorkingTree, Index, BaseBranch }
 public data class GitDiffRequest(
     val source: GitDiffSource = GitDiffSource.WorkingTree,
@@ -357,6 +469,12 @@ public data class GitState(
     val worktrees: GitRead<List<GitWorktree>> = GitRead.Unselected,
     val diffRequest: GitDiffRequest = GitDiffRequest(),
     val diff: GitRead<GitDiffSnapshot> = GitRead.Unselected,
+    /**
+     * The thread side panel's Changes (审查) read. It is a separate slot from [diff] on purpose:
+     * Codex's review tab owns its own source (`reviewSourceAtom`), so opening review or switching its
+     * stage filter must not rewrite the diff source the Settings → Git page is configured with.
+     */
+    val reviewDiff: GitRead<GitDiffSnapshot> = GitRead.Unselected,
     /** Independent of [diff]: the Environment summary reads its own HEAD-based numbers. */
     val summaryStats: GitRead<GitDiffStats> = GitRead.Unselected,
     /** Rich-preview text per diff path, read lazily only while the preview toggle is on. */
@@ -382,6 +500,12 @@ public data class GitState(
     val commit: GitCommit = GitCommit.Idle,
     val commitNeedsRescan: Boolean = false,
     val includeUnstaged: Boolean = false,
+    val stageAvailable: Boolean = false,
+    val stageBusy: Boolean = false,
+    val stage: GitStage = GitStage.Idle,
+    val stageNeedsRescan: Boolean = false,
+    /** Codex `review.stageFilter`: which half of the change list the page shows. Reset on rebind. */
+    val changeFilter: GitChangeFilter = GitChangeFilter.Unstaged,
 ) {
     public val unavailableReason: String? get() = when (binding?.access) {
         null -> "尚未绑定编程 Host。"
@@ -392,18 +516,20 @@ public data class GitState(
     public val canRefresh: Boolean get() = unavailableReason == null && !selectedCwd.isNullOrBlank()
     public val canCreateWorktree: Boolean get() = creationAvailable && unavailableReason == null &&
         repository is GitRead.Ready && repository.value.binding == binding && !creationBusy && !creationNeedsRescan &&
-        !checkoutNeedsRescan && !commitNeedsRescan && !branchCreateNeedsRescan
+        !checkoutNeedsRescan && !commitNeedsRescan && !branchCreateNeedsRescan && !stageNeedsRescan
     public val checkoutDisabledReason: String? get() {
         unavailableReason?.let { return it }
         if (!checkoutAvailable) return "此 Host 未提供本地分支切换能力。"
-        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy) return "正在执行 Git 操作。"
-        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan)
+        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy || stageBusy) return "正在执行 Git 操作。"
+        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan || stageNeedsRescan)
             return "结果未知，请先刷新仓库状态、分支和工作树及原工作树暂存区。"
         val repo = (repository as? GitRead.Ready<GitRepository>)?.value
         if (repo == null || repo.binding != binding) return "请先读取仓库。"
         val current = (status as? GitRead.Ready<GitStatusSnapshot>)?.value ?: return "请先读取真实仓库状态。"
         if (current.headOid == null) return "尚无提交，无法切换分支。"
-        if (current.changes.isNotEmpty()) return "工作树、暂存区或未跟踪文件非干净，请先自行处理。"
+        // `composer.footer.branchSwitch.uncommittedDialog.title`: Codex answers a dirty worktree with
+        // 「提交更改以切换分支」 — one short reason, not an enumeration of what is dirty.
+        if (current.changes.isNotEmpty()) return "提交更改以切换分支"
         val refs = (branches as? GitRead.Ready<List<GitBranch>>)?.value ?: return "请先读取分支。"
         val target = refs.singleOrNull { it.ref == selectedBranchRef } ?: return "请选择已有本地分支。"
         if (target.remote || !target.ref.startsWith("refs/heads/")) return "仅支持已有本地分支。"
@@ -415,19 +541,21 @@ public data class GitState(
     public val branchCreateDisabledReason: String? get() {
         unavailableReason?.let { return it }
         if (!branchCreateAvailable) return "此 Host 未提供本机新建分支能力。"
-        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy) return "正在执行 Git 操作。"
-        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan)
+        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy || stageBusy) return "正在执行 Git 操作。"
+        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan || stageNeedsRescan)
             return "结果未知，请先刷新仓库状态、分支和工作树及原工作树暂存区。"
         val repo = (repository as? GitRead.Ready<GitRepository>)?.value
         if (repo == null || repo.binding != binding) return "请先读取仓库。"
         val current = (status as? GitRead.Ready<GitStatusSnapshot>)?.value ?: return "请先读取真实仓库状态。"
         if (current.headOid == null) return "尚无提交，无法新建分支。"
-        if (current.changes.isNotEmpty()) return "工作树、暂存区或未跟踪文件非干净，请先自行处理。"
+        // `composer.footer.branchSwitch.createAndCheckout.disabledTooltip` = 提交更改以创建并检出新分支.
+        if (current.changes.isNotEmpty()) return "提交更改以创建并检出新分支"
         val name = newBranchName.trim()
         if (name.isBlank()) return "请输入新分支名称。"
         if (!validLocalBranchName(name)) return "分支名称不是有效的本地引用。"
         val refs = (branches as? GitRead.Ready<List<GitBranch>>)?.value ?: return "请先读取分支。"
-        if (refs.any { !it.remote && it.ref == "refs/heads/$name" }) return "同名本地分支已存在。"
+        // `composer.footer.branchSwitch.createDialog.branchExistsError` = 分支已存在。 (with the period).
+        if (refs.any { !it.remote && it.ref == "refs/heads/$name" }) return "分支已存在。"
         val start = newBranchStartRef
         if (start == null || start == "HEAD") return null
         val base = refs.singleOrNull { it.ref == start && !it.remote && it.ref.startsWith("refs/heads/") }
@@ -439,8 +567,8 @@ public data class GitState(
     public val commitDisabledReason: String? get() {
         unavailableReason?.let { return it }
         if (!commitAvailable) return "此 Host 未提供本机提交能力。"
-        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy) return "正在执行 Git 操作。"
-        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan)
+        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy || stageBusy) return "正在执行 Git 操作。"
+        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan || stageNeedsRescan)
             return "结果未知，请先刷新原工作树暂存区与仓库状态。"
         val repo = (repository as? GitRead.Ready<GitRepository>)?.value ?: return "请先读取仓库。"
         if (repo.binding != binding) return "仓库绑定已变化，请重新读取。"
@@ -451,12 +579,40 @@ public data class GitState(
         if (snapshot.stagedCount <= 0) {
             // With the stage step enabled an empty index is allowed as long as the worktree has
             // something to stage; the backend still rejects a request that stages nothing.
-            if (!includeUnstaged) return "没有已暂存变更；请使用外部 Git 暂存，或勾选「包含未暂存变更」。"
-            if (snapshot.status.changes.isEmpty()) return "没有可提交的变更。"
+            // `review.commit.disabled.noChanges` = 无可提交的更改 — Codex's own single sentence for
+            // this state. It does not also instruct the user which checkbox would unblock it.
+            if (!includeUnstaged) return "无可提交的更改"
+            if (snapshot.status.changes.isEmpty()) return "无可提交的更改"
         }
         return null
     }
     public val canCommit: Boolean get() = commitDisabledReason == null
+
+    /**
+     * Shared admission gate for both stage and unstage. The per-target eligibility (is this path
+     * actually unstaged/staged?) is checked by the controller against the same [status] snapshot.
+     */
+    public val stageDisabledReason: String? get() {
+        unavailableReason?.let { return it }
+        if (!stageAvailable) return "此 Host 未提供本机暂存能力。"
+        if (creationBusy || checkoutBusy || commitBusy || branchCreateBusy || stageBusy) return "正在执行 Git 操作。"
+        if (creationNeedsRescan || checkoutNeedsRescan || commitNeedsRescan || branchCreateNeedsRescan || stageNeedsRescan)
+            return "结果未知，请先刷新原工作树暂存区与仓库状态。"
+        val repo = (repository as? GitRead.Ready<GitRepository>)?.value ?: return "请先读取仓库。"
+        if (repo.binding != binding) return "仓库绑定已变化，请重新读取。"
+        if (status !is GitRead.Ready<GitStatusSnapshot>) return "请先读取真实仓库状态。"
+        return null
+    }
+    public val canStage: Boolean get() = stageDisabledReason == null
+}
+
+/**
+ * Whether the action is meaningful for one entry. A conflicted entry is rejected for both actions:
+ * its index has unmerged stages, which this harness never rewrites — resolve it with external Git.
+ */
+public fun GitStageAction.accepts(change: GitChange): Boolean = !change.conflicted && when (this) {
+    GitStageAction.Stage -> change.untracked || change.unstaged
+    GitStageAction.Unstage -> change.staged
 }
 
 /** Read-only by construction. No checkout, init, create, delete or shell command entry point. */

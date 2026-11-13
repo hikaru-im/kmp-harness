@@ -42,9 +42,15 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import kotlinx.coroutines.withTimeoutOrNull
 import im.hikaru.harness.ui.foundation.HarnessButton
+import im.hikaru.harness.ui.foundation.HarnessButtonState
 import im.hikaru.harness.ui.foundation.HarnessButtonVariant
 import im.hikaru.harness.ui.foundation.HarnessControlSize
+import im.hikaru.harness.ui.foundation.HarnessIcon
 import im.hikaru.harness.ui.foundation.HarnessIconButton
+import im.hikaru.harness.ui.foundation.HarnessIconName
+import im.hikaru.harness.ui.foundation.HarnessMenu
+import im.hikaru.harness.ui.foundation.HarnessMenuEntry
+import im.hikaru.harness.ui.foundation.HarnessPopoverAlign
 import im.hikaru.harness.ui.foundation.HarnessTab
 import im.hikaru.harness.ui.foundation.HarnessTabs
 import im.hikaru.harness.ui.foundation.HarnessTabsState
@@ -57,6 +63,10 @@ import im.hikaru.harness.ui.foundation.HarnessTokens
  * No IO is started by composition. Width policy is exposed separately by ThreadPanelLayout.
  * A child interaction slot must own real prompt/cancel consumers; it is never mounted without
  * current list AND detail canInteract. Omit it when interaction is unavailable.
+ *
+ * [changesContent] renders the Changes (审查) tab body. It is injected because the review pane reads
+ * the app-owned GitController snapshot rather than a panel service; omitting it keeps the tab
+ * honest — it then says the review service is unavailable instead of drawing an empty diff.
  */
 @Composable
 public fun ThreadPanels(
@@ -64,6 +74,7 @@ public fun ThreadPanels(
     onAction: (ThreadPanelAction) -> Unit,
     modifier: Modifier = Modifier,
     childInteraction: (@Composable (ChildAgentDetail) -> Unit)? = null,
+    changesContent: (@Composable () -> Unit)? = null,
     onRefreshOverview: (() -> Unit)? = null,
     onRefreshDetail: (() -> Unit)? = null,
     onRefreshTerminal: (() -> Unit)? = null,
@@ -94,21 +105,28 @@ public fun ThreadPanels(
         }
     }
     Column(modifier.fillMaxSize().background(HarnessTokens.Colors.Surface)) {
-        HarnessTabs(
-            state = HarnessTabsState(state.openTabs.map {
-                HarnessTab(it.name, it.title, closable = true)
-            }, state.selectedTab?.name),
-            onStateChange = { next ->
-                val closed = state.openTabs.firstOrNull { tab -> next.tabs.none { it.key == tab.name } }
-                if (closed != null) onAction(ThreadPanelAction.CloseTab(state.scope, closed))
-                else ThreadPanelTab.entries.firstOrNull { it.name == next.effectiveSelectedKey }?.let {
-                    onAction(ThreadPanelAction.SelectTab(state.scope, it))
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = "会话面板",
-            closeLabel = { "关闭" + it.title },
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            // The strip keeps its intrinsic width so the + stays at the trailing edge; a long list
+            // scrolls inside HarnessTabs rather than pushing the control off screen.
+            Box(Modifier.weight(1f)) {
+                HarnessTabs(
+                    state = HarnessTabsState(state.openTabs.map {
+                        HarnessTab(it.name, it.title, closable = true)
+                    }, state.selectedTab?.name),
+                    onStateChange = { next ->
+                        val closed = state.openTabs.firstOrNull { tab -> next.tabs.none { it.key == tab.name } }
+                        if (closed != null) onAction(ThreadPanelAction.CloseTab(state.scope, closed))
+                        else ThreadPanelTab.entries.firstOrNull { it.name == next.effectiveSelectedKey }?.let {
+                            onAction(ThreadPanelAction.SelectTab(state.scope, it))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "会话面板",
+                    closeLabel = { "关闭" + it.title },
+                )
+            }
+            OpenTabMenu(state, onAction)
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when (state.selectedTab) {
                 ThreadPanelTab.BackgroundOutput -> Column(Modifier.fillMaxSize()) {
@@ -125,7 +143,7 @@ public fun ThreadPanels(
                     }
                     if (interactive) {
                         if (ptyController != null && ptyState != null) PtyTerminalPanel(ptyController, ptyState, Modifier.weight(1f))
-                        else PanelMessage("交互终端不可用", "当前连接没有终端服务。")
+                        else PanelMessage("交互终端不可用")
                     } else {
                     if (state.terminalInventory.isNotEmpty()) Box(Modifier.fillMaxWidth().padding(12.dp)) {
                         SettingsFormSelect<BackgroundTerminalKey?>(
@@ -165,7 +183,9 @@ public fun ThreadPanels(
                     )
                     SubagentsPanel(state, onAction, Modifier.fillMaxWidth().weight(1f), childInteraction)
                 }
-                null -> PanelMessage("面板已关闭", "通过会话面板入口重新打开。")
+                ThreadPanelTab.Changes -> if (changesContent != null) changesContent()
+                else PanelMessage("审查不可用")
+                null -> PanelMessage("面板已关闭")
             }
         }
     }
@@ -192,9 +212,44 @@ private val BackgroundProcessLifecycle.label: String
 
 private val ThreadPanelTab.title: String
     get() = when (this) {
+        ThreadPanelTab.Changes -> "审查"
         ThreadPanelTab.BackgroundOutput -> "后台终端"
         ThreadPanelTab.Subagents -> "子智能体"
     }
+
+/**
+ * Codex's `ThreadPanelOpenTabDropdown` (`thread.sidePanel.openTab` → 「打开侧边面板标签页」): a `+`
+ * at the strip's trailing edge whose menu lists the panel's tabs. Selecting one opens it, or
+ * re-selects it when it is already open — `OpenTab` is idempotent, so the menu never duplicates.
+ */
+@Composable
+private fun OpenTabMenu(
+    state: ThreadPanelsState,
+    onAction: (ThreadPanelAction) -> Unit,
+) {
+    var expanded by remember(state.scope) { mutableStateOf(false) }
+    HarnessMenu(
+        expanded = expanded,
+        entries = ThreadPanelTab.entries.map { tab ->
+            HarnessMenuEntry.Item(tab.name, tab.title, selected = tab in state.openTabs,
+                testTag = "thread-panel-open-" + tab.name)
+        },
+        onExpandedChange = { expanded = it },
+        onSelect = { key ->
+            ThreadPanelTab.entries.firstOrNull { it.name == key }?.let {
+                onAction(ThreadPanelAction.OpenTab(state.scope, it))
+            }
+        },
+        align = HarnessPopoverAlign.End,
+        popupModifier = Modifier.semantics { testTag = "thread-panel-open-tab-menu" },
+        anchor = { toggle ->
+            HarnessIconButton("打开侧边面板标签页", toggle,
+                state = HarnessButtonState(), testTag = "thread-panel-open-tab") {
+                HarnessIcon(HarnessIconName.Plus, size = HarnessTokens.Control.NavigatorIcon)
+            }
+        },
+    )
+}
 
 /** Explicit pipe operations. Sending a line appends LF; EOF permanently closes stdin. */
 @Composable
@@ -255,8 +310,8 @@ internal fun BackgroundOutputPanel(
 ) {
     Box(modifier) {
         when (load) {
-            is PanelLoad.Unavailable -> PanelMessage("终端不可用", load.serviceDescription ?: load.reason.description)
-            is PanelLoad.Empty -> PanelMessage("没有后台进程", "当前会话没有已注册的后台进程。打开面板不会创建进程。")
+            is PanelLoad.Unavailable -> PanelMessage("终端不可用")
+            is PanelLoad.Empty -> PanelMessage("没有后台进程")
             is PanelLoad.Loading -> PanelMessage("正在加载输出…")
             is PanelLoad.Error -> PanelMessage("无法加载输出", load.message, error = true)
             is PanelLoad.Ready -> {
@@ -350,7 +405,7 @@ public fun SubagentsPanel(
         if (state.selectedChild != null) {
             ChildDetailPanel(state, onAction, childInteraction)
         } else when (val load = state.subagents) {
-            is PanelLoad.Unavailable -> PanelMessage("子智能体不可用", load.reason.description)
+            is PanelLoad.Unavailable -> PanelMessage("子智能体不可用")
             is PanelLoad.Loading -> PanelMessage("正在加载子智能体…")
             is PanelLoad.Empty -> PanelMessage("没有子智能体")
             is PanelLoad.Error -> PanelMessage("无法加载子智能体", load.message, error = true)
@@ -361,14 +416,11 @@ public fun SubagentsPanel(
                     HarnessText("正在刷新子智能体…", color = HarnessTokens.Colors.TextMuted, style = panelTextStyle())
                     Spacer(Modifier.height(8.dp))
                 }
-                if (load.value.completeness == SubagentOverviewCompleteness.LiveOnlyIncomplete) {
-                    HarnessText("仅显示当前可读取的 live 子会话；历史或已卸载子会话可能未包含。",
-                        color = HarnessTokens.Colors.TextMuted, style = panelTextStyle())
-                    Spacer(Modifier.height(8.dp))
-                }
+                // `codex.localConversation.backgroundTasks.title.subagents` names the panel; Codex adds
+                // no standing sentence about which subagents a list may or may not have included.
                 if (load.value.children.isEmpty()) {
                     HarnessText(if (load.value.completeness == SubagentOverviewCompleteness.Complete)
-                        "没有子智能体" else "没有可读取的 live 子智能体", style = panelTextStyle())
+                        "没有子智能体" else "没有可读取的子智能体", style = panelTextStyle())
                 } else {
                     SubagentSectionView(state, SubagentSection.Active, onAction)
                     if (load.value.children(SubagentSection.Done).isNotEmpty()) {
@@ -392,8 +444,7 @@ private fun SubagentSectionView(state: ThreadPanelsState, section: SubagentSecti
     val all = overview.children(section)
     val shown = state.visibleChildren(section)
     SectionHeading(section.heading(all.size))
-    if (shown.isEmpty()) HarnessText(if (overview.completeness == SubagentOverviewCompleteness.Complete)
-        "没有活跃的子智能体" else "此 live 快照中没有活跃的子智能体", Modifier.padding(horizontal = 8.dp),
+    if (shown.isEmpty()) HarnessText("没有活跃的子智能体", Modifier.padding(horizontal = 8.dp),
         color = HarnessTokens.Colors.TextMuted, style = panelTextStyle())
     else ChildRows(shown, onAction)
     if (shown.size < all.size) HarnessButton(
@@ -512,7 +563,7 @@ private fun ChildDetailPanel(
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when (val load = state.detail) {
-                is PanelLoad.Unavailable -> PanelMessage("对话记录不可用", load.reason.description)
+                is PanelLoad.Unavailable -> PanelMessage("对话记录不可用")
                 is PanelLoad.Loading -> PanelMessage("正在加载子智能体对话记录…")
                 is PanelLoad.Empty -> PanelMessage("没有消息")
                 is PanelLoad.Error -> PanelMessage("无法加载对话记录", load.message, error = true)

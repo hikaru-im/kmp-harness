@@ -43,7 +43,8 @@ class WorktreePageInteractionTest {
                 waitUntil { f.ready() && f.managed.state.value.phase == ManagedWorktreePhase.Ready }
                 assertEquals(GitWorktreesPageFixture.longRoot, f.managedReads.calls.last().root)
                 onNodeWithTag("git-repository-root").assertTextEquals(GitWorktreesPageFixture.longRoot)
-                onNodeWithText("包含未托管的工作树", substring = true).assertExists()
+                // Codex's worktree section is just the list; no editorial sentence about ownership.
+                onNodeWithText("包含未托管的工作树", substring = true).assertDoesNotExist()
             }
         } finally { gate.complete(Unit); f.close() }
     }
@@ -96,7 +97,9 @@ class WorktreePageInteractionTest {
                 }
                 onAllNodesWithTag("managed-sessions-availability")[0].assertTextEquals("保护状态未知")
                 onAllNodesWithTag("managed-pins-availability")[0].assertTextEquals("保护服务不可用")
-                scrollGitNodeIntoView(onNodeWithTag("managed-destructive-unavailable")).assertIsDisplayed()
+                onNodeWithTag("managed-destructive-unavailable").assertDoesNotExist()
+                onNodeWithTag("managed-removal-status").assertDoesNotExist()
+                onNodeWithTag("managed-remove").assertDoesNotExist()
                 for (tag in listOf("managed-delete", "managed-archive-submit", "managed-cleanup", "managed-pin", "managed-snapshot")) {
                     onNodeWithTag(tag).assertDoesNotExist()
                 }
@@ -143,9 +146,11 @@ class WorktreePageInteractionTest {
                     "codex/typed-receipt", "HEAD"), f.backend.creations.single().second)
                 runOnIdle { gate.complete(Unit) }
                 waitUntil { f.git.state.value.creation is GitWorktreeCreation.Created && f.ready() }
-                onNodeWithTag("git-worktree-create-success").performScrollTo().assertTextEquals("已创建：${GitWorktreesPageFixture.longRoot}")
-                onNodeWithTag("git-worktree-created-branch").assertTextEquals("refs/heads/codex/typed-receipt")
-                onNodeWithTag("git-worktree-created-boundary").assertTextContains("环境设置与会话关联尚未确认", substring = true)
+                onNodeWithText("已创建工作树：${GitWorktreesPageFixture.longRoot}").assertExists()
+                assertEquals("refs/heads/codex/typed-receipt", assertIs<GitWorktreeCreation.Created>(f.git.state.value.creation).receipt.worktree.branch)
+                // The receipt prints the two facts it read and stops; no paragraph qualifies what the
+                // receipt does or does not also prove.
+                onNodeWithText("环境设置与会话关联尚未确认", substring = true).assertDoesNotExist()
                 onNodeWithText("Managed 归属已核验").assertDoesNotExist()
                 assertEquals(GitWorktreesPageFixture.longRoot, f.git.state.value.selectedCwd)
             }
@@ -174,11 +179,11 @@ class WorktreePageInteractionTest {
                 onNodeWithTag("git-worktree-create-branch").performScrollTo().performTextReplacement("codex/keep-draft")
                 onNodeWithTag("git-worktree-create-submit").performScrollTo().performMouseInput { click() }
                 waitUntil { f.git.state.value.creation is GitWorktreeCreation.Failed && !f.git.state.value.creationBusy }
-                onNodeWithTag("git-worktree-create-error").assertTextEquals(if (needsRescan) "创建结果未知" else "目标路径已存在")
+                onNodeWithText(if (needsRescan) "创建结果未知" else "目标路径已存在").assertExists()
                 onNodeWithTag("git-worktree-create-path").assertTextEquals(GitWorktreesPageFixture.longRoot)
                 onNodeWithTag("git-worktree-create-branch").assertTextEquals("codex/keep-draft")
                 onNodeWithTag("git-worktree-create-success").assertDoesNotExist()
-                onNodeWithTag("git-worktree-created-boundary").assertDoesNotExist()
+                onNodeWithText("环境设置与会话关联尚未确认", substring = true).assertDoesNotExist()
                 if (needsRescan) {
                     onNodeWithTag("git-worktree-create-needs-rescan").assertExists()
                     onNodeWithTag("git-worktree-create-submit").assertIsNotEnabled().performMouseInput { click() }
@@ -202,7 +207,7 @@ class WorktreePageInteractionTest {
             f.git.refresh()
             runSkikoComposeUiTest(size = Size(600f, 800f)) {
                 setContent { HarnessTheme { WorktreesPage(f.git) } }
-                onNodeWithTag("managed-unavailable").assertTextEquals("托管管理暂不可用。")
+                onNodeWithTag("managed-unavailable").assertTextEquals("无法加载工作树")
                 onNodeWithTag("managed-refresh").assertDoesNotExist()
                 onNodeWithTag("git-worktrees-empty").assertDoesNotExist()
                 onNodeWithText("worktree inventory failed").assertExists()

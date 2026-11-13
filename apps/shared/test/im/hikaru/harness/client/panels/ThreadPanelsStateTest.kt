@@ -144,6 +144,51 @@ class ThreadPanelsStateTest {
     }
 
     @Test
+    fun changesTabIsClosedByDefaultAndOpensOnlyOnDemand() {
+        // Codex opens the review pane through `openReviewTab`, so a default snapshot must not
+        // already carry a review tab — otherwise every thread would render a review pane.
+        val state = ThreadPanelsState(scope)
+        assertEquals(listOf(ThreadPanelTab.BackgroundOutput, ThreadPanelTab.Subagents), state.openTabs)
+        assertFalse(ThreadPanelTab.Changes in state.openTabs)
+        assertEquals(ThreadPanelTab.BackgroundOutput, state.selectedTab)
+
+        val opened = state.reduce(ThreadPanelAction.OpenTab(scope, ThreadPanelTab.Changes))
+        assertEquals(listOf(ThreadPanelTab.BackgroundOutput, ThreadPanelTab.Subagents, ThreadPanelTab.Changes), opened.openTabs)
+        assertEquals(ThreadPanelTab.Changes, opened.selectedTab)
+        // Re-opening an open tab only re-selects it; it never duplicates the entry.
+        val selected = opened.reduce(ThreadPanelAction.SelectTab(scope, ThreadPanelTab.Subagents))
+            .reduce(ThreadPanelAction.OpenTab(scope, ThreadPanelTab.Changes))
+        assertEquals(opened.openTabs, selected.openTabs)
+        assertEquals(ThreadPanelTab.Changes, selected.selectedTab)
+    }
+
+    @Test
+    fun closingChangesKeepsEveryOtherReadAndGeneration() {
+        val state = ThreadPanelsState(scope).reduce(ThreadPanelAction.OpenTab(scope, ThreadPanelTab.Changes))
+        val closed = state.reduce(ThreadPanelAction.CloseTab(scope, ThreadPanelTab.Changes))
+        // The review tab owns no service read: closing it must not fence terminal or subagent reads.
+        assertEquals(listOf(ThreadPanelTab.BackgroundOutput, ThreadPanelTab.Subagents), closed.openTabs)
+        // Neighbour rule: the tab after the closed one, else the previous one.
+        assertEquals(ThreadPanelTab.Subagents, closed.selectedTab)
+        assertEquals(state.terminalGeneration, closed.terminalGeneration)
+        assertEquals(state.overviewGeneration, closed.overviewGeneration)
+        assertEquals(state.detailGeneration, closed.detailGeneration)
+        assertEquals(state.terminal, closed.terminal)
+        assertEquals(state.subagents, closed.subagents)
+        // And a response that is already in flight still lands.
+        val late = closed.reduce(ThreadPanelAction.ReceiveTerminal(scope, closed.terminalGeneration,
+            PanelLoad.Ready(scope, terminal(1, "still here"))))
+        assertTrue(late.terminal is PanelLoad.Ready)
+        // Closing the last tab still ends with no selection, and selection of a closed tab is a no-op.
+        val onlyChanges = ThreadPanelsState(scope, openTabs = listOf(ThreadPanelTab.Changes),
+            selectedTab = ThreadPanelTab.Changes)
+        val empty = onlyChanges.reduce(ThreadPanelAction.CloseTab(scope, ThreadPanelTab.Changes))
+        assertTrue(empty.openTabs.isEmpty())
+        assertNull(empty.selectedTab)
+        assertEquals(empty, empty.reduce(ThreadPanelAction.SelectTab(scope, ThreadPanelTab.Changes)))
+    }
+
+    @Test
     fun closeSelectsNeighbourAndFencesResponsesAcrossReopen() {
         val initial = ThreadPanelsState(scope).reduce(ThreadPanelAction.BeginTerminalLoad(scope))
         val closed = initial.reduce(ThreadPanelAction.CloseTab(scope, ThreadPanelTab.BackgroundOutput))

@@ -66,6 +66,9 @@ class PluginRoutingInteractionTest {
             val connection = RoutingPluginConnection("first")
             setContent { HarnessApp(connection, initialDestination = HarnessDestination.PluginInventory) }
             onNodeWithText("插件服务不可用").assertExists()
+            onNodeWithText("插件服务未接入").assertDoesNotExist()
+            onNodeWithTag("plugins-filter-all").assertIsNotEnabled()
+            onNodeWithTag("plugins-filter-enabled").assertIsNotEnabled()
             onNodeWithText("Desktop Client UI").assertDoesNotExist()
             onNodeWithTag("plugins-search").assertIsNotEnabled()
             onNodeWithTag("plugins-refresh").assertIsNotEnabled()

@@ -31,7 +31,11 @@ public data class GeneralSettingsState(
     val saveError: String? = null,
     val saveRevision: Long = 0,
 ) {
-    public val canEdit: Boolean get() = closePolicyAvailable && loaded && !loading && !saving && loadError == null
+    /** Enter behavior needs only a loaded document; the platform adapter only gates the close policy. */
+    public val canEdit: Boolean get() = loaded && !loading && !saving && loadError == null
+
+    /** The close policy keeps its own availability gate: an unsupported platform must not edit it. */
+    public val closePolicyCanEdit: Boolean get() = canEdit && closePolicyAvailable
 }
 
 /** Failed writes never replace the policy used by the real window. */
@@ -61,18 +65,23 @@ public class GeneralSettingsRepository(
     }
 
     public suspend fun save(settings: GeneralSettings): Boolean {
-        if (!mutableState.value.canEdit || !mutex.tryLock()) return false
+        val current = mutableState.value
+        if (!current.canEdit || !mutex.tryLock()) return false
+        // Without a close-policy adapter the row is read-only, so a document that carries another
+        // value must never reach disk; enter behavior is still saved normally.
+        val effective = if (current.closePolicyAvailable) settings
+        else settings.copy(closeConfirmation = current.settings.closeConfirmation)
         try {
             mutableState.value = mutableState.value.copy(saving = true, saveError = null)
-            store.write(settings)
+            store.write(effective)
             failedSettings = null
-            mutableState.value = mutableState.value.copy(settings = settings, saving = false, saveRevision = mutableState.value.saveRevision + 1)
+            mutableState.value = mutableState.value.copy(settings = effective, saving = false, saveRevision = mutableState.value.saveRevision + 1)
             return true
         } catch (cancelled: CancellationException) {
             mutableState.value = mutableState.value.copy(saving = false)
             throw cancelled
         } catch (_: Exception) {
-            failedSettings = settings
+            failedSettings = effective
             mutableState.value = mutableState.value.copy(saving = false, saveError = "无法保存常规设置，请重试。")
             return false
         } finally { mutex.unlock() }

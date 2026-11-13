@@ -2,7 +2,9 @@ package im.hikaru.harness.desktop
 
 import androidx.compose.runtime.*
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toPixelMap
@@ -122,19 +124,38 @@ class AppearanceInteractionTest {
         runBlocking { repository.load() }
         setContent { OwnedAppearance(repository) }
         onNodeWithTag("appearance-import").performClick()
+        // `canImportThemeString`: an undecodable draft disables the button; Codex prints no
+        // standing error message for it.
         onNodeWithTag("appearance-import-input").performTextReplacement("invalid")
-        onNodeWithTag("appearance-import-confirm").performClick()
-        onNodeWithTag("appearance-import-input").assertIsDisplayed()
+        onNodeWithTag("appearance-import-confirm").assertIsNotEnabled()
         runOnIdle { assertEquals(0, repository.state.value.saveRevision) }
         val variant = AppearanceVariant(accent = "#456789", codeFontStyle = AppearanceFontStyle.Italic)
         onNodeWithTag("appearance-import-input").performTextReplacement(AppearanceThemeCodec.encode(AppearanceMode.Light, variant))
         onNodeWithTag("appearance-import-confirm").performClick()
         onNodeWithTag("appearance-import-input").assertIsDisplayed()
+        // `chromeTheme.import.error` is raised by the window toaster, not printed in the dialog.
+        onNodeWithTag("harness-toast-error").assertExists()
         runOnIdle { assertEquals(initial, repository.state.value.settings); fail = false }
         onNodeWithTag("appearance-import-retry").performClick()
         onNodeWithTag("appearance-import-input").assertDoesNotExist()
-        onNodeWithTag("appearance-feedback").assertTextEquals("主题已导入并保存")
         runOnIdle { assertEquals(variant, repository.state.value.settings.light) }
+    }
+
+    @Test
+    fun ordinarySaveFailureUsesToastAndPreservesTheConfirmedTheme() = runComposeUiTest {
+        val initial = AppearanceSettings(mode = AppearanceMode.Light)
+        val repository = AppearanceRepository(object : AppearanceStore {
+            override val durable = true
+            override suspend fun read() = initial
+            override suspend fun write(settings: AppearanceSettings) { error("无法保存外观设置") }
+        }, initial)
+        runBlocking { repository.load() }
+        setContent { OwnedAppearance(repository) }
+        onNodeWithTag("appearance-mode-dark").performClick()
+        waitUntil { repository.state.value.outcomeRevision == 1L }
+        onNodeWithTag("harness-toast-error").assertExists()
+        onNodeWithText("无法保存外观设置").assertIsDisplayed()
+        runOnIdle { assertEquals(initial, repository.state.value.settings) }
     }
 
     @Test
@@ -153,8 +174,15 @@ class AppearanceInteractionTest {
     private fun OwnedAppearance(repository: AppearanceRepository, advanced: Boolean = false) {
         val state by repository.state.collectAsState()
         val scope = rememberCoroutineScope()
+        val toasts = rememberHarnessToastState()
         HarnessTheme(state.settings.mode.themeMode(), state.settings.themeCustomization()) {
-            SettingsAppearancePage(state, { scope.launch { repository.save(it) } }, { scope.launch { repository.retry() } }, advanced)
+            CompositionLocalProvider(LocalHarnessToastState provides toasts) {
+                Box(Modifier.fillMaxSize()) {
+                    SettingsAppearancePage(state, { scope.launch { repository.save(it) } },
+                        { scope.launch { repository.retry() } }, advanced)
+                    HarnessToastHost(toasts, Modifier.align(Alignment.TopCenter))
+                }
+            }
         }
     }
 }

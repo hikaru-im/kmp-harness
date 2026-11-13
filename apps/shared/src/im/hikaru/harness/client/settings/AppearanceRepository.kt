@@ -28,6 +28,7 @@ public data class AppearanceState(
     val saveError: String? = null,
     val durable: Boolean = false,
     val saveRevision: Long = 0,
+    val outcomeRevision: Long = 0,
     val loaded: Boolean = !loading,
 ) {
     public val canEdit: Boolean get() = loaded && !loading && !saving && loadError == null
@@ -71,14 +72,17 @@ public class AppearanceRepository(
             mutableState.value = mutableState.value.copy(saving = true, saveError = null)
             store.write(settings)
             failedSettings = null
-            mutableState.value = mutableState.value.copy(settings = settings, saving = false, saveRevision = mutableState.value.saveRevision + 1)
+            val revision = mutableState.value.outcomeRevision + 1
+            mutableState.value = mutableState.value.copy(settings = settings, saving = false,
+                saveRevision = mutableState.value.saveRevision + 1, outcomeRevision = revision)
             return true
         } catch (cancelled: CancellationException) {
             mutableState.value = mutableState.value.copy(saving = false)
             throw cancelled
         } catch (error: Exception) {
             failedSettings = settings
-            mutableState.value = mutableState.value.copy(saving = false, saveError = error.message ?: "无法保存外观设置")
+            mutableState.value = mutableState.value.copy(saving = false, saveError = error.message ?: "无法保存外观设置",
+                outcomeRevision = mutableState.value.outcomeRevision + 1)
             return false
         } finally { mutex.unlock() }
     }

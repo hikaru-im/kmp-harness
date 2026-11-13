@@ -55,7 +55,22 @@ public class ModelSettingsRepository(private val backend: ModelSettingsBackend =
         backend.setCredential(name, value)
     }
 
+    public suspend fun setModelEnabled(providerId: String, modelId: String, enabled: Boolean, expectedRevision: Long): Boolean =
+        mutate("enabled:$providerId:$modelId") { backend.setModelEnabled(providerId, modelId, enabled, expectedRevision) }
+
+    public suspend fun selectModel(providerId: String, modelId: String, expectedRevision: Long): Boolean =
+        mutate("selected:$providerId:$modelId") { backend.selectModel(providerId, modelId, expectedRevision) }
+
     public suspend fun retryApplication(): Boolean = mutate("apply") { backend.retryApplication() }
+
+    public suspend fun discoverDraft(configuration: ProviderConfiguration, apiKey: String): ModelDiscoveryResult =
+        backend.discoverDraft(configuration, apiKey)
+
+    public suspend fun saveWithCredential(configuration: ProviderConfiguration, apiKey: String, expectedRevision: Long): Boolean =
+        mutate("provider:" + configuration.id, secret = true, configuration = configuration) {
+            configuration.validate()
+            backend.saveWithCredential(configuration, apiKey, expectedRevision)
+        }
 
     public suspend fun discoverModels(providerId: String, expectedRevision: Long): Boolean {
         if (!state.value.canEdit) return false

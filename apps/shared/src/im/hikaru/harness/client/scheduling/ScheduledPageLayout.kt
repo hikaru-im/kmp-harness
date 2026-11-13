@@ -48,15 +48,13 @@ internal fun ScheduledPageLanding(state: ScheduledManagementState,
                     // 11px, where the surrounding 12dp rhythm measured 19px before this change.
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One)) {
-                        HarnessText("安排任务", Modifier.semantics { testTag = "scheduled-management-title" },
+                        HarnessText("已安排", Modifier.semantics { testTag = "scheduled-management-title" },
                             style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, lineHeight = 26.sp))
-                        HarnessText("安排工作区中的重复工作。",
+                        HarnessText("管理周期性任务、提醒和监控",
                             color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodyMedium)
                     }
-                    if (state.tasks.isEmpty()) HarnessText("还没有定时任务。", Modifier.semantics { testTag = "scheduled-empty" },
+                    if (state.tasks.isEmpty()) HarnessText("创建首个已安排任务", Modifier.semantics { testTag = "scheduled-empty" },
                         color = HarnessTokens.Colors.TextMuted)
-                    HarnessText("示例模板 · 点击编辑，不会保存或运行", color = HarnessTokens.Colors.TextMuted,
-                        style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
                     // The reference template grid uses a 20px gutter on both axes and a 738px outer
                     // width (card 1 = x 1080..1438, card 2 starts at 1459), independent of the 12dp

@@ -47,7 +47,9 @@ class PluginManagementInteractionTest {
                 onAllNodesWithTag("plugins-installed:fixture").fetchSemanticsNodes().isNotEmpty()
             }
             onNodeWithTag("plugin-local-directory").assertDoesNotExist()
-            onNodeWithTag("plugin-mutation-receipt").assertTextEquals("登记已保存")
+            onNode(hasTestTag("harness-toast-info") and
+                hasAnyDescendant(hasText("已添加本地插件登记，默认停用。")), useUnmergedTree = true)
+                .assertExists()
             onNodeWithText("revision-very-long-server-revision-that-must-not-be-rendered", substring = true).assertDoesNotExist()
             runOnIdle {
                 assertEquals("/source/plugin", repository.registeredSource)
@@ -63,8 +65,8 @@ class PluginManagementInteractionTest {
             onNodeWithText("Review source text").assertExists()
             onNodeWithTag("plugin-detail-list").performScrollToNode(hasText("Commands 尚未支持。"))
             onNodeWithText("Commands 尚未支持。").assertExists()
-            onNodeWithTag("plugin-detail-list").performScrollToNode(hasText("服务确认此插件没有 Apps。"))
-            onNodeWithText("服务确认此插件没有 Apps。").assertExists()
+            onNodeWithTag("plugin-detail-list").performScrollToNode(hasText("没有 Apps"))
+            onNodeWithText("没有 Apps").assertExists()
             onNodeWithTag("plugin-detail-list").performScrollToNode(hasText("MCP 服务器"))
             onNodeWithText("MCP 服务器").assertExists()
             onNodeWithText("fixture-mcp").assertExists()
@@ -83,8 +85,9 @@ class PluginManagementInteractionTest {
             waitUntil(timeoutMillis = 5_000) {
                 onAllNodesWithTag("plugin-remove-confirm").fetchSemanticsNodes().isEmpty()
             }
-            onNodeWithTag("plugin-detail-list").performScrollToNode(hasTestTag("plugin-mutation-receipt"))
-            onNodeWithTag("plugin-mutation-receipt").assertTextEquals("登记已保存")
+            onNode(hasTestTag("harness-toast-info") and
+                hasAnyDescendant(hasText("已移除登记；源目录和源文件均已保留。")), useUnmergedTree = true)
+                .assertExists()
             onNodeWithTag("plugin-detail-back").performScrollTo().performClick()
             onNodeWithText("尚无已登记插件").assertExists()
             runOnIdle {
@@ -111,7 +114,7 @@ class PluginManagementInteractionTest {
             // The page header is 插件; the read-only variant shows through the unavailable notice
             // rather than through a different title.
             onNode(hasText("插件") and hasAnyAncestor(hasTestTag("plugins-header")), true).assertExists()
-            onNodeWithTag("plugin-management-unavailable").assertExists()
+            onNodeWithTag("plugin-management-unavailable").assertDoesNotExist()
             onNodeWithTag("plugins-add-local").assertDoesNotExist()
             onNodeWithTag("plugins-installed:fixture").performClick()
             waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("installed-plugin-detail-page").fetchSemanticsNodes().isNotEmpty() }
@@ -140,7 +143,7 @@ class PluginManagementInteractionTest {
             // rather than through a different title.
             onNode(hasText("插件") and hasAnyAncestor(hasTestTag("plugins-header")), true).assertExists()
             onNodeWithText("已登记插件").assertDoesNotExist()
-            onNodeWithTag("plugin-management-unavailable").assertExists()
+            onNodeWithTag("plugin-management-unavailable").assertDoesNotExist()
             onNodeWithTag("plugins-add-local").assertDoesNotExist()
             runOnIdle { assertFalse(repository.canManage); assertTrue(repository.operations.isEmpty()) }
         }

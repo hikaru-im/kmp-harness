@@ -79,21 +79,20 @@ public fun SettingsFormDetails(title: String, testTag: String, content: @Composa
     }
 }
 
+/**
+ * A settings row is exactly a label (+ optional description) and a control. There is deliberately no
+ * "status" slot: Codex never annotates a row with 暂不可用-style text, and an unwired control is
+ * simply disabled — its own explanation.
+ */
 @Composable
 public fun SettingsFormRow(
     label: String, description: String? = null, modifier: Modifier = Modifier,
-    status: String? = null, statusTag: String? = null, control: @Composable () -> Unit,
+    control: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 12.dp)) {
         val labelContent: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    HarnessText(label, style = MaterialTheme.typography.bodyMedium)
-                    status?.let {
-                        HarnessText(it, Modifier.semantics { statusTag?.let { tag -> testTag = tag } },
-                            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+                HarnessText(label, style = MaterialTheme.typography.bodyMedium)
                 description?.takeIf { it.isNotBlank() }?.let { HarnessText(it, color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall) }
             }
         }

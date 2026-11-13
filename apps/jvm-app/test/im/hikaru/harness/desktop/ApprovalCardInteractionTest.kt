@@ -44,17 +44,23 @@ class ApprovalCardInteractionTest {
             val block = onNode(hasAnyDescendant(hasTestTag("approval-command:approval-1")) and hasScrollAction(), true)
                 .fetchSemanticsNode()
             assertEquals(160, block.size.height)
-            onNodeWithText("是否运行此命令？").assertExists()
-            onNodeWithText("工具 shell").assertExists()
+            // `execApprovalRequest.prompt` = 是否运行此命令？; the tool is the bare subtitle, and the
+            // card carries no separate "your approval is needed" title or 待批准 status line.
+            onNodeWithTag("approval-title:approval-1", true).assertTextEquals("是否运行此命令？")
+            onNodeWithTag("approval-tool:approval-1", true).assertTextEquals("shell")
+            onNodeWithText("需要你的批准").assertDoesNotExist()
+            onNodeWithText("待批准").assertDoesNotExist()
         }
 
     @Test
     fun aRequestWithoutACommandAsksForTheToolInstead() = runSkikoComposeUiTest(size = Size(600f, 800f)) {
         mount(state(listOf(PendingApproval(request(toolName = "filesystem", command = "")))))
-        onNodeWithText("是否允许运行此工具？").assertExists()
+        // `composer.mcpToolCallApproval.formattedToolTitlePrefix` + `.formattedToolTitleSuffix`.
+        onNodeWithTag("approval-title:approval-1", true).assertTextEquals("允许运行 filesystem 工具？")
         onNodeWithText("是否运行此命令？").assertDoesNotExist()
         onNodeWithTag("approval-command:approval-1", true).assertDoesNotExist()
-        onNodeWithText("工具 filesystem").assertExists()
+        // The question already names the tool, so no bare subtitle repeats it.
+        onNodeWithTag("approval-tool:approval-1", true).assertDoesNotExist()
     }
 
     @Test
@@ -122,11 +128,14 @@ class ApprovalCardInteractionTest {
     }
 
     @Test
-    fun aSubmittingRequestSaysSoAndCannotBeAnsweredTwice() = runSkikoComposeUiTest(size = Size(600f, 800f)) {
+    fun aSubmittingRequestSpinsItsAllowActionAndCannotBeAnsweredTwice() = runSkikoComposeUiTest(size = Size(600f, 800f)) {
         val decisions = mutableListOf<Pair<String, ApprovalChoice>>()
         mount(state(listOf(PendingApproval(request(), responding = true)))) { id, choice -> decisions += id to choice }
-        onNodeWithText("提交中…", useUnmergedTree = true).assertExists()
-        onNodeWithText("待批准", useUnmergedTree = true).assertDoesNotExist()
+        // Codex shows progress on the action being submitted, never as a caption on the card.
+        onNodeWithTag("approval-status:approval-1", true).assertDoesNotExist()
+        onNodeWithText("提交中…", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithTag("approval:approval-1:allow-once", true).assert(SemanticsMatcher.keyIsDefined(
+            androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo))
         for (choice in listOf("cancel", "deny", "allow-session", "allow-once")) {
             onNodeWithTag("approval:approval-1:$choice", true).assertIsNotEnabled()
         }

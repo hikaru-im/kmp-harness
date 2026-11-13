@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,10 +29,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.dp
+import im.hikaru.harness.ui.foundation.LocalHarnessToastState
 import im.hikaru.harness.ui.foundation.HarnessButton
 import im.hikaru.harness.ui.foundation.HarnessButtonVariant
 import im.hikaru.harness.ui.foundation.HarnessControlSize
@@ -57,7 +58,7 @@ public fun InstalledPluginsPage(
     PluginPageFrame(modifier, "installed-plugins-page") { compact ->
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             PluginListHeader(state, onAction, compact, showSearch = !navigatorVisible)
-            PluginManagementFeedback(state)
+            PluginManagementReadFeedback(state)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (val list = state.list) {
                     is PluginLoadState.Success -> {
@@ -65,14 +66,13 @@ public fun InstalledPluginsPage(
                         when {
                             list.value.isEmpty() -> WorkspaceEmptyState(
                                 if (state.hasManagementAdapter) "尚无已登记插件" else "尚无已安装插件",
-                                description = "添加插件后，可在这里查看和管理。",
                                 action = if (state.hasManagementAdapter) ({
                                     HarnessButton("添加本地插件", { onAction(InstalledPluginsAction.BeginRegistration) },
                                         enabled = state.canManage, testTag = "plugins-empty-add")
                                 }) else null,
                             )
                             visible.isEmpty() -> WorkspaceEmptyState("没有匹配的插件", "试试其他搜索词或筛选条件。")
-                            navigatorVisible -> WorkspaceEmptyState("选择插件查看详情", "从左侧列表选择插件，查看说明、Skills 和启用状态。")
+                            navigatorVisible -> WorkspaceEmptyState("选择插件查看详情")
                             else -> LazyColumn(
                                 modifier = Modifier.fillMaxSize().semantics { testTag = "plugin-inventory-list" },
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -89,7 +89,6 @@ public fun InstalledPluginsPage(
                         onRetry = if (state.canRefresh) ({ onAction(InstalledPluginsAction.Refresh) }) else null)
                 }
             }
-            if (!state.hasManagementAdapter) UnsupportedManagementNotice()
         }
     }
     PluginManagementDialogs(state, onAction)
@@ -132,13 +131,9 @@ public fun InstalledPluginDetailPage(
                     }
                 }
             }
-            item { PluginManagementFeedback(state) }
+            item { PluginManagementReadFeedback(state) }
             when (val detail = state.detail) {
                 is PluginLoadState.Success -> {
-                    item {
-                        if (state.hasManagementAdapter) HarnessText("更改将在下一次 Agent 请求中生效。",
-                            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
-                    }
                     item {
                         HarnessSurface(Modifier.fillMaxWidth()) {
                             Column(
@@ -147,9 +142,9 @@ public fun InstalledPluginDetailPage(
                             ) {
                                 val plugin = detail.value.plugin
 
-                                PluginField("说明", plugin.description ?: "服务未提供说明", "plugin-detail-description")
-                                PluginField("版本", plugin.version ?: "服务未提供版本", "plugin-detail-version")
-                                PluginField("来源", plugin.source ?: "服务未提供来源", "plugin-detail-source")
+                                PluginField("说明", plugin.description ?: "暂无说明", "plugin-detail-description")
+                                PluginField("版本", plugin.version ?: "版本未知", "plugin-detail-version")
+                                PluginField("来源", plugin.source ?: "来源未知", "plugin-detail-source")
                                 PluginField("状态", enabledLabel(plugin.enabled), "plugin-detail-status")
                                 state.scope?.let { PluginField("主机", it.hostId.value, "plugin-detail-host") }
                             }
@@ -158,10 +153,10 @@ public fun InstalledPluginDetailPage(
                     item {
                         HarnessText("Skills", style = MaterialTheme.typography.titleMedium)
                         when (val skills = detail.value.skills) {
-                            PluginSkillsState.NotLoaded -> HarnessText("Skills 信息尚未读取。", color = HarnessTokens.Colors.TextMuted)
+                            PluginSkillsState.NotLoaded -> HarnessText("Skills 尚未加载", color = HarnessTokens.Colors.TextMuted)
                             is PluginSkillsState.Unavailable -> HarnessText(skills.reason, color = HarnessTokens.Colors.TextMuted)
-                            is PluginSkillsState.Available -> HarnessText(
-                                if (skills.skills.isEmpty()) "服务确认此插件没有 Skills。" else "已读取 " + skills.skills.size + " 个 Skills",
+                            is PluginSkillsState.Available -> if (skills.skills.isEmpty()) HarnessText(
+                                "没有 Skills",
                                 color = HarnessTokens.Colors.TextMuted)
                         }
                     }
@@ -173,10 +168,10 @@ public fun InstalledPluginDetailPage(
                     item {
                         HarnessText("Apps", style = MaterialTheme.typography.titleMedium)
                         when (val apps = detail.value.apps) {
-                            PluginAppsState.NotLoaded -> HarnessText("Apps 信息尚未读取。", color = HarnessTokens.Colors.TextMuted)
+                            PluginAppsState.NotLoaded -> HarnessText("Apps 尚未加载", color = HarnessTokens.Colors.TextMuted)
                             is PluginAppsState.Unavailable -> HarnessText(apps.reason, color = HarnessTokens.Colors.TextMuted)
-                            is PluginAppsState.Available -> HarnessText(
-                                if (apps.names.isEmpty()) "服务确认此插件没有 Apps。" else "已读取 " + apps.names.size + " 个 Apps",
+                            is PluginAppsState.Available -> if (apps.names.isEmpty()) HarnessText(
+                                "没有 Apps",
                                 color = HarnessTokens.Colors.TextMuted,
                             )
                         }
@@ -191,8 +186,6 @@ public fun InstalledPluginDetailPage(
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One)) {
                                 HarnessText(capabilityLabel(capability.kind), style = MaterialTheme.typography.titleMedium)
-                                HarnessText("已读取 " + capability.names.size + " 项；配置和执行服务尚未接入。",
-                                    color = HarnessTokens.Colors.TextMuted)
                             }
                         }
                         items(capability.names.size) { index ->
@@ -220,13 +213,13 @@ public fun InstalledPluginDetailPage(
                     }
                 }
                 else -> item {
+                    if (detail is PluginLoadState.Error) HarnessText("无法加载插件", style = MaterialTheme.typography.titleMedium)
                     PluginReadFeedback(
                         detail,
                         onRetry = if (state.canRetryDetail) ({ onAction(InstalledPluginsAction.RetryDetail) }) else null,
                     )
                 }
             }
-            if (!state.hasManagementAdapter) item { UnsupportedManagementNotice() }
         }
     }
     PluginManagementDialogs(state, onAction)
@@ -289,7 +282,7 @@ private fun InstalledPluginRow(plugin: InstalledPlugin, selected: Boolean, onCli
             plugin.description?.let { HarnessText(it, color = HarnessTokens.Colors.TextMuted,
                 style = MaterialTheme.typography.bodySmall, maxLines = 1) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two)) {
-                HarnessText(plugin.source ?: "服务未提供来源", Modifier.weight(1f),
+                HarnessText(plugin.source ?: "来源未知", Modifier.weight(1f),
                     color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 HarnessText("详情 ›", color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.labelSmall)
             }
@@ -350,19 +343,19 @@ private fun capabilityLabel(kind: PluginCapabilityKind): String = when (kind) {
  * Chinese. Any value the page does not recognise passes through unchanged so nothing is hidden.
  */
 private fun unsupportedAssetLabel(descriptor: String): String = when (descriptor) {
-    "apps (unsupported)" -> "Apps：此声明无法在本地枚举（例如 apps 目录或未识别的 apps 文件），本地服务尚未读取。"
-    "MCP (unsupported)" -> "MCP：声明的 server 配置无法在本地枚举，本地服务不会连接或启动它。"
-    "hooks (unsupported)" -> "Hooks：hooks 目录或文件尚未接入本地服务，不会被读取或执行。"
-    "scripts (unsupported)" -> "Scripts：scripts 目录尚未接入本地服务，不会被读取或执行。"
-    "skill attachments (unsupported)" -> "技能附件：除 SKILL.md 外的文件不会被读取。"
-    "other capabilities (unsupported)" -> "其他能力（commands / agents / lspServers / assets）：暂不支持。"
+    "apps (unsupported)" -> "Apps 不可用"
+    "MCP (unsupported)" -> "MCP 不可用"
+    "hooks (unsupported)" -> "Hooks 不可用"
+    "scripts (unsupported)" -> "Scripts 不可用"
+    "skill attachments (unsupported)" -> "技能附件不可用"
+    "other capabilities (unsupported)" -> "其他能力不可用"
     else -> descriptor
 }
 
 @Composable
 private fun PluginReadFeedback(state: PluginLoadState<*>, onRetry: (() -> Unit)?) {
     when (state) {
-        PluginLoadState.NotLoaded -> HarnessEmptyState("尚未读取插件信息", description = "请先绑定当前主机的插件读取范围。")
+        PluginLoadState.NotLoaded -> HarnessEmptyState("插件尚未加载")
         PluginLoadState.Loading -> HarnessLoadingState("正在读取插件信息…")
         is PluginLoadState.Error -> HarnessErrorState(state.error.message, onRetry = onRetry, retryLabel = "重试")
         is PluginLoadState.Unavailable -> HarnessEmptyState("插件服务不可用", description = state.reason.message)
@@ -390,27 +383,23 @@ private fun PluginManagementControls(
 }
 
 @Composable
-private fun PluginManagementFeedback(state: InstalledPluginsState) {
-    Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One)) {
-        state.mutationReceipt?.let {
-            HarnessText(state.managementNotice.orEmpty(), Modifier.semantics { testTag = "plugin-mutation-notice" })
-            HarnessText("登记已保存", Modifier.semantics { testTag = "plugin-mutation-receipt" },
-                color = HarnessTokens.Colors.TextMuted)
-            if (state.list is PluginLoadState.Error || state.detail is PluginLoadState.Error || state.revision is PluginLoadState.Error) {
-                HarnessText("保存已完成，但插件信息未能刷新。请显式刷新查看最新数据。",
-                    Modifier.semantics { testTag = "plugin-saved-refresh-failure" },
-                    color = HarnessTokens.Colors.TextMuted)
-            }
-        }
-        if (state.mutationBusy) HarnessText("正在保存插件登记…",
-            Modifier.semantics { testTag = "plugin-mutation-busy" }, color = HarnessTokens.Colors.TextMuted)
-        state.mutationError?.let { HarnessText(it, Modifier.semantics { testTag = "plugin-mutation-error" },
-            color = HarnessTokens.Colors.Danger) }
-        if (state.hasManagementAdapter && !state.mutationBusy && !state.mutationRequiresRefresh &&
-            state.list is PluginLoadState.Success && state.revision !is PluginLoadState.Success) {
-            HarnessText("管理状态尚未就绪，请刷新。", color = HarnessTokens.Colors.TextMuted)
-            PluginReadFeedback(state.revision, onRetry = null)
-        }
+public fun PluginManagementFeedback(state: InstalledPluginsState) {
+    val toast = LocalHarnessToastState.current
+    LaunchedEffect(state.scope, state.mutationReceipt, state.managementNotice, state.mutationError) {
+        state.mutationError?.let { toast?.show(it, isError = true) }
+        if (state.mutationReceipt != null) state.managementNotice?.let { toast?.show(it) }
+    }
+    val refreshFailed = state.mutationReceipt != null &&
+        (state.list is PluginLoadState.Error || state.detail is PluginLoadState.Error || state.revision is PluginLoadState.Error)
+    LaunchedEffect(state.scope, state.mutationReceipt, refreshFailed) {
+        if (refreshFailed) toast?.show("保存已完成，但插件信息未能刷新。请刷新重试。", isError = true)
+    }
+}
+
+@Composable
+private fun PluginManagementReadFeedback(state: InstalledPluginsState) {
+    if (state.hasManagementAdapter && state.list is PluginLoadState.Success && state.revision is PluginLoadState.Error) {
+        PluginReadFeedback(state.revision, onRetry = null)
     }
 }
 
@@ -429,7 +418,6 @@ private fun PluginManagementDialogs(state: InstalledPluginsState, onAction: (Ins
                 supportingText = if (!state.registrationDirectory.isNullOrBlank() && !state.registrationDirectoryIsAbsolute)
                     "请输入绝对路径，不能包含换行。" else "路径可在输入框内水平滚动、选择并复制。",
                 testTag = "plugin-local-directory")
-            state.mutationError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger) }
             if (state.mutationRequiresRefresh) HarnessButton("刷新插件信息",
                 { onAction(InstalledPluginsAction.Refresh) }, enabled = state.canRefresh,
                 variant = HarnessButtonVariant.Secondary, testTag = "plugin-register-refresh")
@@ -450,7 +438,6 @@ private fun PluginManagementDialogs(state: InstalledPluginsState, onAction: (Ins
             HarnessText("移除此插件的 Harness 登记？源目录和源文件都会保留。")
             PluginField("插件", state.removeConfirmation?.name.orEmpty(), "plugin-remove-name")
             state.removeConfirmation?.source?.let { PluginField("来源", it, "plugin-remove-source") }
-            state.mutationError?.let { HarnessText(it, color = HarnessTokens.Colors.Danger) }
             if (state.mutationRequiresRefresh) HarnessButton("刷新插件信息",
                 { onAction(InstalledPluginsAction.Refresh) }, enabled = state.canRefresh,
                 variant = HarnessButtonVariant.Secondary, testTag = "plugin-remove-refresh")
@@ -466,22 +453,8 @@ private fun PluginManagementDialogs(state: InstalledPluginsState, onAction: (Ins
     }
 }
 
-/** Read-only repositories and Relay bindings have no local management capability. */
-@Composable
-private fun UnsupportedManagementNotice() {
-    HarnessSurface(Modifier.fillMaxWidth().semantics { testTag = "plugin-management-unavailable"; disabled() }) {
-        Column(
-            Modifier.fillMaxWidth().padding(HarnessTokens.Spacing.Three),
-            verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One),
-        ) {
-            HarnessText("管理操作不可用", style = MaterialTheme.typography.titleSmall)
-            HarnessText("当前连接仅支持读取或未提供本地登记管理；添加本地插件、启用/停用和移除登记不可用。", color = HarnessTokens.Colors.TextMuted)
-        }
-    }
-}
-
 private fun enabledLabel(state: PluginEnabledState): String = when (state) {
-    PluginEnabledState.Enabled -> "服务报告：已启用"
-    PluginEnabledState.Disabled -> "服务报告：已停用"
-    PluginEnabledState.Unknown -> "服务未提供启用状态"
+    PluginEnabledState.Enabled -> "已启用"
+    PluginEnabledState.Disabled -> "已停用"
+    PluginEnabledState.Unknown -> "状态未知"
 }

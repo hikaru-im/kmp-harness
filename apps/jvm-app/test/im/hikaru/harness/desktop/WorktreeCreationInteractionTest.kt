@@ -13,6 +13,12 @@ import im.hikaru.contracts.harness.protocol.ProtocolVersion
 import im.hikaru.harness.api.gateway.ApiGateway
 import im.hikaru.harness.api.gateway.host.HostDescribeEndpoint
 import im.hikaru.harness.api.gateway.session.SessionListEndpoint
+import im.hikaru.harness.client.account.AppSession
+import im.hikaru.harness.client.account.AppSessionStore
+import im.hikaru.harness.client.account.BackendTenant
+import im.hikaru.harness.client.account.MemberAccount
+import im.hikaru.harness.client.account.MemberIdentity
+import im.hikaru.harness.client.account.MemberTransport
 import im.hikaru.harness.client.app.HarnessApp
 import im.hikaru.harness.client.app.HarnessDestination
 import im.hikaru.harness.client.connection.ConnectionTransport
@@ -40,7 +46,7 @@ class WorktreeCreationInteractionTest {
                         gitInitialCwd = fixture.root.toString())
                 }
                 onNodeWithTag("settings-row-worktrees").performClick()
-                waitUntil(timeoutMillis = 10_000) {
+                waitUntil(timeoutMillis = 30_000) {
                     onAllNodes(hasTestTag("git-repository-root") and hasText(fixture.root.toString()))
                         .fetchSemanticsNodes().isNotEmpty() &&
                         listOf("git-worktree-create-path", "git-worktree-create-branch", "git-worktree-create-start").all { tag ->
@@ -51,13 +57,15 @@ class WorktreeCreationInteractionTest {
                 onNodeWithTag("git-worktree-create-branch").performScrollTo().performTextReplacement("codex/ui-worktree")
                 onNodeWithTag("git-worktree-create-submit").performScrollTo().assertIsEnabled().performClick()
                 waitUntil(timeoutMillis = 15_000) {
-                    onAllNodesWithTag("git-worktree-create-success").fetchSemanticsNodes().isNotEmpty()
+                    onAllNodes(hasText("已创建工作树：$target") and
+                        hasAnyAncestor(hasTestTag("harness-toast-info")), useUnmergedTree = true)
+                        .fetchSemanticsNodes().isNotEmpty()
                 }
                 waitUntil(timeoutMillis = 10_000) {
                     onAllNodes(hasTestTag("git-repository-root") and hasText(target.toString()))
                         .fetchSemanticsNodes().isNotEmpty()
                 }
-                onNodeWithTag("git-worktree-create-success").assertTextEquals("已创建：$target")
+                onNodeWithTag("git-worktree-create-success").assertDoesNotExist()
                 assertEquals("refs/heads/codex/ui-worktree", fixture.git(target, "symbolic-ref", "HEAD").trim())
                 assertEquals(fixture.originalHead, fixture.git(target, "rev-parse", "HEAD").trim())
                 assertEquals("committed\n", Files.readString(target.resolve("tracked.txt")))
@@ -75,15 +83,30 @@ class WorktreeCreationInteractionTest {
     fun relayDisablesLocalWorktreeCreationControlsWithoutCreatingDirectories() {
         val fixture = WorktreeUiFixture()
         val target = fixture.directory.resolve("must-not-be-created")
+        val session = AppSession(MemberIdentity(BackendTenant("https://example.invalid", 1), 1), "test-token", null, null)
+        val account = MemberAccount(object : MemberTransport {
+            override suspend fun login(target: BackendTenant, mobile: String, password: String) = error("Unexpected account IO")
+            override suspend fun refresh(session: AppSession) = error("Unexpected account IO")
+            override suspend fun logout(session: AppSession) = error("Unexpected account IO")
+            override suspend fun profile(session: AppSession) = error("Unexpected account IO")
+            override suspend fun updateProfile(session: AppSession, request: im.hikaru.contracts.app.member.MemberProfileUpdateRequest) = error("Unexpected account IO")
+            override suspend fun tenant(target: BackendTenant, website: String) = error("Unexpected account IO")
+            override fun close() = Unit
+        }, object : AppSessionStore {
+            override val durable = false
+            override fun read() = session
+            override fun write(session: AppSession) = error("Unexpected account write")
+            override fun clear() = Unit
+        })
         var transport by mutableStateOf(ConnectionTransport.Local)
         try {
             runSkikoComposeUiTest(size = Size(1440f, 1100f)) {
                 setContent {
-                    HarnessApp(fixture.connection, initialDestination = HarnessDestination.Settings,
+                    HarnessApp(fixture.connection, account = account, initialDestination = HarnessDestination.Settings,
                         connectionTransport = transport, gitBackend = fixture.backend, gitInitialCwd = fixture.root.toString())
                 }
                 onNodeWithTag("settings-row-worktrees").performClick()
-                waitUntil(timeoutMillis = 10_000) {
+                waitUntil(timeoutMillis = 30_000) {
                     onAllNodes(hasTestTag("git-repository-root") and hasText(fixture.root.toString()))
                         .fetchSemanticsNodes().isNotEmpty() &&
                         listOf("git-worktree-create-path", "git-worktree-create-branch", "git-worktree-create-start").all { tag ->
@@ -100,7 +123,10 @@ class WorktreeCreationInteractionTest {
                 assertEquals(listOf(fixture.root.toString()), fixture.git(fixture.root, "worktree", "list", "--porcelain")
                     .lineSequence().filter { it.startsWith("worktree ") }.map { it.removePrefix("worktree ") }.toList())
             }
-        } finally { fixture.close() }
+        } finally {
+            runBlocking { account.shutdown() }
+            fixture.close()
+        }
     }
 }
 

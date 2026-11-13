@@ -69,6 +69,23 @@ internal fun ComposeUiTest.clickGitNode(target: SemanticsNodeInteraction): Strin
         "after={${runCatching { gitPointerEvidence(target.fetchSemanticsNode()) }.getOrElse { it.toString() }}}"
 }
 
+/**
+ * Park the pointer on a node's center and let the hover delay elapse. A blocked git action states its
+ * reason in the control's own hover tip (`git-action-blocked-reason-tooltips.tsx`), so the reason only
+ * exists in the popup root after this — never as standing text.
+ */
+@OptIn(ExperimentalTestApi::class)
+internal fun ComposeUiTest.hoverGitNode(target: SemanticsNodeInteraction) {
+    settleGitLayout()
+    val node = target.assertIsDisplayed().fetchSemanticsNode()
+    val root = generateSequence(node) { it.parent }.last()
+    onNode(SemanticsMatcher("Git pointer root ${root.id}") { it.id == root.id }, useUnmergedTree = true)
+        .performMouseInput { moveTo(node.boundsInRoot.center - root.boundsInRoot.topLeft) }
+    settleGitLayout()
+    mainClock.advanceTimeBy(400)
+    waitForIdle()
+}
+
 /** A popup has its own pointer root; identify that root through the target's ancestry. */
 @OptIn(ExperimentalTestApi::class)
 private fun ComposeUiTest.gitPointerRoot(root: SemanticsNode): SemanticsNodeInteraction =

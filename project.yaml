@@ -32,6 +32,8 @@ modules:
   - modules/llm-retry
   - modules/loader
   - modules/logger
+  - modules/mcp-client
+  - modules/mcp-resources
   - modules/profile
   - modules/profile-file
   - modules/runtime

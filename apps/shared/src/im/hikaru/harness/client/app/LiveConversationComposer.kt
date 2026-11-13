@@ -17,7 +17,10 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import im.hikaru.harness.client.conversation.ComposerAttachment
 import im.hikaru.harness.client.conversation.ConversationState
+import im.hikaru.harness.client.settings.EnterBehavior
+import im.hikaru.harness.client.settings.ShortcutPlatform
 import im.hikaru.harness.ui.foundation.*
 
 @Composable
@@ -30,10 +33,12 @@ public fun LiveConversationComposer(
     models: List<ConversationModelChoice>,
     selectedModel: ConversationModelChoice?,
     onModelSelect: (ConversationModelChoice) -> Unit,
-    modelUnavailableReason: String?,
     submitUnavailableReason: String?,
     /** Blocks submit without printing a hint: the model chip already shows that a model is needed. */
     submitBlocked: Boolean = false,
+    /** SET-10: General's 发送快捷键 row plus the platform decide both the handler and the hint. */
+    enterBehavior: EnterBehavior = EnterBehavior.Enter,
+    shortcutPlatform: ShortcutPlatform = ShortcutPlatform.Mac,
     selectedReasoningEffort: String? = null,
     onReasoningEffortSelect: ((String?) -> Unit)? = null,
     useHostDefaultModel: Boolean = false,
@@ -42,6 +47,12 @@ public fun LiveConversationComposer(
     reasoningEffortKnown: Boolean = state.selectedSessionId == null,
     /** Home rail (`data-composer-rail`, placement above): painted behind the card's top edge. */
     topRail: (@Composable () -> Unit)? = null,
+    selectedReasoning: im.hikaru.harness.client.connection.ReasoningOptions? = null,
+    onReasoningSelect: ((im.hikaru.harness.client.connection.ReasoningOptions) -> Unit)? = null,
+    onManageModels: (() -> Unit)? = null,
+    attachments: List<ComposerAttachment> = emptyList(),
+    onAddAttachment: (() -> Unit)? = null,
+    onRemoveAttachment: (String) -> Unit = {},
 ) {
     val configuredCap = LocalConversationEditorMaxHeight.current.coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight)
     val suppliedViewport = LocalConversationViewportHeight.current
@@ -56,6 +67,13 @@ public fun LiveConversationComposer(
     var editor by remember(hostId, identity, sessionId) {
         mutableStateOf(TextFieldValue(state.draft, TextRange(state.draft.length)))
     }
+    // Read the editor, not the committed draft: a newline typed this frame must switch the
+    // `cmdIfMultiline` rule immediately, and the hint is recomposed with the same value.
+    val submitShortcut = ComposerSubmitShortcut(
+        enterBehavior = enterBehavior,
+        platform = shortcutPlatform,
+        multilineDraft = editor.text.contains('\n'),
+    )
     var enterHeld by remember(hostId, identity, sessionId) { mutableStateOf(false) }
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     LaunchedEffect(windowFocused) { if (!windowFocused) enterHeld = false }
@@ -72,6 +90,14 @@ public fun LiveConversationComposer(
         Surface(
             // The live card overlaps the rail's last 4dp, so it starts `RailHeight` below the strip.
             Modifier.fillMaxWidth().padding(top = if (topRail != null) HarnessTokens.Composer.RailHeight else 0.dp)
+                // CONV-11: Escape stops the running turn. When the turn is settled this returns
+                // false, leaving the existing popup/back key handling untouched.
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && state.canCancel) {
+                        onCancel()
+                        true
+                    } else false
+                }
                 .semantics { testTag = "live-composer" },
             // Live `_ComposerLayoutRoot`: rgb(54,54,54) in dark, radius 22, no outer border, and a
             // `rgba(255,255,255,.2) 0 0 1px 0 inset` glow — approximated by a 0.5dp light ring.
@@ -116,8 +142,18 @@ public fun LiveConversationComposer(
                                 }
                                 event.type != KeyEventType.KeyDown -> false
                                 enterHeld -> true
-                                event.isShiftPressed || event.isCtrlPressed || event.isAltPressed || event.isMetaPressed -> false
+                                // Codex ignores every Enter chord while the IME is composing; a
+                                // modifier chord must not submit a candidate that is still open.
                                 editor.composition != null -> false
+                                event.isShiftPressed || event.isAltPressed -> false
+                                // Codex sends on the platform modifier chord in every enter mode;
+                                // `enter` only controls what a bare Enter does.
+                                event.isCtrlPressed || event.isMetaPressed -> {
+                                    enterHeld = true
+                                    if (latestCanSend) latestSubmit()
+                                    true
+                                }
+                                !submitShortcut.plainEnterSubmits -> false
                                 else -> {
                                     enterHeld = true
                                     if (latestCanSend) latestSubmit()
@@ -141,11 +177,16 @@ public fun LiveConversationComposer(
                         }
                     },
                 )
-                ConversationComposerToolbar(state, models, selectedModel, onModelSelect, modelUnavailableReason, canSend, onSubmit, onCancel,
+                ConversationComposerToolbar(state, models, selectedModel, onModelSelect, canSend, onSubmit, onCancel,
                     selectedReasoningEffort, onReasoningEffortSelect, reasoningEffortKnown,
-                    permission, onPermissionSelect, draftEmpty = editor.text.isBlank())
-                // The composer carries no status sentence: progress lives on the stop button, failures
-                // arrive as toasts (ConversationErrorToasts), and the draft keeps the full card.
+                    permission, onPermissionSelect, draftEmpty = editor.text.isBlank(),
+                    selectedReasoning = selectedReasoning, onManageModels = onManageModels,
+                    submitShortcut = submitShortcut,
+                    attachments = attachments, onAddAttachment = onAddAttachment,
+                    onRemoveAttachment = onRemoveAttachment,
+                    // Codex never prints the blocked reason above the composer: it is the submit
+                    // button's tooltip, and clicking the dimmed button opens `BlockedSubmitDialog`.
+                    submitBlockedReason = submitUnavailableReason)
             }
         }
         }
