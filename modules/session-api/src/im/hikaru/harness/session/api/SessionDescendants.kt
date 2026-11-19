@@ -41,6 +41,7 @@ public data class SessionDescendant(
     val lastAssistantAtEpochMillis: Long? = null,
     /** Supplied only by a Host that records the child's real turn diff. */
     val diffStats: SessionDiffStats? = null,
+    val reasoning: im.hikaru.harness.llm.ReasoningOptions? = null,
 ) {
     init {
         require(verifiedAncestorPath.size >= 2)

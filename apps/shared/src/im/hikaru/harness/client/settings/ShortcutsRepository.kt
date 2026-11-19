@@ -103,7 +103,7 @@ public class ShortcutsRepository(
             mutableState.value = mutableState.value.copy(saving = false)
             throw cancelled
         } catch (_: Exception) {
-            mutableState.value = mutableState.value.copy(saving = false, saveError = "无法保存快捷键配置，请重试。旧快捷键仍然有效，草稿已保留。")
+            mutableState.value = mutableState.value.copy(saving = false, saveError = if (mutableState.value.resetConfirmation) "重置键盘快捷键失败" else "更新快捷键失败")
             return false
         } finally { mutex.unlock() }
     }
@@ -132,7 +132,14 @@ public class ShortcutsRepository(
         if (current.capture != ShortcutCaptureMode.Recording || !current.canEdit) return
         val error = if (chord == null) "此按键尚未支持；只支持一组组合键。" else ShortcutRegistry.chordError(chord)
         val recorded = editor.copy(chord = chord, error = error)
-        val candidateError = if (error == null) editorCandidate(recorded)?.let { ShortcutRegistry.validationError(it, platform) } else error
+        val existingOwner = if (error == null && chord != null) ShortcutRegistry.commands.firstOrNull {
+            it != editor.command && chord in current.settings.bindings(it, platform)
+        } else null
+        val candidateError = when {
+            error != null -> error
+            existingOwner != null -> "已被 ${existingOwner.label} 使用"
+            else -> editorCandidate(recorded)?.let { ShortcutRegistry.validationError(it, platform) }
+        }
         mutableState.value = current.copy(editor = recorded.copy(error = candidateError),
             capture = if (candidateError == null) ShortcutCaptureMode.None else ShortcutCaptureMode.Recording)
     }

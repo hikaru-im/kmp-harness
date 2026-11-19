@@ -56,6 +56,8 @@ import im.hikaru.harness.client.connection.Connection
 import im.hikaru.harness.client.connection.AgentOptions
 import im.hikaru.harness.client.connection.SessionId
 import im.hikaru.harness.client.connection.CreateSessionOptions
+import im.hikaru.harness.client.conversation.ComposerAttachment
+import im.hikaru.harness.client.conversation.ComposerAttachmentReader
 import im.hikaru.harness.client.conversation.ConversationController
 import im.hikaru.harness.client.conversation.ConversationHostScope
 import im.hikaru.harness.client.conversation.ConversationState
@@ -77,6 +79,10 @@ import im.hikaru.harness.client.plugins.InstalledPluginsAction
 import im.hikaru.harness.client.plugins.InstalledPluginsPage
 import im.hikaru.harness.client.plugins.InstalledPluginDetailPage
 import im.hikaru.harness.client.plugins.PluginsManagementNavigator
+import im.hikaru.harness.client.plugins.PluginsManagementCategory
+import im.hikaru.harness.client.plugins.McpExternalUrlOpener
+import im.hikaru.harness.client.plugins.McpManagementController
+import im.hikaru.harness.client.plugins.McpManagementPage
 import im.hikaru.harness.client.plugins.PluginScope
 import im.hikaru.harness.client.plugins.PluginAccountId
 import im.hikaru.harness.client.plugins.PluginId
@@ -88,9 +94,14 @@ import im.hikaru.harness.client.git.GitBackend
 import im.hikaru.harness.client.git.GitBinding
 import im.hikaru.harness.client.git.GitController
 import im.hikaru.harness.client.git.GitDiffRequest
+import im.hikaru.harness.client.git.GitDiffSource
+import im.hikaru.harness.client.git.GitChangeFilter
+import im.hikaru.harness.client.git.GitChangesPanel
 import im.hikaru.harness.client.git.GitDiffSnapshot
+import im.hikaru.harness.client.git.diffSource
 import im.hikaru.harness.client.git.GitFailure
 import im.hikaru.harness.client.git.GitFailureKind
+import im.hikaru.harness.client.git.GitStageAction
 import im.hikaru.harness.client.git.GitReadException
 import im.hikaru.harness.client.git.GitRead
 import im.hikaru.harness.client.git.GitRepository
@@ -150,6 +161,8 @@ import im.hikaru.harness.client.page.SettingsModelsPage
 import im.hikaru.harness.client.page.SettingsShortcutsPage
 import im.hikaru.harness.client.settings.ShortcutsRepository
 import im.hikaru.harness.client.settings.ShortcutCommand
+import im.hikaru.harness.client.settings.GlobalHotkeyController
+import im.hikaru.harness.client.settings.GlobalHotkeyState
 import im.hikaru.harness.client.settings.LocalShortcutsRepository
 import im.hikaru.harness.client.settings.LocalShortcutsEventRoot
 import im.hikaru.harness.client.settings.toShortcutInput
@@ -160,6 +173,7 @@ import im.hikaru.harness.client.settings.WorktreeSettingsRepository
 import im.hikaru.harness.client.settings.WorktreeSettingsState
 import im.hikaru.harness.client.settings.GeneralSettingsState
 import im.hikaru.harness.client.settings.CloseConfirmationPolicy
+import im.hikaru.harness.client.settings.EnterBehavior
 import im.hikaru.harness.client.settings.ModelSettingsState
 import im.hikaru.harness.client.settings.ProviderConfiguration
 import im.hikaru.harness.client.settings.AppearanceRepository
@@ -219,6 +233,7 @@ import im.hikaru.harness.client.shell.PluginsNavigatorState
 import im.hikaru.harness.client.shell.toPageId
 import im.hikaru.harness.client.shell.navigatorSlug
 import im.hikaru.harness.client.shell.SettingsNavigatorModel
+import im.hikaru.harness.client.shell.SettingsPanelCatalog
 import im.hikaru.harness.client.shell.SettingsSection
 import im.hikaru.harness.client.shell.SettingsNavigatorState
 import im.hikaru.harness.client.shell.pageShellSpec
@@ -272,6 +287,9 @@ public fun HarnessApp(
     shellLayoutRepository: ShellLayoutRepository? = null,
     shortcutsRepository: ShortcutsRepository? = null,
     installedPluginRepository: InstalledPluginRepository = UnavailablePluginRepository,
+    onOpenExternalUrl: McpExternalUrlOpener? = null,
+    composerAttachmentPicker: (() -> List<ComposerAttachment>)? = null,
+    composerAttachmentReader: ComposerAttachmentReader = im.hikaru.harness.client.conversation.UnavailableComposerAttachmentReader,
     remoteStatus: RemoteConnectionStatus? = null,
     remoteSelectedHost: HostDescription? = null,
     remoteDiscovery: RemoteDiscoveryState = RemoteDiscoveryState(),
@@ -287,9 +305,12 @@ public fun HarnessApp(
     scheduledExecutorOwner: im.hikaru.harness.client.scheduling.ScheduledExecutorOwner? = null,
     scheduledExecutionRecoveryEnabled: Boolean = true,
     localProjectRepository: LocalProjectRepository = UnavailableLocalProjectRepository,
+    projectFileSearch: im.hikaru.harness.client.projects.ProjectFileSearch = im.hikaru.harness.client.projects.UnavailableProjectFileSearch,
     managedWorktreeRepository: im.hikaru.harness.client.git.ManagedWorktreeRepository? = null,
     terminalLaunchProvider: im.hikaru.harness.client.panels.TerminalLaunchProvider =
         im.hikaru.harness.client.panels.UnavailableTerminalLaunchProvider,
+    onOpenQuickChat: (() -> Unit)? = null,
+    globalHotkeyController: GlobalHotkeyController? = null,
 ) {
     val appearance = appearanceRepository ?: remember {
         val initial = AppearanceSettings(mode = AppearanceMode.from(themeMode))
@@ -318,6 +339,7 @@ public fun HarnessApp(
     LaunchedEffect(shortcuts) { if (!shortcuts.state.value.loaded) shortcuts.load() }
     val ownsShortcutRoot = LocalShortcutsEventRoot.current !== shortcuts.input
     var navigation by remember { mutableStateOf(NavigationState(currentPage = initialDestination.toPageId())) }
+    var conversationFindOpen by remember { mutableStateOf(false) }
     var workspaceState by remember { mutableStateOf(WorkspaceNavigatorState()) }
     // Page-owned navigators. They are separate from [workspaceState] so a Settings/Plugins/Hosts
     // page never reuses the Workspace search, project tree or recent-task state.
@@ -465,7 +487,7 @@ public fun HarnessApp(
                     if (transport == ConnectionTransport.Relay) onRefreshHosts?.invoke() else descriptionRepository?.refresh()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
-                    if (currentSession == capturedSession) connectionActionError = "无法刷新连接，请重试。"
+                    if (currentSession == capturedSession) connectionActionError = "无法刷新远程连接"
                 }
             }
         }
@@ -474,8 +496,13 @@ public fun HarnessApp(
         if (connectionsState.canSelect) onSelectHost?.invoke(candidate)
     }
     val page = navigation.currentPage
+    LaunchedEffect(page) {
+        if (page !is PageId.Thread) conversationFindOpen = false
+    }
     val conversationScope = rememberCoroutineScope()
-    val conversation = remember { ConversationController(conversationScope) }
+    val conversation = remember(composerAttachmentReader) {
+        ConversationController(conversationScope, attachmentReader = composerAttachmentReader)
+    }
     val conversationState by conversation.state.collectAsState()
     // Window-level transient notifications; conversation failures own them today. Codex keeps its
     // toaster at the top centre of the window, so the host is mounted once at the root.
@@ -638,6 +665,7 @@ public fun HarnessApp(
     val pluginAccess = pluginScope?.let { scope ->
         verifiedConversationConnection?.let { PluginAccessBinding(scope, it, transport) }
     }
+    var pluginsCategory by remember { mutableStateOf(PluginsManagementCategory.Plugins) }
     val managedPlugins = installedPluginRepository as? LocalPluginManagementRepository
     val plugins = remember(installedPluginRepository) {
         InstalledPluginsController(conversationScope, installedPluginRepository)
@@ -645,6 +673,22 @@ public fun HarnessApp(
     val observedPluginsState = key(plugins) { plugins.state.collectAsState().value }
     val pluginsState = observedPluginsState.takeIf { it.scope == pluginScope }
         ?: InstalledPluginsState(scope = pluginScope)
+    val mcpManagement = remember(conversationScope, onOpenExternalUrl, toasts) {
+        McpManagementController(
+            conversationScope,
+            openExternalUrl = onOpenExternalUrl,
+            onError = { toasts.show(it, isError = true) },
+        )
+    }
+    val observedMcpState = key(mcpManagement) { mcpManagement.state.collectAsState().value }
+    val mcpState = observedMcpState.takeIf { it.scope == pluginScope }
+        ?: im.hikaru.harness.client.plugins.McpManagementState(scope = pluginScope)
+    DisposableEffect(mcpManagement) {
+        onDispose { mcpManagement.close() }
+    }
+    LaunchedEffect(mcpManagement, pluginScope, verifiedConversationConnection, transport) {
+        mcpManagement.bind(pluginScope, verifiedConversationConnection?.mcp)
+    }
     DisposableEffect(plugins, managedPlugins) {
         onDispose {
             managedPlugins?.bindAccess(null)
@@ -711,9 +755,7 @@ public fun HarnessApp(
     }
     val modelChoices = if (transport == ConnectionTransport.Local && modelSettings.snapshot.available &&
         modelSettings.loadError == null && !modelSettings.loading) {
-        modelSettings.snapshot.providers.filter { it.active }.flatMap { provider ->
-            provider.models.map { model -> ConversationModelChoice(provider.id, model.id, provider.displayName + " / " + model.name, model.reasoningEfforts) }
-        }
+        modelSettings.snapshot.composerModelChoices()
     } else emptyList()
     val localSchedulingAllowed = transport == ConnectionTransport.Local && verifiedConversationConnection != null
     val schedulingUnavailableReason = when {
@@ -812,21 +854,21 @@ public fun HarnessApp(
         mutableStateMapOf<SessionId?, ComposerSessionPreferences>()
     }
     val homePreferences = composerPreferences[null] ?: ComposerSessionPreferences()
-    var selectedNewEffort by remember(conversationHost?.hostId, conversationHost?.identity, selectedNewModel?.providerId, selectedNewModel?.modelId) {
-        mutableStateOf<String?>(null)
+    val defaultModel = modelSettings.snapshot.providers.firstOrNull { it.selectedModelId != null }?.let { provider ->
+        modelChoices.firstOrNull { it.providerId == provider.id && it.modelId == provider.selectedModelId }
     }
-    val effectiveNewModel = selectedNewModel?.let { chosen ->
+    val effectiveNewModel = (selectedNewModel ?: defaultModel)?.let { chosen ->
         modelChoices.firstOrNull { it.providerId == chosen.providerId && it.modelId == chosen.modelId }
     }
-    val effectiveNewEffort = selectedNewEffort?.takeIf { it in effectiveNewModel?.reasoningEfforts.orEmpty() }
-    val modelReason = when {
-        transport == ConnectionTransport.Relay -> "远程 Host 暂未提供模型目录，使用 Host 默认配置。"
-        modelSettings.loading -> "正在读取本机模型目录。"
-        modelChoices.isEmpty() && modelSettings.snapshot.providers.any { it.applicationError != null } -> "Provider 配置未生效，请到设置中修复。"
-        // Nothing configured is the ordinary first-run state, not a fault: the reference composer
-        // keeps the slot silent for it (the model chip is the affordance), so it gets no notice.
-        else -> null
+    LaunchedEffect(defaultModel?.providerId, defaultModel?.modelId) { selectedNewModel = null }
+    // Validate the previous intent against the newly selected model.
+    var selectedNewReasoning by remember(conversationHost?.hostId, conversationHost?.identity) {
+        mutableStateOf(im.hikaru.harness.client.connection.ReasoningOptions())
     }
+    val effectiveNewReasoning = resolveComposerReasoning(effectiveNewModel, selectedNewReasoning)
+    val effectiveNewEffort = effectiveNewReasoning.effort?.value
+    // The model slot carries no reason copy: Codex's `IntelligenceDropdown` renders the model list and
+    // its effort controls only, with no 「暂未提供模型目录」/「配置未生效」 line for any state.
     val composerBindingReady = conversationState.host == conversationHost &&
         conversationState.selectedSessionId == null
     val composerState = if (composerBindingReady) conversationState else
@@ -835,11 +877,11 @@ public fun HarnessApp(
         conversation.state.value.host == conversationHost &&
         conversation.state.value.selectedSessionId == null
     val submitReason = when {
-        !composerBindingReady -> "正在切换会话…"
-        !conversationState.connected -> "请连接可用的 Host 后发送消息。"
-        pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
-        page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "所选项目尚未加载，请刷新项目后再发送。"
-        page == PageId.Home && localProjectsState.mutation != null -> "正在保存项目变更，请稍候。"
+        !composerBindingReady -> "正在加载…"
+        !conversationState.connected -> if (transport == ConnectionTransport.Relay) "远程连接已断开" else "连接已断开"
+        pendingProjectAssociation != null -> "项目关联未能确认"
+        page == PageId.Home && localProjectsState.selectedProjectId != null && localProjectsState.selectedProject == null -> "正在加载…"
+        page == PageId.Home && localProjectsState.mutation != null -> "正在加载…"
         else -> null
     }
     // A local session cannot start without a provider/model, but the reference composer never prints
@@ -852,7 +894,7 @@ public fun HarnessApp(
     val pendingAssociationNotice: @Composable () -> Unit = {
         pendingProjectAssociation?.let { pending ->
             val pendingName = localProjectsState.snapshot?.project(pending.first.projectId)?.name ?: pending.first.projectId.value
-            HarnessText("会话已创建，项目「$pendingName」关联待确认；消息尚未发送。",
+            HarnessText("项目「$pendingName」关联未能确认",
                 Modifier.semantics { testTag = "local-project-attach-pending" }, color = HarnessTokens.Colors.Danger)
             HarnessButton("重试项目关联", {
                 if (!retryingProjectAssociation) {
@@ -874,6 +916,12 @@ public fun HarnessApp(
             localProjectsState.mutationFailure?.let { HarnessText(it.message(), color = HarnessTokens.Colors.Danger) }
         }
     }
+    val modelManagementTabStrip = LocalHarnessTabStrip.current
+    val openModelManagement: () -> Unit = {
+        val target = PageId.Settings(SettingsSection.Models)
+        navigation = navigation.navigate(target)
+        modelManagementTabStrip?.selectConversation(target)
+    }
     val homeComposer: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Project selection lives in the composer rail below; only the loading/error feedback stays here.
@@ -886,7 +934,7 @@ public fun HarnessApp(
         pendingWorktreeChat?.takeIf { page == PageId.Home }?.let { directory ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HarnessText("将在该工作树目录新建聊天：$directory",
+                HarnessText(directory,
                     Modifier.weight(1f).semantics { testTag = "local-worktree-chat-pending" },
                     color = HarnessTokens.Colors.TextMuted)
                 HarnessButton("取消", { pendingWorktreeChat = null }, testTag = "local-worktree-chat-cancel")
@@ -894,8 +942,9 @@ public fun HarnessApp(
         }
         LiveConversationComposer(
             state = composerState, onDraftChange = { if (homeComposerIsCurrent()) conversation.updateDraft(it) },
+            enterBehavior = generalState.settings.enterBehavior, shortcutPlatform = shortcuts.platform,
             onSubmit = {
-                if (submitReason == null && homeComposerIsCurrent()) {
+                if (submitReason == null && !submitBlockedWithoutHint && homeComposerIsCurrent()) {
                     var target: ValidatedLocalProjectTarget? = null
                     val expectedProjectId = localProjectsState.selectedProjectId
                     val expectedProjectBinding = projectBinding
@@ -905,7 +954,7 @@ public fun HarnessApp(
                     projectPreparationError = null
                     conversation.submit(
                         agentOptions = AgentOptions(provider = effectiveNewModel?.providerId, model = effectiveNewModel?.modelId,
-                            reasoningEffort = effectiveNewEffort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }),
+                            reasoning = effectiveNewReasoning),
                         prepareCreation = if (worktreeDirectory != null) ({ CreateSessionOptions(cwd = worktreeDirectory) })
                             else if (!useProject) null else ({
                                 if (expectedProjectBinding == null || !localProjects.isBoundTo(expectedProjectBinding) ||
@@ -920,7 +969,7 @@ public fun HarnessApp(
                             }),
                         onSessionCreated = { summary ->
                             composerPreferences[summary.id] = (composerPreferences[null] ?: homePreferences).copy(model = effectiveNewModel,
-                                effort = effectiveNewEffort, modelConfigurationKnown = effectiveNewModel != null)
+                                effort = effectiveNewEffort, reasoning = effectiveNewReasoning, modelConfigurationKnown = effectiveNewModel != null)
                             composerPreferences.remove(null)
                             if (worktreeDirectory != null) { pendingWorktreeChat = null; true }
                             else if (!useProject) true else target?.let { captured ->
@@ -933,13 +982,34 @@ public fun HarnessApp(
             },
             onCancel = { if (homeComposerIsCurrent()) conversation.cancel() }, models = modelChoices,
             selectedModel = effectiveNewModel,
-            onModelSelect = { selectedNewModel = it }, modelUnavailableReason = modelReason,
+            onManageModels = openModelManagement,
+            onModelSelect = {
+                selectedNewReasoning = resolveComposerReasoning(it, effectiveNewReasoning)
+                selectedNewModel = it
+            },
             submitUnavailableReason = submitReason, submitBlocked = submitBlockedWithoutHint,
             selectedReasoningEffort = effectiveNewEffort,
-            onReasoningEffortSelect = { selectedNewEffort = it },
+            onReasoningEffortSelect = {
+                selectedNewReasoning = effectiveNewReasoning.copy(effort = it?.let { value -> im.hikaru.harness.client.connection.ReasoningEffortId(value) })
+            },
+            selectedReasoning = effectiveNewReasoning,
+            onReasoningSelect = { selectedNewReasoning = it },
             useHostDefaultModel = transport == ConnectionTransport.Relay,
             permission = homePreferences.permission,
             onPermissionSelect = { if (homeComposerIsCurrent()) composerPreferences[null] = homePreferences.copy(permission = it) },
+            attachments = conversationState.attachments,
+            onAddAttachment = composerAttachmentPicker?.takeIf { transport == ConnectionTransport.Local }?.let { picker ->
+                {
+                    try {
+                        conversation.addAttachments(picker())
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        conversation.setAttachmentError(error.message ?: "无法选择附件")
+                    }
+                }
+            },
+            onRemoveAttachment = conversation::removeAttachment,
             topRail = if (page == PageId.Home && transport == ConnectionTransport.Local) ({
                 ComposerProjectRail(
                     state = localProjectsState,
@@ -950,6 +1020,9 @@ public fun HarnessApp(
                     onQueryChange = localProjects::setQuery,
                     onManage = { navigation = navigation.navigate(PageId.Projects()) },
                     onConfigureEnvironment = { navigation = navigation.navigate(PageId.Settings(SettingsSection.Worktrees)) },
+                    gitState = gitState,
+                    onSelectBranch = git::selectBranch,
+                    onSwitchBranch = git::switchBranch,
                 )
             }) else null,
         )
@@ -1069,7 +1142,32 @@ public fun HarnessApp(
         tabStripState?.onChatPage = isChatPage(page)
     }
     val back: () -> Unit = { navigation = navigation.back() }
-    val shortcutBlocked by rememberUpdatedState(projectEditorOpen || accountMenu.isOpen || exploreMenu.isOpen || navigation.overlay != OverlayId.None)
+    val openFileSearch: () -> Unit = {
+        navigatorSearchOpen = false
+        workspaceState = workspaceState.withSearchQuery("")
+        navigation = navigation.openOverlay(OverlayId.FileSearch)
+    }
+    val shortcutSettings by shortcuts.state.collectAsState()
+    val globalHotkeyState = globalHotkeyController?.state?.collectAsState()?.value ?: GlobalHotkeyState()
+    val currentOpenQuickChat by rememberUpdatedState(onOpenQuickChat)
+    LaunchedEffect(globalHotkeyController) {
+        globalHotkeyController?.triggers?.collect { currentOpenQuickChat?.invoke() }
+    }
+    LaunchedEffect(globalHotkeyController, shortcutSettings.settings, shortcutSettings.platform) {
+        globalHotkeyController?.sync(shortcutSettings.settings, shortcutSettings.platform)
+    }
+    val fileSearchShortcut = shortcutSettings.settings.bindings(ShortcutCommand.SearchFiles, shortcuts.platform)
+        .firstOrNull()?.label(shortcuts.platform).orEmpty()
+    val searchProject = when (val current = page) {
+        is PageId.Project -> localProjectsState.projects.firstOrNull { it.id.value == current.projectId }
+        is PageId.Thread -> localProjectsState.snapshot?.memberships
+            ?.firstOrNull { it.session.id.value == current.threadId }
+            ?.let { membership -> localProjectsState.projects.firstOrNull { it.id == membership.projectId } }
+        else -> localProjectsState.selectedProject
+    }
+    val fileSearchTarget = if (searchProject != null && projectBinding != null)
+        im.hikaru.harness.client.projects.ProjectFileSearchTarget(projectBinding, searchProject) else null
+    val shortcutBlocked by rememberUpdatedState(projectEditorOpen || navigatorSearchOpen || accountMenu.isOpen || exploreMenu.isOpen || navigation.overlay != OverlayId.None)
     val shortcutConsumer by rememberUpdatedState<(ShortcutCommand) -> Boolean>({ command ->
         when (command) {
             ShortcutCommand.Settings -> { selectPage(PageId.Settings(SettingsSection.General)); true }
@@ -1083,6 +1181,13 @@ public fun HarnessApp(
                 if (navigation.backStack.isEmpty()) false else { back(); true }
             }
             ShortcutCommand.ManageTasks -> { selectPage(PageId.ScheduledTasks()); true }
+            ShortcutCommand.SearchFiles -> { openFileSearch(); true }
+            ShortcutCommand.FindInConversation -> {
+                if (page is PageId.Thread) { conversationFindOpen = true; true } else false
+            }
+            ShortcutCommand.OpenQuickChat -> {
+                onOpenQuickChat?.invoke() != null
+            }
             ShortcutCommand.CloseWindow -> false // The desktop root owns the sole close consumer.
         }
     })
@@ -1121,6 +1226,13 @@ public fun HarnessApp(
         val sessionId = (page as? PageId.Thread)?.threadId?.let(::SessionId)
         val bound = paneState.host == conversationHost && paneState.selectedSessionId == sessionId
         val preferences = composerPreferences[sessionId] ?: ComposerSessionPreferences()
+        val paneModel = if (bound) composerModel(paneState, modelChoices, preferences) else null
+        val paneModelAvailable = paneModel != null && modelChoices.any { it.providerId == paneModel.providerId && it.modelId == paneModel.modelId }
+        val paneReasoning = resolveComposerReasoning(paneModel, preferences.reasoning
+            ?: paneState.modelConfiguration?.reasoning
+            ?: im.hikaru.harness.client.connection.ReasoningOptions(effort = preferences.effort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }
+                ?: paneState.modelConfiguration?.reasoningEffort))
+
         // The composer acts on the pane's live binding, so a callback that lands after the pane moved
         // to another tab cannot draft into, send to or stop the session the pane has left.
         fun stillBound(): Boolean = paneController.state.value.host == conversationHost &&
@@ -1130,22 +1242,64 @@ public fun HarnessApp(
         LiveConversationComposer(
             state = if (bound) paneState else ConversationState(host = conversationHost, selectedSessionId = sessionId),
             onDraftChange = { if (stillBound()) paneController.updateDraft(it) },
-            onSubmit = { if (bound && stillBound()) paneController.submit(agentOptions = AgentOptions()) },
+            enterBehavior = generalState.settings.enterBehavior, shortcutPlatform = shortcuts.platform,
+            onSubmit = {
+                if (bound && stillBound() && (transport != ConnectionTransport.Local || paneModelAvailable)) {
+                    paneController.submit(agentOptions = if (transport == ConnectionTransport.Local)
+                        AgentOptions(provider = paneModel?.providerId, model = paneModel?.modelId, reasoning = paneReasoning)
+                        else AgentOptions())
+                }
+            },
             onCancel = { if (stillBound()) paneController.cancel() },
             onCancelEdit = { if (stillBound()) paneController.cancelEdit() },
+            attachments = if (bound) paneState.attachments else emptyList(),
+            onAddAttachment = composerAttachmentPicker?.takeIf { transport == ConnectionTransport.Local }?.let { picker ->
+                {
+                    if (bound && stillBound()) {
+                        try {
+                            paneController.addAttachments(picker())
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            paneController.setAttachmentError(error.message ?: "无法选择附件")
+                        }
+                    }
+                }
+            },
+            onRemoveAttachment = { id -> if (bound && stillBound()) paneController.removeAttachment(id) },
             models = modelChoices,
-            selectedModel = if (bound) composerModel(paneState, modelChoices, preferences) else null,
-            onModelSelect = {}, // Existing sessions expose their configuration read-only.
-            modelUnavailableReason = "当前会话暂不支持更换模型。",
+            selectedModel = paneModel,
+            onManageModels = openModelManagement,
+            onModelSelect = { chosen ->
+                if (bound && stillBound()) {
+                    val reasoning = resolveComposerReasoning(chosen, paneReasoning)
+                    composerPreferences[sessionId] = preferences.copy(model = chosen, reasoning = reasoning,
+                        effort = reasoning.effort?.value, modelConfigurationKnown = true)
+                }
+            },
+            // `composer.submit.*`: Codex only ever phrases a blocked submit with the reasons its own
+            // locale carries. `loadingLocalConfig` is 「正在加载…」 and `remoteDisconnected` is
+            // 「远程连接已断开」; there is no key at all for an unavailable model, so that case blocks
+            // the submit silently — the model chip is the affordance (see `submitBlockedWithoutHint`).
             submitUnavailableReason = when {
-                pendingProjectAssociation != null -> "请先确认已创建会话的项目关联。"
-                !bound -> "正在切换会话…"
-                !paneState.connected -> "请连接可用的 Host 后发送消息。"
-                selectedSummary?.archived == true -> "此会话已归档，取消归档后可继续发送。"
+                pendingProjectAssociation != null -> "项目关联未能确认"
+                !bound -> "正在加载…"
+                !paneState.connected -> if (transport == ConnectionTransport.Relay) "远程连接已断开" else "连接已断开"
+                selectedSummary?.archived == true -> "此会话已归档"
                 else -> null
             },
-            selectedReasoningEffort = preferences.effort,
-            reasoningEffortKnown = preferences.modelConfigurationKnown,
+            selectedReasoningEffort = paneReasoning.effort?.value,
+            selectedReasoning = paneReasoning,
+            onReasoningEffortSelect = { effort ->
+                if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(model = paneModel,
+                    reasoning = paneReasoning.copy(effort = effort?.let { im.hikaru.harness.client.connection.ReasoningEffortId(it) }),
+                    effort = effort, modelConfigurationKnown = true)
+            },
+            onReasoningSelect = { reasoning ->
+                if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(model = paneModel,
+                    reasoning = reasoning, effort = reasoning.effort?.value, modelConfigurationKnown = true)
+            },
+            reasoningEffortKnown = true,
             permission = preferences.permission,
             onPermissionSelect = { if (bound && stillBound()) composerPreferences[sessionId] = preferences.copy(permission = it) },
         )
@@ -1215,7 +1369,47 @@ public fun HarnessApp(
             onTerminalInput = { key, input -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Input, input) },
             onTerminalEof = { key -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Eof) },
             onTerminalCancel = { key -> panelController.operateTerminal(key, im.hikaru.harness.client.panels.TerminalOperationKind.Cancel) },
-            ptyController = ptyController, ptyState = ptyState) }
+            ptyController = ptyController, ptyState = ptyState,
+            // GIT-01 review tab: a read-only projection of the app-owned GitController. The review
+            // diff is its own read slot (`refreshReviewDiff`), so opening this tab or switching its
+            // stage filter never rewrites the Settings → Git page's diff source. File-level staging
+            // uses the controller's fenced index-only API; the tab never commits, checks out or
+            // creates a worktree.
+            changesContent = {
+                LaunchedEffect(git, gitState.selectedCwd, gitState.changeFilter, page) {
+                    if (gitState.unavailableReason != null || gitState.repository !is GitRead.Ready) return@LaunchedEffect
+                    if ((gitState.reviewDiff as? GitRead.Ready<GitDiffSnapshot>)?.value?.request?.source ==
+                        gitState.changeFilter.diffSource) return@LaunchedEffect
+                    git.refreshReviewDiff()
+                }
+                GitChangesPanel(
+                    state = gitState,
+                    onSelectFilter = { filter ->
+                        git.selectChangeFilter(filter)
+                        git.refreshReviewDiff()
+                    },
+                    onSelectSource = { source ->
+                        git.selectChangeFilter(if (source == GitDiffSource.Index) GitChangeFilter.Staged else GitChangeFilter.Unstaged)
+                        git.refreshReviewDiff()
+                    },
+                    // `codex.review.refreshGitQueries` re-reads status, branches, diff and the review
+                    // half in one pass; it is the controller's existing read-only refresh.
+                    onRefresh = { git.refresh() },
+                    onRequestPreviews = { paths -> git.refreshPreviewFiles(paths) },
+                    onStageChange = { action, path ->
+                        when (action) {
+                            GitStageAction.Stage -> git.stageFile(path)
+                            GitStageAction.Unstage -> git.unstageFile(path)
+                        }
+                    },
+                    onHunkStageChange = { action, path, patch ->
+                        when (action) {
+                            GitStageAction.Stage -> git.stageHunk(path, patch)
+                            GitStageAction.Unstage -> git.unstageHunk(path, patch)
+                        }
+                    },
+                )
+            }) }
     }
     val defaultRoot: @Composable () -> Unit = {
         val shellDensity = LocalDensity.current
@@ -1248,6 +1442,7 @@ public fun HarnessApp(
                 PageId.Home -> LiveHomeSurface(hostLabel = host?.displayName, content = homeComposer)
 
                 PageId.NewTab -> NewTabPage(
+                    sideChatAvailable = onOpenQuickChat != null,
                     onOpenTool = { tool ->
                         when (tool) {
                             // 变更 is the one 工具 card this client has a destination for: the
@@ -1260,7 +1455,8 @@ public fun HarnessApp(
                             NewTabTool.Changes ->
                                 if (paneStrip != null) paneStrip.add(HarnessChangesPage)
                                 else selectPage(HarnessChangesPage.page ?: PageId.Settings(SettingsSection.Git))
-                            NewTabTool.Terminal, NewTabTool.Files, NewTabTool.SideChat -> Unit
+                            NewTabTool.Terminal, NewTabTool.Files -> Unit
+                            NewTabTool.SideChat -> onOpenQuickChat?.invoke()
                         }
                     },
                 )
@@ -1316,6 +1512,8 @@ public fun HarnessApp(
                     onRetry = { paneConversation.refresh() },
                     onEditMessage = { message -> paneConversation.beginEdit(message.id) },
                     onApprovalChoice = { requestId, choice -> paneConversation.respondApproval(requestId, choice) },
+                    findOpen = conversationFindOpen,
+                    onCloseFind = { conversationFindOpen = false },
                     onOpenInGit = { path ->
                         gitRevealPath = path
                         // Same destination the 变更 tool card uses: keep the conversation visible and
@@ -1326,7 +1524,20 @@ public fun HarnessApp(
                 )
 
 
-                PageId.Plugins -> InstalledPluginsPage(pluginsState, pluginAction)
+                // The Settings row routes here instead of into SettingsSection.Plugins, so this
+                // page carries the plugin panel's semantic identity too (M0 / SET-01 / SET-02).
+                PageId.Plugins -> Box(
+                    Modifier.fillMaxSize().semantics {
+                        testTag = SettingsPanelCatalog.panelTestTag("plugins")
+                    },
+                ) {
+                    if (pluginsCategory == PluginsManagementCategory.Mcps) {
+                        McpManagementPage(mcpState, mcpManagement,
+                            externalUrlAvailable = onOpenExternalUrl != null)
+                    } else {
+                        InstalledPluginsPage(pluginsState, pluginAction)
+                    }
+                }
                 is PageId.PluginDetail -> InstalledPluginDetailPage(pluginsState, pluginAction)
 
 
@@ -1349,14 +1560,19 @@ public fun HarnessApp(
                     onAppearanceChange = { candidate -> appearanceScope.launch { appearance.save(candidate) } },
                     onAppearanceRetry = { appearanceScope.launch { appearance.retry() } },
                     modelSettings = modelSettings,
+                    onModelEnabled = { provider, model, enabled, revision -> modelScope.launch { models.setModelEnabled(provider, model, enabled, revision) } },
+                    onModelSelected = { provider, model, revision -> modelScope.launch { models.selectModel(provider, model, revision) } },
                     onModelsRefresh = { modelScope.launch { models.load() } },
                     onModelsRetryApplication = { modelScope.launch { models.retryApplication() } },
                     onModelsDiscover = { id, revision -> modelScope.launch { models.discoverModels(id, revision) } },
+                    onModelsDiscoverDraft = { configuration, key -> models.discoverDraft(configuration, key) },
+                    onProviderConnect = { configuration, key, revision -> modelScope.launch { models.saveWithCredential(configuration, key, revision) } },
                     onProviderSave = { configuration, revision -> modelScope.launch { models.save(configuration, revision) } },
                     onProviderRemove = { id, revision -> modelScope.launch { models.remove(id, revision) } },
                     onCredentialSet = { name, value -> modelScope.launch { models.setCredential(name, value) } },
                     generalState = generalState,
                     onClosePolicyChange = { policy -> generalScope.launch { general.save(general.state.value.settings.copy(closeConfirmation = policy)) } },
+                    onEnterBehaviorChange = { behavior -> generalScope.launch { general.save(general.state.value.settings.copy(enterBehavior = behavior)) } },
                     onGeneralRetry = { generalScope.launch { general.retry() } },
                     worktreeSettingsState = worktreeSettingsState,
                     onSaveWorktreeSettings = { next -> worktreeSettingsScope.launch { worktreeSettings.save(next) } },
@@ -1365,6 +1581,7 @@ public fun HarnessApp(
                     onConnectionsRefresh = refreshConnections,
                     onConnectionSelect = selectConnection,
                     shortcutsRepository = shortcuts,
+                    globalHotkeyState = globalHotkeyState,
                     pluginsState = pluginsState,
                     onPluginAction = pluginAction,
                     gitRevealPath = gitRevealPath,
@@ -1448,6 +1665,8 @@ public fun HarnessApp(
             },
             navigatorSearchOpen = navigatorSearchOpen,
             onToggleNavigatorSearch = { navigatorSearchOpen = !navigatorSearchOpen },
+            onSearchFiles = openFileSearch,
+            fileSearchShortcut = fileSearchShortcut,
             onToggleProject = { projectId -> navigation = navigation.toggleProject(projectId) },
             onSelectNode = { node -> selectPage(PageId.Thread(node.id)) },
             onSelectRecent = { task -> selectPage(PageId.Thread(task.id)) },
@@ -1487,6 +1706,11 @@ public fun HarnessApp(
                         },
                         onSelect = { pluginAction(InstalledPluginsAction.Select(it)) },
                         onRetry = { pluginAction(InstalledPluginsAction.Refresh) },
+                        selectedCategory = pluginsCategory,
+                        onSelectCategory = { category ->
+                            pluginsCategory = category
+                            dismissFloatingPluginsNavigator()
+                        },
                     )
                 }
             },
@@ -1504,7 +1728,15 @@ public fun HarnessApp(
                 {
                     ThreadSummaryPanel(
                         load = summaryLoad,
-                        onOpenReview = { selectPage(PageId.Settings(SettingsSection.Git)) },
+                        // `openReviewTab`: the summary island's 变更 row now opens the thread side
+                        // panel's 审查 tab (a read-only view of this thread's changes). The Settings →
+                        // Git page keeps its own navigator entry.
+                        onOpenReview = panels?.let { state ->
+                            {
+                                panelController.dispatch(ThreadPanelAction.OpenTab(state.scope, ThreadPanelTab.Changes))
+                                summaryPanelOpen = false
+                            }
+                        },
                         onRefresh = { git.refreshSummaryStats() },
                         onClose = { summaryPanelOpen = false },
                         subagents = summaryActivity?.subagents.orEmpty(),
@@ -1578,6 +1810,8 @@ public fun HarnessApp(
             shortcuts.input.preview(input) || shortcuts.input.dispatch(input)
         }.focusable() else Modifier.fillMaxSize()
     CompositionLocalProvider(LocalShortcutsRepository provides shortcuts, LocalShortcutsEventRoot provides shortcuts.input,
+        // Codex's `toast()` is global: any surface under the window can raise a transient outcome.
+        im.hikaru.harness.ui.foundation.LocalHarnessToastState provides toasts,
         LocalConversationNavigationActions provides ConversationNavigationActions(
             sessionsById.mapKeys { it.key.value }, conversationState.managingSessionId != null,
             { id, command ->
@@ -1613,6 +1847,7 @@ public fun HarnessApp(
                 }
             },
             owner = conversationHost)) {
+        im.hikaru.harness.client.plugins.PluginManagementFeedback(pluginsState)
         Box(shortcutModifier) {
             HarnessTheme(appearanceState.settings.mode.themeMode(), appearanceState.settings.themeCustomization()) {
                 UiSnapshotProvider(uiSnapshot) {
@@ -1636,6 +1871,12 @@ public fun HarnessApp(
                         state = toasts,
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = HarnessToastTopInset),
                     )
+                    if (navigation.overlay == OverlayId.FileSearch) {
+                        im.hikaru.harness.client.projects.ProjectFileSearchDialog(
+                            target = fileSearchTarget, search = projectFileSearch,
+                            onDismiss = { navigation = navigation.closeOverlay() },
+                        )
+                    }
                     if (projectEditorOpen) key(projectBinding) {
                         LocalProjectEditorDialog(localProjectsState, editingProject,
                             onDismiss = { projectEditorOpen = false }, onCreate = saveProject,
@@ -1678,10 +1919,7 @@ private object UnavailableAppGitBackend : GitBackend {
     override suspend fun diff(repository: GitRepository, request: GitDiffRequest): GitDiffSnapshot = unavailable()
 }
 
-/**
- * The rail 资料库 placeholder. Codex's Library is a file product this client does not implement, so
- * the page states that plainly instead of showing fabricated file data.
- */
+/** The Library destination currently renders its title without fabricated file data. */
 @Composable
 private fun LibraryPlaceholderPage() {
     Column(
@@ -1691,9 +1929,6 @@ private fun LibraryPlaceholderPage() {
     ) {
         HarnessText("资料库", style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.semantics { testTag = "library-title" })
-        HarnessText("资料库是 Codex 的文件库；该能力当前未接入。", color = HarnessTokens.Colors.TextMuted,
-            modifier = Modifier.semantics { testTag = "library-unavailable" })
-        HarnessText("本页面为占位，不显示任何示例文件。", color = HarnessTokens.Colors.TextMuted)
     }
 }
 
@@ -1960,14 +2195,19 @@ private fun SettingsScreen(
     onAppearanceChange: (AppearanceSettings) -> Unit,
     onAppearanceRetry: () -> Unit,
     modelSettings: ModelSettingsState,
+    onModelEnabled: (String, String, Boolean, Long) -> Unit,
+    onModelSelected: (String, String, Long) -> Unit,
     onModelsRefresh: () -> Unit,
     onModelsRetryApplication: () -> Unit,
     onModelsDiscover: (String, Long) -> Unit,
+    onModelsDiscoverDraft: suspend (ProviderConfiguration, String) -> im.hikaru.harness.client.settings.ModelDiscoveryResult,
+    onProviderConnect: (ProviderConfiguration, String, Long) -> Unit,
     onProviderSave: (ProviderConfiguration, Long) -> Unit,
     onProviderRemove: (String, Long) -> Unit,
     onCredentialSet: (String, String) -> Unit,
     generalState: GeneralSettingsState,
     onClosePolicyChange: (CloseConfirmationPolicy) -> Unit,
+    onEnterBehaviorChange: (EnterBehavior) -> Unit,
     onGeneralRetry: () -> Unit,
     worktreeSettingsState: WorktreeSettingsState,
     onSaveWorktreeSettings: (WorktreeSettings) -> Unit,
@@ -1976,6 +2216,7 @@ private fun SettingsScreen(
     onConnectionsRefresh: () -> Unit,
     onConnectionSelect: (HostDescription) -> Unit,
     shortcutsRepository: ShortcutsRepository,
+    globalHotkeyState: GlobalHotkeyState,
     pluginsState: InstalledPluginsState,
     onPluginAction: (InstalledPluginsAction) -> Unit,
     git: GitController,
@@ -1991,12 +2232,18 @@ private fun SettingsScreen(
     onGitRevealConsumed: () -> Unit,
 ) {
     Box(Modifier.fillMaxWidth().semantics { testTag = "settings-content-" + section.navigatorSlug() }) {
+      // M0 panel identity: one stable semantics node per Settings page, named with the Codex
+      // runtime slug where the surface maps to one (SET-01/SET-02). Kept as a nested node so the
+      // pre-existing `settings-content-<row>` tag stays available to current tests.
+      Box(Modifier.fillMaxWidth().semantics { testTag = SettingsPanelCatalog.panelTestTag(section) }) {
       when (section) {
-        SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins)
+        SettingsSection.General -> SettingsGeneralPage(generalState, onClosePolicyChange, onGeneralRetry, onOpenPlugins,
+            onEnterBehaviorChange = onEnterBehaviorChange, shortcutPlatform = shortcutsRepository.platform)
         SettingsSection.Appearance -> SettingsAppearancePage(appearanceState, onAppearanceChange, onAppearanceRetry)
-        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover)
+        SettingsSection.Models -> SettingsModelsPage(modelSettings, onModelsRefresh, onProviderSave, onProviderRemove, onCredentialSet, onModelsRetryApplication, onModelsDiscover,
+            onModelsDiscoverDraft, onProviderConnect, onModelEnabled, onModelSelected)
         SettingsSection.Connections -> SettingsConnectionsPage(connectionsState, onConnectionsRefresh, onConnectionSelect)
-        SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository)
+        SettingsSection.Shortcuts -> SettingsShortcutsPage(shortcutsRepository, globalHotkeyState)
         SettingsSection.Plugins -> InstalledPluginsPage(pluginsState, onPluginAction)
         SettingsSection.Git, SettingsSection.Worktrees -> BoundGitSettingsPage(
             git, gitState, gitBindingReady, gitUnavailableReason, gitCwdChoices,
@@ -2017,6 +2264,7 @@ private fun SettingsScreen(
                 HarnessText("此设置页面正在实现。", color = HarnessTokens.Colors.TextMuted)
             }
         }
+      }
       }
     }
 }
@@ -2039,7 +2287,7 @@ private fun BoundGitSettingsPage(
     revealPath: String?,
     onRevealConsumed: () -> Unit,
 ) {
-    val title = if (worktrees) "Worktrees" else "Git"
+    val title = if (worktrees) "工作树" else "Git"
     val tag = if (worktrees) "worktrees-page" else "git-page"
     if (!bindingReady || unavailableReason != null) {
         SettingsFormFrame(title, tag) {

@@ -87,7 +87,8 @@ class LiveHarnessConversationInteractionTest {
                 runOnIdle {
                     assertEquals(listOf("create", "prompt"), api.commands.toList())
                     assertNull(api.creates.single().requestedId)
-                    assertEquals(AgentOptions(provider = LIVE_PROVIDER, model = LIVE_MODEL, reasoningEffort = ReasoningEffortId("high")), api.creates.single().agentOptions)
+                    assertEquals(AgentOptions(provider = LIVE_PROVIDER, model = LIVE_MODEL,
+                        reasoning = im.hikaru.harness.client.connection.ReasoningOptions(effort = ReasoningEffortId("high"))), api.creates.single().agentOptions)
                     // prompt has no AgentOptions argument; its session was configured by create.
                     assertEquals(api.createdId, api.prompts.single().id)
                     assertEquals(api.creates.single().agentOptions, api.createdOptions[api.prompts.single().id])
@@ -216,8 +217,9 @@ class LiveHarnessConversationInteractionTest {
                 onNodeWithTag("live-thread").assertExists()
                 onNodeWithTag("live-home").assertDoesNotExist()
                 onNodeWithTag("live-composer-editor").assertDraft("Retained reconnect draft")
-                onNodeWithTag("live-composer-send").assertIsNotEnabled()
-                // The disabled send button is the whole signal: no status sentence under the draft.
+                // `ComposerSubmitButton` dims a blocked submit to 50% but keeps it clickable, so the
+                // click can open `BlockedSubmitDialog`. Still no standing sentence under the draft.
+                onNodeWithTag("live-composer-send").assertIsEnabled()
                 onNodeWithTag("live-composer-submit-unavailable").assertDoesNotExist()
                 onNodeWithText("History from old connection").assertDoesNotExist()
                 runOnIdle { connection = replacement }
@@ -251,6 +253,7 @@ private fun SemanticsNodeInteraction.assertDraft(text: String): SemanticsNodeInt
 @OptIn(ExperimentalTestApi::class)
 private fun ComposeUiTest.chooseLiveTestModel() {
     onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
+    onNodeWithTag("live-composer-model-select").performClick()
     val item = "menu:conversation-model:${LIVE_PROVIDER.length}:$LIVE_PROVIDER:${LIVE_MODEL.length}:$LIVE_MODEL"
     // The catalogue loads asynchronously; an early click opens the menu before it has rows.
     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag(item).fetchSemanticsNodes().isNotEmpty() }

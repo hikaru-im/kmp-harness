@@ -188,9 +188,11 @@ public fun LiveThreadPane(
     onEditMessage: ((Message) -> Unit)? = null,
     onApprovalChoice: (requestId: String, choice: ApprovalChoice) -> Unit = { _, _ -> },
     onOpenInGit: ((path: String) -> Unit)? = null,
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
 ) {
     val transcript by live.collectAsState()
-    LiveThreadSurface(state, transcript, onRetry, onEditMessage, onApprovalChoice, onOpenInGit)
+    LiveThreadSurface(state, transcript, onRetry, onEditMessage, onApprovalChoice, onOpenInGit, findOpen, onCloseFind)
 }
 
 /** Timeline only. The app owns the selected route, controller and separate shared composer. */
@@ -202,6 +204,8 @@ public fun LiveThreadSurface(
     onEditMessage: ((Message) -> Unit)? = null,
     onApprovalChoice: (requestId: String, choice: ApprovalChoice) -> Unit = { _, _ -> },
     onOpenInGit: ((path: String) -> Unit)? = null,
+    findOpen: Boolean = false,
+    onCloseFind: () -> Unit = {},
 ) {
     val liveMessages = live.messages.takeIf { it.isNotEmpty() }?.takeIf { live.sessionId == state.selectedSessionId }.orEmpty()
     Column(Modifier.fillMaxSize().padding(HarnessTokens.Spacing.Four).semantics { testTag = "live-thread" },
@@ -209,22 +213,22 @@ public fun LiveThreadSurface(
         when {
             !state.connected || state.historyPhase == ConversationDataPhase.Disconnected ->
                 ConversationNotice("连接已断开。重新连接后可继续此会话。", "live-thread-disconnected")
+            // `localConversation.loadingThread` = 正在加载对话串… — Codex's own loading sentence.
             state.historyPhase == ConversationDataPhase.Loading ->
-                ConversationNotice("正在读取会话…", "live-thread-loading")
-            state.historyPhase == ConversationDataPhase.Failed -> {
-                // The failure itself is a toast; the surface keeps only the retry that unblocks it.
-                ConversationNotice("会话历史不可用。", "live-thread-unavailable")
+                ConversationNotice("正在加载对话串…", "live-thread-loading")
+            // `localConversationPage.error.toast` (未找到对话) is a toast, so the surface carries no
+            // standing sentence for a failed read — only the retry that unblocks it.
+            state.historyPhase == ConversationDataPhase.Failed ->
                 HarnessButton(
                     "重试", onRetry, enabled = state.connected && state.historyPhase != ConversationDataPhase.Loading,
                     testTag = "live-thread-retry", size = HarnessControlSize.Compact,
                 )
-            }
         }
         if (state.history.isNotEmpty() || liveMessages.isNotEmpty()) {
             key(state.host?.hostId, state.host?.identity, state.selectedSessionId) {
                 ConversationViewport(state.history, Modifier.weight(1f).semantics { testTag = "live-thread-timeline" },
                     live = liveMessages, onEditMessage = onEditMessage?.takeIf { state.canEdit },
-                    onOpenInGit = onOpenInGit)
+                    onOpenInGit = onOpenInGit, findOpen = findOpen, onCloseFind = onCloseFind)
             }
         } else {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {

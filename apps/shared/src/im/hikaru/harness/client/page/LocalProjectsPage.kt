@@ -38,7 +38,7 @@ public fun LocalProjectsPage(
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .semantics { testTag = "local-projects-page" }.padding(HarnessTokens.Spacing.Four), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        ProjectsRecentHeader("local-project-header", "本机项目", "将已有目录登记为项目，在该目录中开始会话。") {
+        ProjectsRecentHeader("local-project-header", "本机项目", description = null) {
             HarnessButton("登记已有目录", onCreate, enabled = state.canRefresh && state.phase in listOf(LocalProjectsPhase.Ready, LocalProjectsPhase.Empty) && state.mutation == null, testTag = "local-project-create")
             HarnessButton("刷新", onRefresh, enabled = state.canRefresh && state.phase != LocalProjectsPhase.Loading,
                 variant = HarnessButtonVariant.Secondary, testTag = "local-project-refresh")
@@ -47,7 +47,7 @@ public fun LocalProjectsPage(
             enabled = state.phase in listOf(LocalProjectsPhase.Ready, LocalProjectsPhase.Empty), testTag = "local-project-search")
         LocalProjectStatus(state)
         val visible = state.projects.filter { query.isBlank() || it.name.contains(query, true) || it.roots.any { root -> root.path.contains(query, true) } }
-        if (state.phase == LocalProjectsPhase.Empty) HarnessText("暂无本机项目。", testModifier("local-projects-empty"), color = HarnessTokens.Colors.TextMuted)
+        if (state.phase == LocalProjectsPhase.Empty) HarnessText("没有项目", testModifier("local-projects-empty"), color = HarnessTokens.Colors.TextMuted)
         else if (state.phase == LocalProjectsPhase.Ready && visible.isEmpty()) HarnessText("没有匹配的项目。", testModifier("local-projects-no-results"), color = HarnessTokens.Colors.TextMuted)
         visible.forEach { project ->
             HarnessRow(project.name, description = project.roots.single().path, onClick = { onOpen(project.id) },
@@ -94,7 +94,7 @@ public fun LocalProjectDetailPage(
             val memberships = state.snapshot?.memberships.orEmpty().filter { it.projectId == id }
             if (memberships.isEmpty()) HarnessText("暂无关联会话。", testModifier("local-project-memberships-empty"), color = HarnessTokens.Colors.TextMuted)
             else if (memberships.any { membership -> liveSessions.none { it.id == membership.session.id } })
-                HarnessText("部分关联会话未载入，当前服务不能恢复这些会话。", testModifier("local-project-memberships-not-live"), color = HarnessTokens.Colors.TextMuted)
+                HarnessText("部分关联会话未载入", testModifier("local-project-memberships-not-live"), color = HarnessTokens.Colors.TextMuted)
             memberships.forEach { membership ->
                 val live = liveSessions.firstOrNull { it.id == membership.session.id }
                 HarnessRow(membership.session.id.value,
@@ -217,16 +217,15 @@ public fun LocalProjectEditorDialog(
 @Composable
 public fun LocalProjectStatus(state: LocalProjectsState) {
     val label = when (state.phase) {
-        LocalProjectsPhase.Unbound -> "尚未绑定可用的本机 Host。"
-        LocalProjectsPhase.Loading -> "正在读取本机项目…"
-        LocalProjectsPhase.Empty -> "项目读取成功，尚未登记目录。"
-        LocalProjectsPhase.Ready -> "已登记 ${state.projects.size} 个本机项目。"
+        LocalProjectsPhase.Empty, LocalProjectsPhase.Ready -> null
+        LocalProjectsPhase.Unbound -> "Host 未连接"
+        LocalProjectsPhase.Loading -> "正在加载…"
         LocalProjectsPhase.Error -> "本机项目读取失败。"
         LocalProjectsPhase.Unavailable -> "本机项目服务不可用。"
         LocalProjectsPhase.Unsupported -> "本机项目文件版本不支持。"
         LocalProjectsPhase.AccessDenied -> "没有权限读取本机项目。"
     }
-    HarnessText(label, Modifier.semantics {
+    if (label != null) HarnessText(label, Modifier.semantics {
         testTag = "local-project-status-${state.phase.name.lowercase()}"; stateDescription = state.phase.name
     }, color = HarnessTokens.Colors.TextMuted)
     state.failure?.let { HarnessText(it.message(), testModifier("local-project-load-error"), color = HarnessTokens.Colors.Danger) }

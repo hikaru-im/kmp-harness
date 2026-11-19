@@ -59,7 +59,10 @@ public fun ScheduledManagementPage(
             executionRecoveryBusy = executionRecoveryBusy,
             executionRecoveryError = executionRecoveryError,
         )
-        ScheduledExecutionModelNotice()
+        HarnessText("本机任务仅在应用运行期间执行；关闭应用后不再运行。",
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
+                .semantics { testTag = "scheduled-execution-model" },
+            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 editable && state.draft != null -> ScheduledPageEditor(
@@ -108,17 +111,6 @@ public fun ScheduledManagementPage(
 }
 
 @Composable
-private fun ScheduledExecutionModelNotice() {
-    HarnessText(
-        ScheduledLocalExecutionModel,
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
-            .semantics { testTag = "scheduled-execution-model" },
-        color = HarnessTokens.Colors.TextMuted,
-        style = MaterialTheme.typography.bodySmall,
-    )
-}
-
-@Composable
 private fun ScheduledPageStatus(
     state: ScheduledManagementState,
     onRetry: () -> Unit,
@@ -133,14 +125,15 @@ private fun ScheduledPageStatus(
         state.durabilityWarning?.let {
             HarnessText(it, Modifier.semantics { testTag = "scheduled-durability-warning" }, color = HarnessTokens.Colors.Danger)
         }
-        state.mutationError?.let {
-            HarnessText(it, Modifier.semantics { testTag = "scheduled-mutation-error" }, color = HarnessTokens.Colors.Danger)
+        val toast = LocalHarnessToastState.current
+        LaunchedEffect(state.scope, state.mutationError) {
+            state.mutationError?.let { toast?.show(it, isError = true) }
         }
         when {
             state.phase == ScheduledLoadPhase.Unbound -> HarnessText("尚未选择 Host。", Modifier.semantics { testTag = "scheduled-unbound" })
-            !state.connected -> HarnessText("当前 Host 未连接，配置操作不可用。",
+            !state.connected -> HarnessText("Host 已断开",
                 Modifier.semantics { testTag = "scheduled-disconnected" })
-            state.phase == ScheduledLoadPhase.NotLoaded || state.phase == ScheduledLoadPhase.Loading -> HarnessText("正在读取任务配置…",
+            state.phase == ScheduledLoadPhase.NotLoaded || state.phase == ScheduledLoadPhase.Loading -> HarnessText("正在加载…",
                 Modifier.semantics { testTag = "scheduled-loading" })
             state.phase == ScheduledLoadPhase.Error -> {
                 HarnessText(state.loadError ?: "读取任务配置失败。", Modifier.semantics { testTag = "scheduled-load-error" },
@@ -150,7 +143,6 @@ private fun ScheduledPageStatus(
             }
             else -> Unit
         }
-        if (state.mutation != null) HarnessText("正在保存任务变更…", Modifier.semantics { testTag = "scheduled-saving" })
         if (onRecoverExecution != null || executionRecoveryBusy || executionRecoveryError != null) {
             HarnessButton(if (executionRecoveryBusy) "正在恢复执行服务…" else "恢复执行服务",
                 { onRecoverExecution?.invoke() }, enabled = onRecoverExecution != null && !executionRecoveryBusy && state.draft == null && state.mutation == null,
@@ -166,10 +158,10 @@ private fun ScheduledPageEmptyState(state: ScheduledManagementState) {
     Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
         Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when {
-                state.phase == ScheduledLoadPhase.Unbound -> HarnessText("选择 Host 后才能读取定时任务。", Modifier.semantics { testTag = "scheduled-unbound-content" })
-                !state.connected -> HarnessText("Host 已断开；旧任务和旧历史已隐藏。", Modifier.semantics { testTag = "scheduled-disconnected-content" })
-                state.phase == ScheduledLoadPhase.NotLoaded || state.phase == ScheduledLoadPhase.Loading -> HarnessText("任务列表正在读取；完成前不会显示空状态。", Modifier.semantics { testTag = "scheduled-loading-content" })
-                state.phase == ScheduledLoadPhase.Error -> HarnessText("任务配置读取失败；请先重新读取。", Modifier.semantics { testTag = "scheduled-error-content" })
+                state.phase == ScheduledLoadPhase.Unbound -> HarnessText("未连接 Host", Modifier.semantics { testTag = "scheduled-unbound-content" })
+                !state.connected -> HarnessText("Host 已断开", Modifier.semantics { testTag = "scheduled-disconnected-content" })
+                state.phase == ScheduledLoadPhase.NotLoaded || state.phase == ScheduledLoadPhase.Loading -> HarnessText("正在加载…", Modifier.semantics { testTag = "scheduled-loading-content" })
+                state.phase == ScheduledLoadPhase.Error -> HarnessText("无法加载已安排任务", Modifier.semantics { testTag = "scheduled-error-content" })
             }
         }
     }
@@ -213,21 +205,13 @@ private fun ScheduledPageDetail(
         ScheduledPageValue(task.schedule.label(), "scheduled-detail-schedule")
         task.model?.let { ScheduledPageValue(it.label(), "scheduled-detail-model") }
         HarnessText("配置版本 " + task.revision, color = HarnessTokens.Colors.TextMuted)
-        if (!catalogAvailable) HarnessText("目标或模型不在当前 Host 的真实可用目录中。", color = HarnessTokens.Colors.TextMuted,
-            modifier = Modifier.semantics { testTag = "scheduled-catalog-unavailable" })
-        if (blocked) HarnessText("任务有在途或 Unknown 运行；不能启用或重新投递。",
-            Modifier.semantics { testTag = "scheduled-run-blocked" }, color = HarnessTokens.Colors.TextMuted)
         if (blocked) {
             val blockingRuns = state.effective?.runs.orEmpty().filter { it.task.id == task.id && it.blocksTask }
             val unknownRuns = blockingRuns.count { it.phase == ScheduledRunPhase.Unknown }
             val inFlightRuns = blockingRuns.size - unknownRuns
-            HarnessText(
-                "阻塞中的运行：进行中 " + inFlightRuns + " 条，结果未知 " + unknownRuns +
-                    " 条。结果未知的运行没有精确终态证据，不会自动重新投递；请先打开对应会话人工核对，" +
-                    "在证据确认前不能启用或立即运行。",
+            HarnessText("阻塞中的运行：进行中 " + inFlightRuns + " 条，结果未知 " + unknownRuns + " 条。",
                 Modifier.semantics { testTag = "scheduled-blocked-runs" }, color = HarnessTokens.Colors.TextMuted)
         }
-        state.executionUnavailableReason?.let { HarnessText(it, Modifier.semantics { testTag = "scheduled-execution-unavailable" }, color = HarnessTokens.Colors.TextMuted) }
         if (task.target is ScheduledTarget.Heartbeat) HarnessText(
             "会话跟进会投递到此任务指向的既有会话，并使用该会话自身的模型。",
             Modifier.semantics { testTag = "scheduled-heartbeat-target" }, color = HarnessTokens.Colors.TextMuted)
@@ -281,7 +265,7 @@ private fun ScheduledPageLedger(state: ScheduledManagementState, repository: Sch
 private fun ScheduledPageRunRows(state: ScheduledManagementState, repository: ScheduledRepository, runs: List<ScheduledRun>,
     onOpenRun: ((SessionId) -> Unit)?, isCurrent: () -> Boolean) {
         HarnessText("运行历史", Modifier.semantics { testTag = "scheduled-page-history" }, style = MaterialTheme.typography.titleMedium)
-        if (runs.isEmpty()) HarnessText("真实账本尚无运行记录。", Modifier.semantics { testTag = "scheduled-page-history-empty" })
+        if (runs.isEmpty()) HarnessText("没有运行记录", Modifier.semantics { testTag = "scheduled-page-history-empty" })
         runs.forEach { run ->
             HarnessSurface(Modifier.fillMaxWidth().semantics { testTag = "scheduled-page-run:" + run.id }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -293,8 +277,6 @@ private fun ScheduledPageRunRows(state: ScheduledManagementState, repository: Sc
                     HarnessButton("打开运行会话", { if (isCurrent()) repository.runSessionRef(run.id)?.let { onOpenRun?.invoke(it) } },
                         enabled = session != null && onOpenRun != null && state.connected,
                         variant = HarnessButtonVariant.Secondary, testTag = "scheduled-page-open-run:" + run.id)
-                    if (session == null) HarnessText("此运行尚无已确认的会话引用。", color = HarnessTokens.Colors.TextMuted)
-                    else if (onOpenRun == null) HarnessText("宿主尚未接入运行会话导航。", color = HarnessTokens.Colors.TextMuted)
                 }
             }
         }
@@ -320,10 +302,10 @@ private fun ScheduledPageEditor(
     Column(Modifier.widthIn(max = 820.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         HarnessText(if (draft.expectedTaskRevision == null) "创建暂停任务" else "编辑任务", style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.semantics { testTag = "scheduled-editor" })
-        HarnessText("保存后仍为暂停状态；保存不会启动执行。", color = HarnessTokens.Colors.TextMuted)
-        if (targets.isEmpty()) HarnessText("当前 Host 未提供可验证的目录或既有会话目标。", Modifier.semantics { testTag = "scheduled-targets-unavailable" })
+        // `settings.automations.destination.thread.help`: Codex's own single line about where a
+        // heartbeat message goes, and nothing about what it does not create or configure.
         if (draft.target is ScheduledTarget.Heartbeat) HarnessText(
-            "会话跟进会把提示词投递到所选既有会话；不创建新会话，也不单独指定模型。",
+            "将消息直接发送到所选对话，而不是在项目文件夹或工作树中运行",
             Modifier.semantics { testTag = "scheduled-heartbeat-target" }, color = HarnessTokens.Colors.TextMuted)
         HarnessTextField(draft.name, { value -> if (isCurrent()) repository.updateDraft { it.copy(name = value) } }, "名称", Modifier.fillMaxWidth(),
             enabled = canEdit, supportingText = errors["name"], isError = errors["name"] != null, testTag = "scheduled-name")
@@ -338,7 +320,6 @@ private fun ScheduledPageEditor(
             ScheduledPagePicker(draft.model, models, { it?.label() ?: "选择真实模型" }, canEdit && models.isNotEmpty(), "scheduled-model", fence) { model ->
                 if (isCurrent()) repository.updateDraft { it.copy(model = model) }
             }
-            if (models.isEmpty()) HarnessText("当前 Host 没有可用模型，无法保存独立任务。", color = HarnessTokens.Colors.TextMuted)
             errors["model"]?.let { HarnessText(it, Modifier.semantics { testTag = "scheduled-model-error" }, color = HarnessTokens.Colors.Danger) }
         }
         ScheduledPagePicker(draft.schedule.frequency, ScheduledFrequency.entries.toList(), { it.label() }, canEdit,
@@ -363,7 +344,14 @@ private fun ScheduledPageEditor(
         preview?.let { HarnessText("规则预览：" + kotlin.time.Instant.fromEpochMilliseconds(it) + "（暂停任务不会执行）",
             Modifier.semantics { testTag = "scheduled-rule-preview" }, color = HarnessTokens.Colors.TextMuted) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HarnessButton("保存为暂停任务", onSave, enabled = state.canMutate && errors.isEmpty(), testTag = "scheduled-save")
+            HarnessTooltipTrigger(
+                text = if (state.canMutate && errors.isEmpty()) null else errors.values.firstOrNull(),
+                scope = state.scope,
+            ) { triggerModifier ->
+                Box(triggerModifier) {
+                    HarnessButton("保存为暂停任务", onSave, enabled = state.canMutate && errors.isEmpty(), testTag = "scheduled-save")
+                }
+            }
             HarnessButton("放弃草稿", onCancel, enabled = state.mutation == null, variant = HarnessButtonVariant.Secondary,
                 testTag = "scheduled-cancel")
         }

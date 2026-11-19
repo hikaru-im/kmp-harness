@@ -11,12 +11,16 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.LoaderOptions
 import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.SafeConstructor
@@ -41,6 +45,63 @@ public class ProfilePatchYamlCodec {
         val rows = root as? List<*> ?: error("Profile patch root must be an array: $source")
         return rows.mapIndexed { index, raw ->
             decodePatch(raw.mapping("patch row $index", source), index, source)
+        }
+    }
+
+    /**
+     * Encodes the portable patch subset. Formatting and comments are intentionally normalized;
+     * callers must use a revision check before replacing a user-owned document.
+     */
+    public fun encode(patches: List<EntryPatch>): String {
+        val options = DumperOptions().apply {
+            defaultFlowStyle = DumperOptions.FlowStyle.BLOCK
+            defaultScalarStyle = DumperOptions.ScalarStyle.PLAIN
+            indent = 2
+            isPrettyFlow = true
+        }
+        val encoder = Yaml(options)
+        val rows = patches.map { patch ->
+            linkedMapOf<String, Any?>().apply {
+                patch.id?.let { put("id", it) }
+                patch.insert?.let { entries ->
+                    put(
+                        "insert",
+                        entries.map { entry ->
+                            linkedMapOf<String, Any?>().apply {
+                                put("id", entry.id)
+                                put("name", entry.name)
+                                entry.config?.let { config ->
+                                    put("config", jsonToYaml(config as? JsonElement ?: error("Entry config must be JSON")))
+                                }
+                                if (entry.disabled) put("disabled", true)
+                            }
+                        },
+                    )
+                }
+                patch.name?.let { put("name", it) }
+                when (val config = patch.config) {
+                    PatchValue.Absent -> Unit
+                    is PatchValue.Present -> put("config", config.value?.let(::jsonToYaml))
+                }
+                when (val disabled = patch.disabled) {
+                    PatchValue.Absent -> Unit
+                    is PatchValue.Present -> put("disabled", disabled.value)
+                }
+            }
+        }
+        return encoder.dump(rows)
+    }
+
+    private fun jsonToYaml(value: JsonElement): Any? = when (value) {
+        JsonNull -> null
+        is JsonObject -> value.entries.associateTo(linkedMapOf()) { (key, child) -> key to jsonToYaml(child) }
+        is JsonArray -> value.map(::jsonToYaml)
+        is JsonPrimitive -> when {
+            value.isString -> value.content
+            value.booleanOrNull != null -> value.booleanOrNull
+            value.longOrNull != null -> value.longOrNull
+            value.doubleOrNull != null -> value.doubleOrNull
+            else -> value.content
         }
     }
 

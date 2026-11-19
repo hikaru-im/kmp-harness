@@ -32,29 +32,40 @@ class GeneralSettingsRepositoryTest {
     }
 
     @Test
-    fun loadFailureAndUnavailablePlatformPreventWrites() = runBlocking {
+    fun loadFailurePreventsWritesButAnUnavailableClosePolicyStillAllowsEnterBehavior() = runBlocking {
         var fail = true
         var writes = 0
+        var written: GeneralSettings? = null
         val store = object : GeneralSettingsStore {
             override val durable = true
             override suspend fun read(): GeneralSettings? {
                 if (fail) error("bad json")
                 return GeneralSettings(CloseConfirmationPolicy.Always)
             }
-            override suspend fun write(settings: GeneralSettings) { writes++ }
+            override suspend fun write(settings: GeneralSettings) { writes++; written = settings }
         }
         val repository = GeneralSettingsRepository(store, true)
         repository.load()
         assertFalse(repository.state.value.canEdit)
         assertFalse(repository.save(GeneralSettings()))
+        assertEquals(0, writes)
         fail = false
         repository.retry()
         assertTrue(repository.state.value.canEdit)
         assertEquals(CloseConfirmationPolicy.Always, repository.state.value.settings.closeConfirmation)
+
+        // SET-10: enter behavior needs no platform adapter, so it stays editable...
         val unavailable = GeneralSettingsRepository(store)
         unavailable.load()
-        assertFalse(unavailable.save(GeneralSettings()))
-        assertEquals(0, writes)
+        assertTrue(unavailable.state.value.canEdit)
+        // ...while the close policy row keeps its own availability gate.
+        assertFalse(unavailable.state.value.closePolicyCanEdit)
+        assertTrue(unavailable.save(GeneralSettings(CloseConfirmationPolicy.Never, EnterBehavior.CmdAlways)))
+        assertEquals(1, writes)
+        // A caller cannot smuggle a close-policy change through a document saved by this platform.
+        assertEquals(GeneralSettings(CloseConfirmationPolicy.Always, EnterBehavior.CmdAlways), written)
+        assertEquals(EnterBehavior.CmdAlways, unavailable.state.value.settings.enterBehavior)
+        assertEquals(CloseConfirmationPolicy.Always, unavailable.state.value.settings.closeConfirmation)
     }
 
     @Test

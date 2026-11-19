@@ -193,8 +193,10 @@ data class LlmCallConfig(
     val temperature: Double? = null,
     val maxTokens: Long? = null,
     val stop: List<String>? = null,
+    val reasoning: ReasoningOptions? = null,
 ) {
     init {
+        validateReasoningCompatibility(reasoning, reasoningEffort)
         require(provider.isNotBlank()) {
             "LLM provider must not be blank"
         }
@@ -243,6 +245,7 @@ data class GenerateOptions(
     val stop: List<String>? = null,
     val sessionId: LlmSessionId? = null,
     val purpose: LlmCallPurpose? = null,
+    val reasoning: ReasoningOptions? = null,
 ) {
     init {
         LlmCallConfig(
@@ -252,6 +255,7 @@ data class GenerateOptions(
             temperature = temperature,
             maxTokens = maxTokens,
             stop = stop,
+            reasoning = reasoning,
         )
     }
 
@@ -263,5 +267,6 @@ data class GenerateOptions(
             temperature = temperature,
             maxTokens = maxTokens,
             stop = stop?.toList(),
+            reasoning = reasoning,
         )
 }

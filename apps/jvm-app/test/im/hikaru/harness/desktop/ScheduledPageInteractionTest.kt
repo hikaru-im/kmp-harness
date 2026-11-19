@@ -110,7 +110,7 @@ class ScheduledPageInteractionTest {
                 onNodeWithTag("scheduled-task:task-1").scheduledMouseClick()
                 onNodeWithTag("scheduled-pause").performScrollTo().assertIsNotEnabled().performMouseInput { click() }
                 onNodeWithTag("scheduled-run-now").performScrollTo().assertIsNotEnabled().performMouseInput { click() }
-                onNodeWithTag("scheduled-execution-unavailable").assertExists()
+                onNodeWithTag("scheduled-run-now").assertIsNotEnabled()
                 onNodeWithTag("scheduled-delete").scheduledMouseClick()
                 onNodeWithText("这将永久删除定时任务，并停止日后的运行；已开始的任务不会被取消，会话历史也不会被清理。")
                     .assertIsDisplayed()
@@ -156,10 +156,9 @@ class ScheduledPageInteractionTest {
             ScheduledPageTestSupport().use { f ->
                 val opened = mutableListOf<SessionId>()
                 setContent { ScheduledPageTestSurface(f.repository, onOpenRun = { opened += it }) }
-                onNodeWithTag("scheduled-execution-model").assertExists()
-                    .assertTextEquals(ScheduledLocalExecutionModel)
+                onNodeWithTag("scheduled-execution-model").assertTextEquals("本机任务仅在应用运行期间执行；关闭应用后不再运行。")
                 onNodeWithTag("scheduled-task:task-1").scheduledMouseClick()
-                onNodeWithTag("scheduled-run-blocked").assertExists()
+                onNodeWithTag("scheduled-run-now").assertIsNotEnabled()
                 onNodeWithTag("scheduled-blocked-runs").performScrollTo().assertIsDisplayed()
                 onNodeWithTag("scheduled-page-open-run:intent").performScrollTo().assertIsNotEnabled().performMouseInput { click() }
                 onNodeWithTag("scheduled-page-open-run:confirmed").scheduledMouseClick()
@@ -181,7 +180,7 @@ class ScheduledPageInteractionTest {
                 onNodeWithTag("scheduled-edit").scheduledMouseClick()
                 onNodeWithTag("scheduled-prompt").performTextReplacement("Keep this unsaved prompt")
                 onNodeWithTag("scheduled-save").scheduledMouseClick()
-                onNodeWithTag("scheduled-mutation-error").assertExists()
+                onNodeWithTag("harness-toast-error").assertExists()
                 onNodeWithTag("scheduled-prompt").assertTextEquals("Keep this unsaved prompt")
                 onNodeWithTag("scheduled-task:task-2").assertIsNotEnabled()
                 runOnIdle {
@@ -205,7 +204,7 @@ class ScheduledPageInteractionTest {
                 onNodeWithTag("scheduled-edit").scheduledMouseClick()
                 onNodeWithTag("scheduled-prompt").performScrollTo().performTextReplacement("Saving prompt")
                 onNodeWithTag("scheduled-save").scheduledMouseClick()
-                onNodeWithTag("scheduled-saving").assertExists()
+                onNodeWithTag("scheduled-save").assertIsNotEnabled()
                 onNodeWithTag("scheduled-task:task-2").assertIsNotEnabled().performMouseInput { click() }
                 onNodeWithTag("scheduled-new-task").assertIsNotEnabled()
                 onNodeWithTag("scheduled-name").assertIsNotEnabled()
@@ -314,7 +313,7 @@ class ScheduledPageInteractionTest {
                 onNodeWithTag("scheduled-new-task").assertIsNotEnabled()
                 onNodeWithTag("scheduled-template:workspace").assertIsNotEnabled()
                 onNodeWithTag("scheduled-task:task-1").scheduledMouseClick()
-                onNodeWithTag("scheduled-catalog-unavailable").assertExists()
+                onNodeWithTag("scheduled-run-now").assertIsNotEnabled()
                 onNodeWithTag("scheduled-edit").scheduledMouseClick()
                 onNodeWithTag("scheduled-target").performScrollTo().assertIsNotEnabled()
                 onNodeWithTag("scheduled-model").performScrollTo().assertIsNotEnabled()

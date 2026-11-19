@@ -34,6 +34,7 @@ public data class SessionDescendant(
     val lastAssistantMessage: String? = null,
     val lastAssistantAtEpochMillis: Long? = null,
     val diffStats: SessionDiffStats? = null,
+    val reasoning: ReasoningOptions? = null,
 ) {
     init {
         require(verifiedAncestorPath.size >= 2)

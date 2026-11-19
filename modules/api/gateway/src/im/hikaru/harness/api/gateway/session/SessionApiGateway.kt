@@ -58,7 +58,13 @@ public object SessionChildHistoryEndpoint : ApiEndpoint<ChildHistoryRequest, Chi
 public data class SessionPromptRequest(
     val id: SessionId,
     val message: Message,
+    val agentOptions: im.hikaru.harness.agent.AgentOptions? = null,
 )
+
+@kotlinx.serialization.Serializable
+public data class SessionModelConfiguration(val options: im.hikaru.harness.agent.AgentOptions? = null)
+
+public object SessionModelConfigurationEndpoint : ApiEndpoint<SessionId, SessionModelConfiguration>("session.model-configuration")
 
 public object SessionPromptEndpoint : ApiEndpoint<SessionPromptRequest, SessionPrompt>("session.prompt")
 
@@ -139,8 +145,11 @@ public suspend fun ApiGateway.registerSessionApi(owner: Context): Disposable {
                 it.readChildHistory(request.parent, request.child)
             }
         },
+        register(owner, SessionModelConfigurationEndpoint) { id ->
+            withSessionApi(owner) { SessionModelConfiguration(it.modelConfiguration(id)) }
+        },
         register(owner, SessionPromptEndpoint) { request ->
-            withSessionApi(owner) { it.prompt(request.id, request.message) }
+            withSessionApi(owner) { it.prompt(request.id, request.message, request.agentOptions) }
         },
         register(owner, SessionCancelEndpoint) { request ->
             withSessionApi(owner) { it.cancel(request.id, request.keepInbox); Unit }

@@ -706,7 +706,7 @@ private fun ReferenceLiveComposer(thread: Boolean) {
             selectedSessionId = if (thread) im.hikaru.harness.client.connection.SessionId("screenshot") else null,
         ),
         onDraftChange = {}, onSubmit = {}, onCancel = {}, models = emptyList(), selectedModel = null,
-        onModelSelect = {}, modelUnavailableReason = null, submitUnavailableReason = null,
+        onModelSelect = {}, submitUnavailableReason = null,
         permission = im.hikaru.harness.client.app.ComposerPermission.Ask, onPermissionSelect = {},
     )
 }

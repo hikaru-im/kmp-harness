@@ -7,6 +7,7 @@ import im.hikaru.harness.exec.jvm.TOOL_BASH_PLUGIN_NAME
 import im.hikaru.harness.exec.jvm.TOOL_PWSH_PLUGIN_NAME
 import im.hikaru.harness.home.HarnessHome
 import im.hikaru.harness.llm.llm
+import im.hikaru.harness.mcp.client.MCP_CLIENT_PLUGIN_NAME
 import im.hikaru.harness.loader.Entry
 import im.hikaru.harness.profile.EntryPatch
 import im.hikaru.harness.profile.ProfileBundle
@@ -68,10 +69,10 @@ class DesktopBundleTest {
 
         // The platform-specific alternative stays compiled and loadable, so the
         // compiled catalog carries one row beyond the default profile.
-        assertEquals(entries.map { it.name }.toSet() + absentShellTool, DesktopPluginCatalog.names)
+        assertEquals(entries.map { it.name }.toSet() + absentShellTool + MCP_CLIENT_PLUGIN_NAME, DesktopPluginCatalog.names)
         assertEquals(
             listOf(
-                "logger", "settings-file", "credentials-local", "llm", "llm-openai", "session", "agent",
+                "logger", "settings-file", "credentials-local", "llm", "mcp-registry", "mcp-resources", "llm-openai", "session", "agent",
                 "system-prompt", "tools", "agent-instructions",
                 "subprocess", "jobs", desktopShellToolPluginName(isWindowsPlatform()), "tool-jobs",
                 "terminal", "tool-terminal", "tool-subagent", "tool-subagent-control",
@@ -202,7 +203,7 @@ class DesktopBundleTest {
         try {
             val context = session.host.runtime.context
             val pluginNames = DesktopProfileBundle.patches.single().insert.orEmpty().map { it.id }
-            assertEquals(25, pluginNames.size)
+            assertEquals(27, pluginNames.size)
             assertTrue(
                 pluginNames.all { name ->
                     session.host.loader.fiber(name)?.state == FiberState.Active

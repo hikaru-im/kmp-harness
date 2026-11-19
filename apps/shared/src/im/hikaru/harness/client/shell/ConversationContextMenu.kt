@@ -57,7 +57,7 @@ internal fun ConversationContextMenu(id: String, content: @Composable () -> Unit
     var renaming by remember(id, actions.owner) { mutableStateOf(false) }
     var title by remember(id, actions.owner) { mutableStateOf("") }
     var saving by remember(id, actions.owner) { mutableStateOf(false) }
-    var renameFailed by remember(id, actions.owner) { mutableStateOf(false) }
+    val toasts = LocalHarnessToastState.current
     val scope = rememberCoroutineScope()
     val entries = conversationContextMenuEntries.map { entry ->
         if (entry !is Item) entry else when (entry.id) {
@@ -73,7 +73,7 @@ internal fun ConversationContextMenu(id: String, content: @Composable () -> Unit
     key(actions.owner) { HarnessContextMenuArea(entries, onAction = { action ->
         when (action) {
             "copy-id" -> clipboard.setText(AnnotatedString(id))
-            "rename" -> { title = session?.title.orEmpty(); renameFailed = false; renaming = true }
+            "rename" -> { title = session?.title.orEmpty(); renaming = true }
             "pin" -> actions.dispatch(id, ConversationCommand.TogglePin)
             "unread" -> actions.dispatch(id, ConversationCommand.MarkUnread)
             "archive" -> actions.dispatch(id, ConversationCommand.ToggleArchive)
@@ -81,14 +81,16 @@ internal fun ConversationContextMenu(id: String, content: @Composable () -> Unit
         }
     }, content = content) }
     if (renaming) AlertDialog(onDismissRequest = { if (!saving) renaming = false }, title = { Text("重命名会话") },
-        text = { OutlinedTextField(value = title, onValueChange = { title = it.take(200); renameFailed = false },
-            enabled = !saving, singleLine = true, isError = renameFailed,
-            supportingText = if (renameFailed) ({ Text("保存未成功，内容已保留，可重试。") }) else null) },
+        text = { OutlinedTextField(value = title, onValueChange = { title = it.take(200) },
+            enabled = !saving, singleLine = true) },
         confirmButton = { TextButton(onClick = {
             saving = true
             val command = actions.dispatch(id, ConversationCommand.Rename(title))
             scope.launch {
-                try { if (command?.await() == true) renaming = false else renameFailed = true }
+                try {
+                    if (command?.await() == true) renaming = false
+                    else toasts?.show("无法重命名对话", isError = true)
+                }
                 finally { saving = false }
             }
         }, enabled = title.isNotBlank() && !actions.busy && !saving) { Text(if (saving) "保存中…" else "保存") } },

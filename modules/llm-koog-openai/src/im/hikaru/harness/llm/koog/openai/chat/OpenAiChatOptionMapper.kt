@@ -1,7 +1,6 @@
 package im.hikaru.harness.llm.koog.openai.chat
 
 import ai.koog.prompt.executor.clients.openai.OpenAIChatParams
-import ai.koog.prompt.executor.clients.openai.OpenAIModels
 import ai.koog.prompt.executor.clients.openai.base.models.ReasoningEffort
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
@@ -9,9 +8,14 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import im.hikaru.harness.llm.GenerateOptions
 import im.hikaru.harness.llm.LlmException
-import im.hikaru.harness.llm.ReasoningEffortId
 import im.hikaru.harness.llm.koog.KoogLlmErrorCode
 import im.hikaru.harness.llm.koog.KoogOptionMapper
+import im.hikaru.harness.llm.koog.KoogModelRoute
+import im.hikaru.harness.llm.koog.KoogStreamContext
+import im.hikaru.harness.llm.koog.openai.providers.OpenAiCompatibleCapabilityRules
+import im.hikaru.harness.llm.koog.openai.providers.compileReasoning
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * OpenAI Chat Completions 参数映射。
@@ -24,7 +28,12 @@ public class OpenAiChatOptionMapper : KoogOptionMapper {
     override fun map(
         options: GenerateOptions,
         model: LLModel,
-    ): LLMParams {
+    ): LLMParams = map(options, model, KoogStreamContext(options.provider, model.id, model.provider.id, OPENAI_CHAT_COMPLETIONS_API_ID))
+
+    override fun resolveModel(route: KoogModelRoute, context: KoogStreamContext): KoogModelRoute =
+        OpenAiCompatibleCapabilityRules.resolve(route, context)
+
+    override fun map(options: GenerateOptions, model: LLModel, context: KoogStreamContext): LLMParams {
         requireOpenAiRoute(options, model)
         requireCapability(model, LLMCapability.Completion, "completion")
         requireCapability(model, LLMCapability.OpenAIEndpoint.Completions, "Chat Completions")
@@ -43,18 +52,26 @@ public class OpenAiChatOptionMapper : KoogOptionMapper {
             }
         }
 
-        val effort = options.reasoningEffort?.let { requested ->
-            if (!model.supports(LLMCapability.Thinking)) {
-                unsupported("Model ${model.id} does not support reasoning effort '${requested.value}'")
-            }
-            requested.toOpenAiEffort(model)
+        val fields = compileReasoning(options, context).toMutableMap()
+        val effortValue = fields["reasoning_effort"]?.jsonPrimitive?.content
+        val effort = OPENAI_REASONING_EFFORTS[effortValue]
+        if (effort != null) fields.remove("reasoning_effort")
+        if (context.vendor == "openai" && model.id in setOf("gpt-6.1-sol", "gpt-6-astra"))
+            unsupported("Model ${model.id} requires the Responses adapter")
+        if (context.vendor == "openai" && model.id in setOf("gpt-6-sol", "gpt-6-luna") &&
+            (!options.tools.isNullOrEmpty() || options.temperature != null) && effortValue != "none")
+            unsupported("Model ${model.id} requires reasoning disabled for Chat tools or temperature")
+        // SDK chooses max_completion_tokens for every thinking model. Compatible APIs differ.
+        if (context.vendor != "openai") options.maxTokens?.let {
+            fields[if (context.vendor == "alibaba" && model.id in setOf("qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-flash", "qwen3.8-27b", "qwen3.8-2.4t-a95b")) "max_completion_tokens" else "max_tokens"] = JsonPrimitive(it.toOpenAiInt())
         }
 
         return OpenAIChatParams(
             temperature = temperature,
-            maxTokens = options.maxTokens?.toOpenAiInt(),
+            maxTokens = if (context.vendor == "openai") options.maxTokens?.toOpenAiInt() else null,
             reasoningEffort = effort,
             stop = stop,
+            additionalProperties = fields,
         )
     }
 
@@ -88,19 +105,6 @@ public class OpenAiChatOptionMapper : KoogOptionMapper {
         if (stop.isEmpty() || stop.size > 4 || stop.any(String::isBlank)) {
             unsupported("OpenAI stop must contain one to four non-blank sequences")
         }
-    }
-
-    private fun ReasoningEffortId.toOpenAiEffort(model: LLModel): ReasoningEffort {
-        val supported =
-            if (model.id == OpenAIModels.Chat.O3Mini.id) {
-                O3_MINI_REASONING_EFFORTS
-            } else {
-                OPENAI_REASONING_EFFORTS
-            }
-        return supported[value.lowercase()]
-            ?: unsupported(
-                "OpenAI model ${model.id} does not support reasoning effort '$value'"
-            )
     }
 
     private fun Long.toOpenAiInt(): Int {
@@ -144,9 +148,5 @@ public class OpenAiChatOptionMapper : KoogOptionMapper {
                 "high" to ReasoningEffort.HIGH,
             )
 
-        private val O3_MINI_REASONING_EFFORTS =
-            OPENAI_REASONING_EFFORTS.filterKeys { effort ->
-                effort == "low" || effort == "medium" || effort == "high"
-            }
     }
 }

@@ -43,7 +43,7 @@ class GitBranchCreateInteractionTest {
                 awaitEnabled("git-branch-create-submit")
                 onNodeWithTag("git-branch-create-submit").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.branchCreation is GitBranchCreation.Created }
-                onNodeWithTag("git-branch-create-success").assertTextEquals("已确认创建并切换：refs/heads/codex/page-new")
+                onNodeWithText("已创建并检出 codex/page-new").assertExists()
                 onNodeWithTag("git-current-branch").assertTextEquals("codex/page-new")
                 onNodeWithTag("git-branch-create-error").assertDoesNotExist()
                 assertEquals("refs/heads/codex/page-new", fixture.git(fixture.workspace, "symbolic-ref", "HEAD").trim())
@@ -76,8 +76,13 @@ class GitBranchCreateInteractionTest {
                 awaitEnabled("git-branch-create-name")
                 onNodeWithTag("git-branch-create-name").performScrollTo().performTextInput("feature")
                 waitUntil(timeoutMillis = 5_000) { controller.state.value.branchCreateDisabledReason != null }
-                onNodeWithTag("git-branch-create-disabled-reason").assertExists()
+                // `git-action-blocked-reason-tooltips.tsx`: the reason is the button's own hover tip,
+                // so it exists only after hovering — never as a standing line beside the button.
                 onNodeWithTag("git-branch-create-submit").performScrollTo().assertIsNotEnabled()
+                onNodeWithTag("git-branch-create-disabled-reason").assertDoesNotExist()
+                hoverGitNode(onNodeWithTag("git-branch-create-submit"))
+                onNodeWithTag("git-branch-create-disabled-reason").assertExists()
+                onNodeWithTag("git-branch-create-submit").assertIsNotEnabled()
                 assertFalse(fixture.git(fixture.workspace, "branch", "--format=%(refname)").contains("codex"))
                 assertEquals("refs/heads/sandbox", fixture.git(fixture.workspace, "symbolic-ref", "HEAD").trim())
             }

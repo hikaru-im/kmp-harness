@@ -22,6 +22,10 @@ internal class KoogRequestMapper(
         options: GenerateOptions,
         model: LLModel,
         api: String = options.provider,
+        vendor: String = "openai",
+        serviceVariant: String? = null,
+        apiVersion: String? = null,
+        reasoningCapabilities: im.hikaru.harness.llm.ReasoningCapabilities? = null,
     ): KoogRequest {
         // system 不属于 Harness Message 列表，需要放在最前面。
         val requestContext =
@@ -30,6 +34,10 @@ internal class KoogRequestMapper(
                 model = options.model,
                 koogProvider = model.provider.id,
                 api = api,
+                vendor = vendor,
+                serviceVariant = serviceVariant,
+                apiVersion = apiVersion,
+                reasoningCapabilities = reasoningCapabilities,
             )
         val mappingContext =
             KoogMessageMappingContext(

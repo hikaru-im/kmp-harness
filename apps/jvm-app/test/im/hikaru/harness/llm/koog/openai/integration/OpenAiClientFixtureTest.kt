@@ -226,7 +226,7 @@ class OpenAiClientFixtureTest {
         val http =
             ScriptedKoogHttpClientFactory(
                 expectedApiKeys =
-                    listOf(TEST_API_KEY, TEST_API_KEY, "fixture-openai-key-v3"),
+                    listOf(TEST_API_KEY, TEST_API_KEY, TEST_API_KEY, TEST_API_KEY, "fixture-openai-key-v3", "fixture-openai-key-v3"),
                 rawResponses =
                     ArrayDeque<Flow<String>>().apply {
                         add(
@@ -311,23 +311,23 @@ class OpenAiClientFixtureTest {
                 oldResponseStarted.await()
 
                 Files.writeString(settingsPath, fileSettingsYaml(baseUrl = "$BASE_URL/v2"))
-                awaitCondition { http.creations.size == 2 }
-                assertEquals(0, http.closeCalls)
-                assertEquals(BASE_URL, http.creations[0].baseUrl)
-                assertEquals("$BASE_URL/v2", http.creations[1].baseUrl)
+                awaitCondition { http.creations.size == 4 && http.closeCalls == 1 }
+                // The idle Responses connection retires immediately; the Chat call keeps its lease.
+                assertTrue(http.creations.take(2).all { it.baseUrl == BASE_URL })
+                assertTrue(http.creations.drop(2).all { it.baseUrl == "$BASE_URL/v2" })
                 assertTrue(http.creations.all(ClientCreation::authorizationMatchesExpected))
 
                 releaseOldResponse.complete(Unit)
                 oldCall.join()
-                awaitCondition { http.closeCalls == 1 }
+                awaitCondition { http.closeCalls == 2 }
 
                 val newChunks = host.runtime.context.llm.stream(textOptions()).toList()
                 assertEquals(TextBlock("new"), (newChunks[newChunks.lastIndex - 2] as BlockEndChunk).block)
 
                 Files.writeString(credentialsPath, "$FILE_CREDENTIAL_NAME: fixture-openai-key-v3\n")
-                awaitCondition { http.creations.size == 3 }
-                assertEquals(2, http.closeCalls)
-                assertTrue(http.creations[2].authorizationMatchesExpected)
+                awaitCondition { http.creations.size == 6 }
+                awaitCondition { http.closeCalls == 4 }
+                assertTrue(http.creations.drop(4).all(ClientCreation::authorizationMatchesExpected))
                 val credentialChunks = host.runtime.context.llm.stream(textOptions()).toList()
                 assertEquals(
                     TextBlock("credential"),
@@ -336,7 +336,7 @@ class OpenAiClientFixtureTest {
 
                 Files.writeString(settingsPath, "llm-koog: [invalid]\n")
                 yield()
-                assertEquals(3, http.creations.size)
+                assertEquals(6, http.creations.size)
                 val fallbackChunks = host.runtime.context.llm.stream(textOptions()).toList()
                 assertEquals(
                     TextBlock("credential"),
@@ -344,9 +344,9 @@ class OpenAiClientFixtureTest {
                 )
 
                 Files.writeString(credentialsPath, "invalid-key: ignored\n")
-                awaitCondition { http.closeCalls >= 2 }
-                assertEquals(3, http.creations.size)
-                assertEquals(2, http.closeCalls)
+                awaitCondition { http.closeCalls >= 4 }
+                assertEquals(6, http.creations.size)
+                assertEquals(4, http.closeCalls)
                 val invalidCredentialFallback = host.runtime.context.llm.stream(textOptions()).toList()
                 assertEquals(
                     TextBlock("credential"),
@@ -356,7 +356,7 @@ class OpenAiClientFixtureTest {
             } finally {
                 host.close()
             }
-            assertEquals(3, http.closeCalls)
+            assertEquals(6, http.closeCalls)
         } finally {
             home.toFile().deleteRecursively()
         }
@@ -467,7 +467,8 @@ class OpenAiClientFixtureTest {
                 host.close()
             }
 
-            assertEquals(1, http.closeCalls)
+            assertEquals(2, http.creations.size)
+            assertEquals(2, http.closeCalls)
         } finally {
             home.toFile().deleteRecursively()
         }

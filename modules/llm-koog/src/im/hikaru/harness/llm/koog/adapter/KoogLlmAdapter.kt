@@ -21,6 +21,7 @@ class KoogLlmAdapter internal constructor(
     private val streamMapper: KoogStreamMapper,
     private val metadataMapper: KoogModelMetadataMapper,
     private val failureMapper: KoogFailureMapper,
+    private val modelRouteMapper: KoogOptionMapper = BasicKoogOptionMapper(),
 ) : LlmAdapter {
 
     constructor(
@@ -66,10 +67,19 @@ class KoogLlmAdapter internal constructor(
             ),
         metadataMapper = KoogModelMetadataMapper(),
         failureMapper = DefaultKoogFailureMapper(failureClassifier),
+        modelRouteMapper = optionMapper,
     )
 
     private val routes =
-        routes.map(KoogProviderRoute::detachedCopy)
+        routes.map(KoogProviderRoute::detachedCopy).map { route ->
+            route.copy(models = route.models.map { model ->
+                modelRouteMapper.resolveModel(model, KoogStreamContext(
+                    provider = route.id, model = model.model.id, koogProvider = model.model.provider.id,
+                    api = route.apiFor(model), vendor = route.vendor,
+                    serviceVariant = route.serviceVariant, apiVersion = route.apiVersion,
+                ))
+            })
+        }
 
     private val routesById =
         this.routes.associateBy(KoogProviderRoute::id)
@@ -117,7 +127,8 @@ class KoogLlmAdapter internal constructor(
             val modelRoute = requireModel(providerRoute, options.model)
             val model = modelRoute.model
             val api = providerRoute.apiFor(modelRoute)
-            val request = requestMapper.map(options, model, api)
+            val request = requestMapper.map(options, model, api, providerRoute.vendor,
+                providerRoute.serviceVariant, providerRoute.apiVersion, modelRoute.reasoningCapabilities)
             val frames =
                 executor.executeStreaming(
                     prompt = request.prompt,
@@ -133,6 +144,9 @@ class KoogLlmAdapter internal constructor(
                             model = options.model,
                             koogProvider = model.provider.id,
                             api = api,
+                            vendor = providerRoute.vendor,
+                            serviceVariant = providerRoute.serviceVariant,
+                            apiVersion = providerRoute.apiVersion,
                         ),
                 )
             )

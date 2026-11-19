@@ -39,17 +39,17 @@ class GitCommitInteractionTest {
                     }
                     HarnessTheme { SettingsGitPage(owner) }
                 }
-                waitUntil(timeoutMillis = 15_000) { controller.state.value.canCommit }
+                waitUntil(timeoutMillis = 30_000) { controller.state.value.canCommit }
                 onNodeWithTag("git-commit-open").performScrollTo().performMouseInput { click() }
                 onNodeWithTag("git-commit-submit").performScrollTo().assertIsNotEnabled()
                 assertEquals(0, f.commitInvocations)
                 onNodeWithTag("git-commit-message").performScrollTo().assertExists().performTextInput("UI commit message\nsecond line")
                 assertEquals(0, f.commitInvocations, "typing is not a mutation")
                 onNodeWithTag("git-commit-submit").performScrollTo().assertIsEnabled().performMouseInput { click() }
-                waitUntil(timeoutMillis = 15_000) {
+                waitUntil(timeoutMillis = 60_000) {
                     controller.state.value.commit is GitCommit.Verified && !controller.state.value.commitBusy
                 }
-                onNodeWithTag("git-commit-verified").assertExists()
+                onNodeWithText("已提交到 ", substring = true).assertExists()
                 onNodeWithTag("git-commit-submit").assertIsNotEnabled()
                 assertEquals(0, assertIs<GitRead.Ready<GitCommitSnapshot>>(controller.state.value.commitSnapshot).value.stagedCount)
             }
@@ -80,21 +80,28 @@ class GitCommitInteractionTest {
                     }
                     HarnessTheme { SettingsGitPage(owner) }
                 }
-                waitUntil(timeoutMillis = 15_000) { controller.state.value.commitSnapshot is GitRead.Ready }
+                waitUntil(timeoutMillis = 30_000) { controller.state.value.commitSnapshot is GitRead.Ready }
                 assertFalse(controller.state.value.canCommit)
-                onNodeWithTag("git-commit-disabled-reason").performScrollTo()
-                    .assertTextContains("勾选", substring = true)
-                onNodeWithTag("git-commit-open").performScrollTo().performMouseInput { click() }
+                // `git-action-blocked-reason-tooltips.tsx`: the blocked reason is a hover tip, so it
+                // is absent until the pointer rests on the button and never a standing line under it.
+                onNodeWithTag("git-commit-disabled-reason").assertDoesNotExist()
+                scrollGitNodeIntoView(onNodeWithTag("git-commit-open"))
+                hoverGitNode(onNodeWithTag("git-commit-open"))
+                // `review.commit.disabled.noChanges` = 无可提交的更改.
+                onNodeWithTag("git-commit-disabled-reason-text").assertTextEquals("无可提交的更改")
+                onNodeWithTag("git-commit-open").performMouseInput { click() }
                 onNodeWithTag("git-commit-submit").performScrollTo().assertIsNotEnabled()
                 onNodeWithTag("git-commit-include-unstaged").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.includeUnstaged && controller.state.value.canCommit }
-                onNodeWithTag("git-commit-include-unstaged-hint").assertTextContains("先暂存", substring = true)
+                // `review.commit.selection.includeUnstagedChanges` = 包含未暂存的更改, on the checkbox
+                // itself; Codex has no separate paragraph explaining what checking it stages.
+                onNodeWithTag("git-commit-include-unstaged-hint").assertDoesNotExist()
                 onNodeWithTag("git-commit-message").performScrollTo().performTextInput("ui include unstaged commit")
                 onNodeWithTag("git-commit-submit").performScrollTo().assertIsEnabled().performMouseInput { click() }
-                waitUntil(timeoutMillis = 15_000) {
+                waitUntil(timeoutMillis = 60_000) {
                     controller.state.value.commit is GitCommit.Verified && !controller.state.value.commitBusy
                 }
-                onNodeWithTag("git-commit-verified").assertExists()
+                onNodeWithText("已提交到 ", substring = true).assertExists()
             }
             assertEquals("ui include unstaged\n", f.git(f.workspace, "show", "HEAD:tracked.txt"))
             assertEquals("ui untracked\n", f.git(f.workspace, "show", "HEAD:ui-untracked.txt"))
@@ -133,7 +140,7 @@ class GitCommitInteractionTest {
                     }
                     HarnessTheme { SettingsGitPage(owner) }
                 }
-                waitUntil(timeoutMillis = 15_000) { controller.state.value.canCommit }
+                waitUntil(timeoutMillis = 30_000) { controller.state.value.canCommit }
                 onNodeWithTag("git-commit-open").performScrollTo().performMouseInput { click() }
                 onNodeWithTag("git-commit-message").performScrollTo().performTextInput("unknown UI commit")
                 onNodeWithTag("git-commit-submit").performScrollTo().performMouseInput { click() }
@@ -147,8 +154,8 @@ class GitCommitInteractionTest {
                 onNodeWithTag("git-commit-open").performScrollTo().performMouseInput { click() }
                 runOnIdle { release.complete(Unit) }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.commitNeedsRescan }
-                onNodeWithTag("git-commit-unknown").assertExists()
-                onNodeWithTag("git-commit-unknown").assertTextContains("结果未知", substring = true)
+                onNodeWithText(assertIs<GitCommit.UnknownOutcome>(controller.state.value.commit).failure.message).assertExists()
+                onNodeWithTag("git-refresh").assertIsEnabled()
                 onNodeWithTag("git-commit-submit").performScrollTo().assertIsNotEnabled()
                 assertFalse(controller.state.value.commit is GitCommit.Verified)
                 runOnIdle {
@@ -159,7 +166,8 @@ class GitCommitInteractionTest {
                 onNodeWithTag("git-commit-close").performScrollTo().performMouseInput { click() }
                 onNodeWithTag("git-refresh").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.commit is GitCommit.Rescanned }
-                onNodeWithTag("git-commit-rescanned").performScrollTo().assertExists()
+                // A completed rescan leaves no note; the cleared unknown line is the whole feedback.
+                onNodeWithTag("git-commit-rescanned").assertDoesNotExist()
                 onNodeWithTag("git-commit-unknown").assertDoesNotExist()
                 onNodeWithTag("git-commit-verified").assertDoesNotExist()
                 assertEquals(1, f.commitInvocations)

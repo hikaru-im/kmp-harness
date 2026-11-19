@@ -3,11 +3,68 @@ package im.hikaru.harness.client.app
 import im.hikaru.harness.client.conversation.ConversationAction
 import im.hikaru.harness.client.conversation.ConversationState
 import im.hikaru.harness.client.connection.ModelMessageSource
+import im.hikaru.harness.client.connection.ReasoningEffortId
+import im.hikaru.harness.client.connection.ReasoningOptions
+import im.hikaru.harness.client.settings.EnterBehavior
+import im.hikaru.harness.client.settings.ModelReasoningCapabilities
+import im.hikaru.harness.client.settings.ShortcutPlatform
+import im.hikaru.harness.client.settings.enterModifierChord
+import im.hikaru.harness.client.settings.reasoningOptionsError
 
 public data class ConversationModelChoice(
     val providerId: String, val modelId: String, val label: String,
     val reasoningEfforts: List<String> = emptyList(),
+    val reasoningCapabilities: im.hikaru.harness.client.settings.ModelReasoningCapabilities? = null,
 )
+
+/** One resolved value drives both the displayed effort and the request payload. */
+internal fun resolveComposerReasoning(model: ConversationModelChoice?, requested: ReasoningOptions): ReasoningOptions =
+    if (model != null && reasoningOptionsError(requested, model.effectiveReasoningCapabilities()) == null) requested
+    else ReasoningOptions()
+
+/** The effort shortcut must respect the same combination rules as the full editor. */
+internal fun ConversationModelChoice.allowedReasoningEfforts(options: ReasoningOptions?): List<String> =
+    reasoningEfforts.filter(String::isNotBlank).distinct().filter { effort ->
+        options == null || reasoningOptionsError(options.copy(effort = ReasoningEffortId(effort)), effectiveReasoningCapabilities()) == null
+    }
+
+private fun ConversationModelChoice.effectiveReasoningCapabilities(): ModelReasoningCapabilities =
+    reasoningCapabilities ?: ModelReasoningCapabilities(efforts = reasoningEfforts)
+
+/**
+ * The submit chord the composer both enforces and prints, derived from General's Codex
+ * `发送快捷键` row (SET-10) and the current draft. One model means the key handler and the tooltip
+ * can never disagree.
+ *
+ * Codex semantics: `enter` sends on Enter; `cmdAlways` reserves Enter for newlines; and
+ * `cmdIfMultiline` sends on Enter only while the prompt is a single line. The modifier chord
+ * (⌘ on macOS, Ctrl elsewhere) sends in every mode. A draft is multiline when it contains a
+ * newline character — visual wrapping does not count.
+ */
+public data class ComposerSubmitShortcut(
+    val enterBehavior: EnterBehavior = EnterBehavior.Enter,
+    val platform: ShortcutPlatform = ShortcutPlatform.Mac,
+    val multilineDraft: Boolean = false,
+) {
+    public val plainEnterSubmits: Boolean
+        get() = when (enterBehavior) {
+            EnterBehavior.Enter -> true
+            EnterBehavior.CmdAlways -> false
+            EnterBehavior.CmdIfMultiline -> !multilineDraft
+        }
+
+    public val submitChord: String
+        get() = if (plainEnterSubmits) "Enter" else enterModifierChord(platform)
+
+    public val newlineChord: String
+        get() = if (plainEnterSubmits) "Shift+Enter" else "Enter"
+
+    public val hint: String get() = "发送 · $submitChord；换行 · $newlineChord"
+
+    public companion object {
+        public val Enter: ComposerSubmitShortcut = ComposerSubmitShortcut()
+    }
+}
 
 public enum class ComposerPermission(val label: String, val description: String) {
     Ask("请求批准", "编辑外部文件和使用互联网时始终询问"),
@@ -23,6 +80,7 @@ public data class ComposerSessionPreferences(
     val model: ConversationModelChoice? = null,
     val effort: String? = null,
     val modelConfigurationKnown: Boolean = false,
+    val reasoning: ReasoningOptions? = null,
 )
 
 internal enum class ComposerPrimaryAction { Send, Busy, Stop, Stopping }
@@ -39,26 +97,33 @@ internal enum class ComposerPopup { Closed, Permissions, Reasoning, Models }
 internal fun composerModel(
     state: ConversationState, choices: List<ConversationModelChoice>, preferences: ComposerSessionPreferences?,
 ): ConversationModelChoice? {
-    preferences?.model?.let { return it }
+    preferences?.model?.let { chosen ->
+        return choices.firstOrNull { it.providerId == chosen.providerId && it.modelId == chosen.modelId } ?: chosen
+    }
+    state.modelConfiguration?.let { config ->
+        if (config.provider != null && config.model != null) return choices.firstOrNull {
+            it.providerId == config.provider && it.modelId == config.model
+        } ?: ConversationModelChoice(config.provider, config.model, config.model)
+    }
     val source = state.history.mapNotNull { it.source as? ModelMessageSource }.lastOrNull() ?: return null
     return choices.firstOrNull { it.providerId == source.provider && it.modelId == source.model }
         ?: ConversationModelChoice(source.provider, source.model, "${source.provider} / ${source.model}")
 }
 
 /**
- * Live Codex effort names (`composer.mode.local.reasoning.*.label`, zh-CN), read from the asar and
- * confirmed by the picker's sr-only label list: 无 / 极低 / 轻度 / 中 / 高 / 极高 / Max / Ultra / 持续.
- * `max` and `ultra` have no zh-CN translation in the bundle, so they stay Latin.
+ * `composer.mode.local.reasoning.*.label` (zh-CN): 无 / 极低 / 低 / 中 / 高 / 超高 / 最高. `ultra` and
+ * `none`-less gaps have no zh-CN entry in the shipped locale, so they keep their own token; the
+ * provider-default slot is Codex's own 「默认」.
  */
 internal fun effortLabel(value: String?): String = when (value) {
     null -> "默认"
     "none" -> "无"
     "minimal" -> "极低"
-    "low" -> "轻度"
+    "low" -> "低"
     "medium" -> "中"
     "high" -> "高"
-    "xhigh" -> "极高"
-    "max" -> "Max"
+    "xhigh" -> "超高"
+    "max" -> "最高"
     "ultra" -> "Ultra"
     "persistent" -> "持续"
     else -> value
@@ -66,3 +131,17 @@ internal fun effortLabel(value: String?): String = when (value) {
 
 internal fun ConversationModelChoice.menuKey(): String =
     "conversation-model:${providerId.length}:$providerId:${modelId.length}:$modelId"
+
+
+/** Keep disabled models in settings/runtime while exposing only enabled chat choices. */
+internal fun im.hikaru.harness.client.settings.ModelSettingsSnapshot.composerModelChoices(): List<ConversationModelChoice> {
+    val candidates = providers.filter { it.active && it.applicationError == null && !it.applying }.flatMap { provider ->
+        provider.models.filter { it.id !in provider.disabledModelIds && it.selectable }.map { provider to it }
+    }
+    val counts = candidates.groupingBy { it.second.name }.eachCount()
+    return candidates.map { (provider, model) ->
+        ConversationModelChoice(provider.id, model.id,
+            if (counts.getValue(model.name) > 1) model.name + " · " + provider.displayName else model.name,
+            model.reasoningEfforts, model.reasoningCapabilities)
+    }
+}

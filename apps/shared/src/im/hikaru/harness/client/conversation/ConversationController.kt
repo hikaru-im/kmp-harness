@@ -70,8 +70,11 @@ public data class ConversationState(
     val selectedSessionId: SessionId? = null,
     val history: List<Message> = emptyList(),
     val historyReadSeq: Long = -1,
+    val modelConfiguration: AgentOptions? = null,
     val draft: String = "",
     val draftRevision: Long = 0,
+    val attachments: List<ComposerAttachment> = emptyList(),
+    val attachmentError: String? = null,
     val action: ConversationAction = ConversationAction.Idle,
     val runState: ConversationRunState = ConversationRunState.Unknown,
     val cancelling: Boolean = false,
@@ -84,8 +87,9 @@ public data class ConversationState(
     /** Approvals only ever belong to the selected Session; a Host never sends another one's. */
     val approvals: List<PendingApproval> = emptyList(),
 ) {
-    public val canSubmit: Boolean get() = connected && host != null && draft.isNotBlank() &&
-        action == ConversationAction.Idle && !cancelling && sessions.firstOrNull { it.id == selectedSessionId }?.archived != true
+    public val canSubmit: Boolean get() = connected && host != null && (draft.isNotBlank() || attachments.isNotEmpty()) &&
+        attachmentError == null && action == ConversationAction.Idle && !cancelling &&
+        sessions.firstOrNull { it.id == selectedSessionId }?.archived != true
     // Stop follows the Host's authoritative `running`, never a guess: an unknown status offers nothing.
     public val canCancel: Boolean get() = connected && selectedSessionId != null && !cancelling &&
         sessions.firstOrNull { it.id == selectedSessionId }?.archived != true &&
@@ -107,6 +111,10 @@ public interface ConversationOperations {
     public suspend fun create(connection: Connection, options: CreateSessionOptions, agentOptions: AgentOptions): SessionSummary
     public suspend fun history(connection: Connection, id: SessionId): List<Message>
     public suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt
+    public suspend fun prompt(connection: Connection, id: SessionId, message: Message, options: AgentOptions): SessionPrompt =
+        prompt(connection, id, message)
+    /** Null means the connection cannot report the session's model configuration. */
+    public suspend fun modelConfiguration(connection: Connection, id: SessionId): AgentOptions? = null
     /** DSH Stop keeps the queued inbox; only the running turn is aborted. */
     public suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean = true) =
         connection.session.cancel(id, keepInbox = keepInbox)
@@ -124,6 +132,11 @@ public object RealConversationOperations : ConversationOperations {
         connection.session.create(options = options, agentOptions = agentOptions)
     override suspend fun history(connection: Connection, id: SessionId): List<Message> = connection.session.history(id)
     override suspend fun prompt(connection: Connection, id: SessionId, message: Message): SessionPrompt = connection.session.prompt(id, message)
+    override suspend fun prompt(connection: Connection, id: SessionId, message: Message, options: AgentOptions): SessionPrompt =
+        if (options.provider == null || options.model == null) connection.session.prompt(id, message)
+        else connection.session.prompt(id, message, options)
+    override suspend fun modelConfiguration(connection: Connection, id: SessionId): AgentOptions? =
+        connection.session.modelConfiguration(id)
     override suspend fun cancel(connection: Connection, id: SessionId, keepInbox: Boolean) = connection.session.cancel(id, keepInbox = keepInbox)
     override suspend fun fork(connection: Connection, parent: SessionId, beforeMessageId: String): SessionSummary =
         connection.session.fork(parent, beforeMessageId)
@@ -158,6 +171,8 @@ public class ConversationController(
     scope: CoroutineScope,
     private val operations: ConversationOperations = RealConversationOperations,
     private val cleanupTimeoutMillis: Long = 2_000,
+    /** Reads selected local files only for a local Host; remote materialization is a later contract. */
+    private val attachmentReader: ComposerAttachmentReader = UnavailableComposerAttachmentReader,
     /** Streamed assistant text is published at most once per frame interval instead of per token. */
     private val liveFrameMillis: Long = 33,
 ) : AutoCloseable {
@@ -177,6 +192,7 @@ public class ConversationController(
     private var livePublishJob: Job? = null
     // Scoped to the bound Host/member; null owns the Home draft before session creation.
     private val drafts = mutableMapOf<SessionId?, String>()
+    private val attachments = mutableMapOf<SessionId?, List<ComposerAttachment>>()
     private var connection: Connection? = null
     private var streams: ConversationStreams? = null
     private var epoch = 0L
@@ -221,13 +237,17 @@ public class ConversationController(
         readTarget = null; readGeneration++
         selection++
         invalidateRequests()
-        if (!sameHost) drafts.clear()
+        if (!sameHost) {
+            drafts.clear()
+            attachments.clear()
+        }
         this.connection = connection
         this.streams = streams
         mutableState.value = if (host == null) ConversationState() else ConversationState(
             host = host, connected = connection != null,
             selectedSessionId = if (sameHost) old.selectedSessionId else null,
             draft = if (sameHost) old.draft else "", draftRevision = old.draftRevision + 1,
+            attachments = if (sameHost) old.attachments else emptyList(), attachmentError = null,
             completionCapability = completionCapability,
         )
         replaceStream()
@@ -240,6 +260,7 @@ public class ConversationController(
         val old = state.value
         if (old.selectedSessionId == id) return
         drafts[old.selectedSessionId] = old.draft
+        attachments[old.selectedSessionId] = old.attachments
         // A read acknowledgement may already be committed remotely. Keep its returned revision
         // even when navigation moves elsewhere, so the next metadata command is not stale.
         readTarget = null; readGeneration++
@@ -247,8 +268,9 @@ public class ConversationController(
         val wasLoadingList = state.value.listPhase == ConversationDataPhase.Loading
         invalidateRequests()
         mutableState.value = state.value.copy(
-            selectedSessionId = id, history = emptyList(), historyReadSeq = -1, historyPhase = ConversationDataPhase.Unbound,
+            selectedSessionId = id, history = emptyList(), modelConfiguration = null, historyReadSeq = -1, historyPhase = ConversationDataPhase.Unbound,
             draft = drafts[id].orEmpty(), draftRevision = old.draftRevision + 1,
+            attachments = attachments[id].orEmpty(), attachmentError = null,
             action = ConversationAction.Idle, runState = state.value.sessions
                 .firstOrNull { it.id == id }?.let { if (it.running) ConversationRunState.Running else ConversationRunState.Idle }
                 ?: ConversationRunState.Unknown,
@@ -264,7 +286,38 @@ public class ConversationController(
     public fun updateDraft(text: String) {
         check(!closed)
         drafts[state.value.selectedSessionId] = text
-        mutableState.value = state.value.copy(draft = text, draftRevision = state.value.draftRevision + 1)
+        mutableState.value = state.value.copy(draft = text, draftRevision = state.value.draftRevision + 1, attachmentError = null)
+    }
+
+    public fun addAttachments(items: List<ComposerAttachment>) {
+        check(!closed)
+        if (items.isEmpty()) return
+        val current = state.value.attachments
+        val merged = (current + items).distinctBy { it.path }
+        if (merged.size > ComposerAttachmentLimits.MaxFiles) {
+            mutableState.value = state.value.copy(attachmentError = "附件数量超过限制")
+            return
+        }
+        attachments[state.value.selectedSessionId] = merged
+        mutableState.value = state.value.copy(attachments = merged, attachmentError = null)
+    }
+
+    public fun removeAttachment(id: String) {
+        check(!closed)
+        val remaining = state.value.attachments.filterNot { it.id == id }
+        attachments[state.value.selectedSessionId] = remaining
+        mutableState.value = state.value.copy(attachments = remaining, attachmentError = null)
+    }
+
+    public fun clearAttachments() {
+        check(!closed)
+        attachments[state.value.selectedSessionId] = emptyList()
+        mutableState.value = state.value.copy(attachments = emptyList(), attachmentError = null)
+    }
+
+    public fun setAttachmentError(message: String?) {
+        check(!closed)
+        mutableState.value = state.value.copy(attachmentError = message)
     }
 
     /**
@@ -506,10 +559,11 @@ public class ConversationController(
         return start({ historyJob = it }) {
             try {
                 val result = operations.history(fence.connection, id).map(::snapshotMessage)
+                val configuration = operations.modelConfiguration(fence.connection, id)
                 currentCoroutineContext().ensureActive()
                 if (valid(fence) && request == historyRequest) {
                     mutableState.value = state.value.copy(
-                        history = result, historyReadSeq = readableThrough,
+                        history = result, historyReadSeq = readableThrough, modelConfiguration = configuration,
                         historyPhase = if (result.isEmpty()) ConversationDataPhase.Empty else ConversationDataPhase.Ready,
                         errors = without(ConversationErrorKind.History),
                     )
@@ -544,6 +598,7 @@ public class ConversationController(
         val initial = capture() ?: return null
         val request = ++sendRequest
         val draft = state.value.draft
+        val attachmentSnapshot = state.value.attachments
         val revision = state.value.draftRevision
         val capability = state.value.completionCapability
         val edit = state.value.editing?.takeIf { initial.selected != null }
@@ -556,6 +611,16 @@ public class ConversationController(
             var fence = initial
             var phase = if (initial.selected == null) ConversationErrorKind.Create else ConversationErrorKind.Prompt
             try {
+                val promptDraft = try {
+                    formatComposerPrompt(draft, materializeComposerAttachments(attachmentSnapshot, attachmentReader))
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (valid(fence) && request == sendRequest) {
+                        mutableState.value = state.value.copy(action = ConversationAction.Idle, attachmentError = error.message ?: "无法读取附件")
+                    }
+                    return@start
+                }
                 if (fence.selected == null) {
                     val prepared = if (prepareCreation == null) options else prepareCreation()
                     currentCoroutineContext().ensureActive()
@@ -572,9 +637,11 @@ public class ConversationController(
                     // Transfer the latest Home draft without changing its edit revision.
                     drafts.remove(null)
                     drafts[created.id] = state.value.draft
+                    attachments.remove(null)
+                    attachments[created.id] = state.value.attachments
                     mutableState.value = state.value.copy(
                         selectedSessionId = created.id, sessions = (state.value.sessions + created).distinctBy { it.id },
-                        listPhase = ConversationDataPhase.Ready, history = emptyList(), historyPhase = ConversationDataPhase.Unbound,
+                        listPhase = ConversationDataPhase.Ready, history = emptyList(), modelConfiguration = null, historyPhase = ConversationDataPhase.Unbound,
                         lastAcceptedReceipt = null,
                         action = if (onSessionCreated == null) ConversationAction.Sending else ConversationAction.Associating,
                         runState = ConversationRunState.Unknown,
@@ -607,9 +674,11 @@ public class ConversationController(
                     historyJob?.cancel()
                     drafts.remove(parent)
                     drafts[forked.id] = state.value.draft
+                    attachments.remove(parent)
+                    attachments[forked.id] = state.value.attachments
                     mutableState.value = state.value.copy(
                         selectedSessionId = forked.id, sessions = (state.value.sessions + forked).distinctBy { it.id },
-                        listPhase = ConversationDataPhase.Ready, history = emptyList(), historyPhase = ConversationDataPhase.Unbound,
+                        listPhase = ConversationDataPhase.Ready, history = emptyList(), modelConfiguration = null, historyPhase = ConversationDataPhase.Unbound,
                         lastAcceptedReceipt = null, action = ConversationAction.Sending,
                         runState = ConversationRunState.Unknown,
                     )
@@ -618,15 +687,18 @@ public class ConversationController(
                     phase = ConversationErrorKind.Prompt
                 }
                 val id = requireNotNull(fence.selected)
-                val prompt = operations.prompt(fence.connection, id, userMessage(draft))
+                val prompt = operations.prompt(fence.connection, id, userMessage(promptDraft), if (initial.selected == null) AgentOptions() else agentOptions)
                 currentCoroutineContext().ensureActive()
                 if (!valid(fence) || request != sendRequest) return@start
                 val current = state.value
                 val clear = current.draft == draft && current.draftRevision == revision
                 drafts[id] = if (clear) "" else current.draft
+                attachments[id] = if (clear) emptyList() else current.attachments
                 mutableState.value = current.copy(
                     draft = if (clear) "" else current.draft,
                     draftRevision = if (clear) revision + 1 else current.draftRevision,
+                    attachments = if (clear) emptyList() else current.attachments,
+                    attachmentError = null,
                     lastAcceptedReceipt = prompt.receipt, editing = null,
                     action = if (capability == CompletionCapability.LocalIdle) ConversationAction.WaitingForLocalIdle else ConversationAction.RunningUnknown,
                     runState = if (capability == CompletionCapability.LocalIdle) ConversationRunState.Running else ConversationRunState.Unknown,

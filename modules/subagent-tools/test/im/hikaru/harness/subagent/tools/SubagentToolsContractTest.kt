@@ -4,6 +4,8 @@ import im.hikaru.harness.agent.*
 import im.hikaru.harness.llm.CallId
 import im.hikaru.harness.llm.Message
 import im.hikaru.harness.llm.ReasoningEffortId
+import im.hikaru.harness.llm.ReasoningModeId
+import im.hikaru.harness.llm.ReasoningOptions
 import im.hikaru.harness.llm.TextBlock
 import im.hikaru.harness.llm.createAssistantMessage
 import im.hikaru.harness.runtime.Context
@@ -26,6 +28,31 @@ import kotlinx.serialization.json.Json
 import kotlin.test.*
 
 class SubagentToolsContractTest {
+    @Test
+    fun unifiedReasoningIsInheritedAndExplicitProviderDefaultStopsInheritance() = runTest {
+        val fixture = fixture()
+        try {
+            val reasoning = ReasoningOptions(
+                mode = ReasoningModeId("enabled"), effort = ReasoningEffortId("high"), budgetTokens = 4096,
+            )
+            val parent = fixture.create("reasoning-parent", reasoning = reasoning)
+            val inherited = decode(fixture.execute(parent, "inherit", """{"description":"inherit reasoning","prompt":"task"}"""))
+            val inheritedChild = assertNotNull(fixture.registry.get(AgentId(assertNotNull(inherited.childSessionId))))
+            assertEquals(reasoning, inheritedChild.options.reasoning)
+            assertNull(inheritedChild.options.reasoningEffort)
+
+            val reset = decode(fixture.execute(parent, "reset", """{"description":"provider defaults","prompt":"task","reasoning":{}}"""))
+            val resetChild = assertNotNull(fixture.registry.get(AgentId(assertNotNull(reset.childSessionId))))
+            assertEquals(ReasoningOptions(), resetChild.options.reasoning)
+            assertNull(resetChild.options.reasoningEffort)
+
+            val conflict = decode(fixture.execute(parent, "conflict", """{"description":"invalid override","prompt":"task","reasoning":{},"reasoning_effort":"low"}"""))
+            assertEquals(SubagentOutcome.REJECTED, conflict.outcome)
+        } finally {
+            fixture.close()
+        }
+    }
+
     @Test
     fun realDispatchCreatesVerifiedLineageExplicitModelAndRealInboxReceipt() = runTest {
         val fixture = fixture()
@@ -781,11 +808,13 @@ class SubagentToolsContractTest {
             model: String? = null,
             reasoningEffort: ReasoningEffortId? = null,
             maxTokens: Long? = null,
+            reasoning: ReasoningOptions? = null,
         ): AgentHandle = registry.create(
             id = AgentId(id),
             options = AgentOptions(
                 cwd = cwd, provider = provider, model = model,
                 reasoningEffort = reasoningEffort, maxTokens = maxTokens,
+                reasoning = reasoning,
             ),
             sessionOptions = CreateSessionOptions(cwd = cwd, parentSession = parent?.let(::SessionId), origin = origin),
         )

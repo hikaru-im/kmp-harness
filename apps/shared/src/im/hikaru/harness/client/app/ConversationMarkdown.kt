@@ -240,7 +240,7 @@ private fun ConversationMarkdownCode(node: ASTNode, document: ConversationMarkdo
                         color = ConversationAppearance.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                     ), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                ConversationActionButton(ConversationGlyph.Expand, "展开代码（暂不可用）", size = 26.dp,
+                ConversationActionButton(ConversationGlyph.Expand, "展开代码", size = 26.dp,
                     tint = ConversationAppearance.muted)
                 ConversationActionButton(
                     ConversationGlyph.Copy, "复制代码", onClick = { clipboard.setText(AnnotatedString(code)) },

@@ -62,6 +62,17 @@ data class ToolRegistrationOptions(
     val concurrencySafe: Boolean = false,
 )
 
+/** One owner replaces a complete generation without exposing partial registration. */
+interface ToolRegistrationBatch : Disposable {
+    fun replace(registrations: List<ToolRegistration>)
+}
+
+data class ToolRegistration(
+    val schema: ToolSchema,
+    val handler: ToolHandler,
+    val options: ToolRegistrationOptions = ToolRegistrationOptions(),
+)
+
 interface ToolsService {
     suspend fun schemas(): List<ToolSchema>
     suspend fun execute(request: ToolCallRequest): ToolExecutionResult
@@ -74,6 +85,8 @@ interface ToolsService {
         options: ToolRegistrationOptions,
     ): Disposable = register(schema, handler)
     fun executionMode(request: ToolCallRequest): ToolExecutionMode = ToolExecutionMode.Exclusive
+    /** No sequential fallback: implementations must provide actual atomic replacement. */
+    fun registrationBatch(): ToolRegistrationBatch = error("Atomic tool batches are unavailable")
 }
 
 object ToolsKey : ServiceKey<ToolsService>("tools")
@@ -134,6 +147,7 @@ private class DefaultToolsService : ToolsService, Disposable {
         val schema: ToolSchema,
         val handler: ToolHandler,
         val options: ToolRegistrationOptions,
+        val owner: Any? = null,
     )
 
     private data class State(
@@ -141,6 +155,7 @@ private class DefaultToolsService : ToolsService, Disposable {
         val completed: Set<Pair<String, CallId>> = emptySet(),
         val inFlight: Set<Pair<String, CallId>> = emptySet(),
         val disposed: Boolean = false,
+        val batches: Set<Any> = emptySet(),
     )
 
     private val state = AtomicReference(State())
@@ -174,6 +189,42 @@ private class DefaultToolsService : ToolsService, Disposable {
                 if (current.entries[schema.name] !== entry) return@Disposable
                 val updated = current.copy(entries = current.entries - schema.name)
                 if (state.compareAndSet(current, updated)) return@Disposable
+            }
+        }
+    }
+
+    override fun registrationBatch(): ToolRegistrationBatch {
+        val owner = Any()
+        while (true) {
+            val old = state.load()
+            check(!old.disposed) { "Tools service is disposed" }
+            if (state.compareAndSet(old, old.copy(batches = old.batches + owner))) break
+        }
+        return object : ToolRegistrationBatch {
+            override fun replace(registrations: List<ToolRegistration>) {
+                val entries = registrations.map { Entry(it.schema, it.handler, it.options, owner) }
+                require(entries.all { it.schema.name.isNotBlank() }) { "Blank batch tool name" }
+                require(entries.map { it.schema.name }.distinct().size == entries.size) { "Duplicate batch tool names" }
+                while (true) {
+                    val old = state.load()
+                    check(!old.disposed && owner in old.batches) { "Tool batch is disposed" }
+                    val retained = old.entries.filterValues { it.owner !== owner }
+                    check(entries.none { it.schema.name in retained }) { "Tool batch name conflict" }
+                    val next = retained + entries.associateBy { it.schema.name }
+                    if (state.compareAndSet(old, old.copy(entries = next))) return
+                }
+            }
+
+            override suspend fun dispose() {
+                while (true) {
+                    val old = state.load()
+                    if (owner !in old.batches) return
+                    val next = old.copy(
+                        entries = old.entries.filterValues { it.owner !== owner },
+                        batches = old.batches - owner,
+                    )
+                    if (state.compareAndSet(old, next)) return
+                }
             }
         }
     }

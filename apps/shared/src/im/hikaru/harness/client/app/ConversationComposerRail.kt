@@ -27,6 +27,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import im.hikaru.harness.client.git.GitBranch
+import im.hikaru.harness.client.git.GitRead
+import im.hikaru.harness.client.git.GitState
 import im.hikaru.harness.client.page.localProjectsForBinding
 import im.hikaru.harness.client.projects.LocalProject
 import im.hikaru.harness.client.projects.LocalProjectBinding
@@ -53,6 +56,9 @@ internal fun ComposerProjectRail(
     onQueryChange: (String) -> Unit,
     onManage: () -> Unit,
     onConfigureEnvironment: () -> Unit,
+    gitState: GitState? = null,
+    onSelectBranch: (String) -> Unit = {},
+    onSwitchBranch: () -> Unit = {},
 ) {
     val visible = localProjectsForBinding(state, binding)
     val latestState by rememberUpdatedState(visible)
@@ -138,6 +144,11 @@ internal fun ComposerProjectRail(
                         },
                     )
                 }
+                ComposerBranchPicker(
+                    state = gitState,
+                    onSelectBranch = onSelectBranch,
+                    onSwitchBranch = onSwitchBranch,
+                )
                 HarnessPopover(
                     expanded = workOpen,
                     onDismissRequest = { workOpen = false },
@@ -179,6 +190,74 @@ internal fun ComposerProjectRail(
                 // Live only renders the environment gear once a project is selected.
                 if (project != null) RailGear(onClick = onConfigureEnvironment)
             }
+        }
+    }
+}
+
+@Composable
+private fun ComposerBranchPicker(
+    state: GitState?,
+    onSelectBranch: (String) -> Unit,
+    onSwitchBranch: () -> Unit,
+) {
+    val current = (state?.status as? GitRead.Ready)?.value?.branch
+        ?.removePrefix("refs/heads/")
+    val branches = (state?.branches as? GitRead.Ready<List<GitBranch>>)?.value
+        ?.filter { !it.remote && it.ref.startsWith("refs/heads/") }
+        .orEmpty()
+    if (state?.binding == null || current == null || branches.isEmpty()) return
+    var open by remember(state.binding, current) { mutableStateOf(false) }
+    val enabled = state.checkoutAvailable && state.unavailableReason == null && !state.checkoutBusy && !state.creationBusy &&
+        !state.branchCreateBusy && !state.stageBusy && !state.commitBusy && !state.checkoutNeedsRescan
+    HarnessPopover(
+        expanded = open,
+        onDismissRequest = { open = false },
+        onExpandedChange = { open = it },
+        side = HarnessPopoverSide.Top,
+        align = HarnessPopoverAlign.Start,
+        sideOffset = 6.dp,
+        popupWidth = HarnessTokens.Composer.ProjectPopupWidth,
+        popupMaxHeight = HarnessTokens.Composer.ProjectPopupMaxHeight,
+        popupShape = 20.dp,
+        popupColor = ConversationAppearance.popup,
+        popupBorder = ConversationAppearance.popupRing,
+        popupBorderWidth = 0.5.dp,
+        popupShadow = 6.dp,
+        popupModifier = Modifier.padding(4.dp).semantics { testTag = "live-composer-branch-menu" },
+        anchor = { toggle ->
+            RailChip(
+                onClick = { if (enabled) toggle() },
+                testTag = "live-composer-branch",
+                description = "当前分支 $current",
+            ) {
+                ConversationIcon(ConversationGlyph.Branch, ConversationAppearance.ink)
+                RailLabel(current)
+            }
+        },
+    ) {
+        Box(
+            Modifier.fillMaxWidth().height(HarnessTokens.Composer.RailSectionHeight)
+                .padding(horizontal = HarnessTokens.Composer.RailChipInsetX),
+            contentAlignment = Alignment.CenterStart,
+        ) { RailLabel("分支", ConversationAppearance.tertiary) }
+        branches.forEach { branch ->
+            val name = branch.ref.removePrefix("refs/heads/")
+            RailMenuRow(
+                selected = branch.current || name == current,
+                testTag = "live-composer-branch-$name",
+                onClick = {
+                    if (enabled && !branch.current) {
+                        onSelectBranch(branch.ref)
+                        onSwitchBranch()
+                    }
+                    open = false
+                },
+                leading = { ConversationIcon(ConversationGlyph.Branch, ConversationAppearance.ink) },
+                trailing = {
+                    if (branch.current || name == current)
+                        ConversationIcon(ConversationGlyph.CheckSmall, ConversationAppearance.ink)
+                },
+            ) { RailLabel(name) }
         }
     }
 }

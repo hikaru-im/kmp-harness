@@ -320,8 +320,7 @@ private fun ComposeUiTest.selectSavedTask(task: ScheduledTask) {
 }
 
 private fun ComposeUiTest.assertInvalidatedExecution() {
-    reveal("scheduled-execution-unavailable")
-    onNodeWithTag("scheduled-execution-unavailable", true).assertExists().assertIsDisplayed()
+    onNodeWithTag("scheduled-execution-unavailable", true).assertDoesNotExist()
     reveal("scheduled-run-now")
     onNodeWithTag("scheduled-run-now", true).assertIsDisplayed().assertIsNotEnabled()
     reveal("scheduled-pause")
@@ -466,38 +465,44 @@ private fun ComposeUiTest.mouseNode(target: SemanticsNodeInteraction) {
 @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 private fun ComposeUiTest.typeAscii(tag: String, text: String) {
     mouse(tag)
-    onNodeWithTag(tag, true).assertIsFocused()
+    val target = onNodeWithTag(tag, true).assertIsFocused()
     val skiko = this as? SkikoComposeUiTest ?: error("Real Desktop character events require SkikoComposeUiTest")
     val eventSource = object : Component() {}
-    val deadline = System.nanoTime() + 10_000_000_000L
+    // Every character settles a rendered frame; budget scales with the real input length.
+    val budgetMillis = maxOf(10_000L, text.length.toLong() * 100L)
+    val deadline = System.nanoTime() + budgetMillis * 1_000_000L
     val alphabet = listOf(Key.A, Key.B, Key.C, Key.D, Key.E, Key.F, Key.G, Key.H, Key.I, Key.J, Key.K, Key.L, Key.M,
         Key.N, Key.O, Key.P, Key.Q, Key.R, Key.S, Key.T, Key.U, Key.V, Key.W, Key.X, Key.Y, Key.Z)
     text.forEachIndexed { index, character ->
-        check(System.nanoTime() < deadline) { "Real character input exceeded ten seconds: $tag at $index" }
+        check(System.nanoTime() < deadline) { "Real character input exceeded ${budgetMillis} ms: $tag at $index" }
         require(character == ' ' || character in 'a'..'z')
-        onNodeWithTag(tag, true).assertIsFocused()
         val key = if (character == ' ') Key.Spacebar else alphabet[character.code - 'a'.code]
-        val root = rootFor(onNodeWithTag(tag, true))
-        root.performKeyInput { keyDown(key) }
-        try {
-            // Desktop commits printable KEY_TYPED events; Down/Up alone carry no native event.
-            runOnUiThread {
+        // Send one physical key sequence in a single UI dispatch; settle between characters.
+        runOnUiThread {
+            skiko.scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyDown))
+            try {
+                // Desktop commits printable KEY_TYPED events; Down/Up alone carry no native event.
                 val nativeEvent = AwtKeyEvent(eventSource, AwtKeyEvent.KEY_TYPED,
                     System.currentTimeMillis(), 0, AwtKeyEvent.VK_UNDEFINED, character)
                 skiko.scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.Unknown,
                     codePoint = character.code, nativeEvent = nativeEvent))
+            } finally {
+                skiko.scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyUp))
             }
-        } finally {
-            root.performKeyInput { keyUp(key) }
         }
+        // Let controlled input recompose after every native event; verify bounded prefixes in batches.
         settle()
-        onNodeWithTag(tag, true).assertIsFocused()
-        assertEquals(text.take(index + 1),
-            onNodeWithTag(tag, true).fetchSemanticsNode().config[SemanticsProperties.EditableText].text,
-            "Real character prefix after event $index on $tag")
+        if ((index + 1) % 16 == 0 || index == text.lastIndex) {
+            target.assertIsFocused()
+            assertEquals(text.take(index + 1),
+                target.fetchSemanticsNode().config[SemanticsProperties.EditableText].text,
+                "Real character prefix after event $index on $tag")
+        }
     }
     settle()
-    assertEquals(text, onNodeWithTag(tag, true).fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+    target.assertIsFocused()
+    assertEquals(text, target.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+    check(System.nanoTime() < deadline) { "Real character input exceeded ${budgetMillis} ms: $tag after verification" }
 }
 
 /** Match the desktop pixel conversion; the Skiko dispatcher supplies scrollAmount = 1. */

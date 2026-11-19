@@ -9,11 +9,12 @@ class SettingsGeneralModelTest {
     @Test
     fun generalModelKeepsPermissionAndPreferenceContractsStable() {
         assertEquals(listOf("default-permission", "full-disk-access"), SettingsGeneralModel.permissions.map { it.id })
-        assertEquals(13, SettingsGeneralModel.preferences.size)
+        assertEquals(14, SettingsGeneralModel.preferences.size)
         assertEquals("task-folder", SettingsGeneralModel.preferences.first().id)
         assertEquals("plugins", SettingsGeneralModel.preferences.last().id)
         assertEquals(
-            listOf("task-folder", "default-file-app", "language", "confirm-close", "terminal-location", "licenses"),
+            listOf("task-folder", "default-file-app", "language", "confirm-close", "enter-behavior",
+                "terminal-location", "licenses"),
             SettingsGeneralModel.preferences.filter { it.control == SettingsGeneralControl.Dropdown || it.control == SettingsGeneralControl.Segmented || it.control == SettingsGeneralControl.Button }.map { it.id },
         )
     }

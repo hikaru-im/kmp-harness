@@ -27,6 +27,10 @@ interface Agent {
         wakeup: AgentWakeup = AgentWakeup.IF_IDLE,
     ): String
 
+    /** A model selection belongs to the queued message and is fixed for its complete turn. */
+    suspend fun followup(message: Message, options: AgentOptions): String =
+        error("This Agent does not support per-message model selection")
+
     suspend fun followup(message: Message): String =
         send(message, AgentSendTarget.NEXT_TURN, AgentWakeup.IF_IDLE)
 

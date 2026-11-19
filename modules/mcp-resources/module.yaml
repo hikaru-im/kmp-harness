@@ -1,0 +1,12 @@
+apply: [../../kmp.module-template.yaml]
+
+product: jvm/lib
+
+dependencies:
+  - ../mcp-client
+  - io.modelcontextprotocol:kotlin-sdk-client:0.11.0
+  - ../session
+  - ../llm
+  - ../loader
+  - ../runtime
+  - ../tools

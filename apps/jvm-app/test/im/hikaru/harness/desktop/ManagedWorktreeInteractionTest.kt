@@ -19,7 +19,9 @@ class ManagedWorktreeInteractionTest {
         try {
             runSkikoComposeUiTest(size = Size(640f, 1000f)) {
                 setContent { HarnessTheme { WorktreesPage(fixture.git) } }
-                onNodeWithTag("managed-unavailable").performScrollTo().assertTextEquals("托管管理暂不可用。")
+                // `settings.worktrees.error.title`: Codex states the failure once, with no second
+                // sentence enumerating which downstream controls are affected.
+                onNodeWithTag("managed-unavailable").performScrollTo().assertTextEquals("无法加载工作树")
                 onNodeWithTag("managed-refresh").assertDoesNotExist()
                 onNodeWithTag("git-worktree-create-submit").performScrollTo().assertIsNotEnabled()
                 assertEquals(0, fixture.reads.calls)
@@ -38,7 +40,9 @@ class ManagedWorktreeInteractionTest {
                 onNodeWithTag("managed-sessions").performScrollTo().assertTextContains("关联会话未知", substring = true)
                 onNodeWithTag("managed-pins").performScrollTo().assertTextEquals("Pin 保护服务不可用。")
                 onNodeWithTag("managed-archive").performScrollTo().assertTextEquals("归档服务不可用。")
-                onNodeWithTag("managed-destructive-unavailable").performScrollTo().assertTextContains("不可用", substring = true)
+                onNodeWithTag("managed-destructive-unavailable").assertDoesNotExist()
+                onNodeWithTag("managed-removal-status").assertDoesNotExist()
+                onNodeWithTag("managed-remove").assertDoesNotExist()
                 val before = fixture.reads.calls
                 runOnIdle { fixture.reads.answer = { ManagedWorktreeRead.Failed("controlled disk read failure") } }
                 onNodeWithTag("managed-refresh").performScrollTo().performMouseInput { click() }

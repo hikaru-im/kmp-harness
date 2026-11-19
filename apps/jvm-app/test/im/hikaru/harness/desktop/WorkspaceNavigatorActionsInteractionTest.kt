@@ -29,6 +29,7 @@ class WorkspaceNavigatorActionsInteractionTest {
         var query by mutableStateOf("")
         var selectedThreadId: String? = null
         var newTaskCalls = 0
+        var fileSearchCalls = 0
 
         private val projects =
             listOf(
@@ -59,6 +60,7 @@ class WorkspaceNavigatorActionsInteractionTest {
                 recentTasks = recents,
                 onToggleSidebar = {},
                 onNewTask = { newTaskCalls++ },
+                onSearchFiles = { fileSearchCalls++ },
                 onNavigatorSearch = { query = it },
                 navigatorSearchOpen = searchOpen,
                 onToggleNavigatorSearch = { searchOpen = !searchOpen },
@@ -83,6 +85,21 @@ class WorkspaceNavigatorActionsInteractionTest {
         onNodeWithTag("command-chat-koog-slots").assertIsDisplayed()
         onNodeWithTag("command-chat-clash-rule").assertIsDisplayed()
         onNodeWithText("快捷操作").assertIsDisplayed()
+    }
+
+    @Test
+    fun choosingFileSearchClosesTheMenuAndCallsTheConsumerOnce() = runSkikoComposeUiTest(size = Size(1440f, 900f)) {
+        val fixture = Fixture()
+        setContent { fixture.Content() }
+        onNodeWithTag("workspace-search-toggle").performClick()
+        onNodeWithTag("workspace-command-input").performTextInput("搜索文件")
+        onNodeWithTag("command-action-0").performClick()
+        onNodeWithTag("workspace-command-menu").assertDoesNotExist()
+        runOnIdle {
+            assertEquals(1, fixture.fileSearchCalls)
+            assertFalse(fixture.searchOpen)
+            assertEquals("", fixture.query)
+        }
     }
 
     @Test

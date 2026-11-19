@@ -61,8 +61,10 @@ class GitBranchCheckoutInteractionTest {
                 // A real edit after the clean UI read must be rejected by backend preflight.
                 Files.writeString(fixture.workspace.resolve("tracked.txt"), "user edit after snapshot\n")
                 onNodeWithTag("git-checkout-submit").performScrollTo().assertIsEnabled().performMouseInput { click() }
-                waitUntil(timeoutMillis = 10_000) { controller.state.value.checkout is GitBranchCheckout.Failed && controller.state.value.status is GitRead.Ready }
-                onNodeWithTag("git-checkout-error").assertExists()
+                waitUntil(timeoutMillis = 10_000) {
+                    onAllNodesWithTag("harness-toast-error").fetchSemanticsNodes().isNotEmpty()
+                }
+                onNodeWithText(assertIs<GitBranchCheckout.Failed>(controller.state.value.checkout).failure.message).assertExists()
                 onNodeWithTag("git-checkout-submit").assertIsNotEnabled()
                 assertEquals(0, switches.get())
                 assertEquals("user edit after snapshot\n", Files.readString(fixture.workspace.resolve("tracked.txt")))
@@ -73,7 +75,7 @@ class GitBranchCheckoutInteractionTest {
                 awaitEnabled("git-checkout-submit")
                 onNodeWithTag("git-checkout-submit").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 15_000) { controller.state.value.checkout is GitBranchCheckout.Switched }
-                onNodeWithTag("git-checkout-success").assertTextEquals("已确认切换：refs/heads/feature")
+                onNodeWithText("已切换到 feature").assertExists()
                 onNodeWithTag("git-current-branch").assertTextEquals("feature")
                 onNodeWithTag("git-checkout-submit").assertIsNotEnabled()
                 assertEquals(1, switches.get())
@@ -142,7 +144,8 @@ class GitBranchCheckoutInteractionTest {
                 awaitEnabled("git-refresh")
                 onNodeWithTag("git-refresh").performScrollTo().performMouseInput { click() }
                 waitUntil(timeoutMillis = 10_000) { controller.state.value.checkout is GitBranchCheckout.Rescanned }
-                onNodeWithTag("git-checkout-rescanned").assertTextEquals("已重新读取当前状态，可重新选择。")
+                // A completed rescan clears the unknown state and prints no note of its own.
+                onNodeWithTag("git-checkout-rescanned").assertDoesNotExist()
                 onNodeWithTag("git-checkout-unknown").assertDoesNotExist()
                 onNodeWithTag("git-checkout-needs-rescan").assertDoesNotExist()
                 onNodeWithTag("git-checkout-success").assertDoesNotExist()

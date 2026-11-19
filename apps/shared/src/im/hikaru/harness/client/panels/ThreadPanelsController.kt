@@ -78,6 +78,9 @@ public class ThreadPanelsController(
             is ThreadPanelAction.OpenTab -> if (action.tab !in previous.openTabs) when (action.tab) {
                 ThreadPanelTab.BackgroundOutput -> refreshTerminal()
                 ThreadPanelTab.Subagents -> refreshOverview()
+                // The Changes tab renders the app-owned GitController snapshot; opening it triggers
+                // no panel read, so nothing is started and no repository is touched.
+                ThreadPanelTab.Changes -> Unit
             }
             else -> Unit
         }

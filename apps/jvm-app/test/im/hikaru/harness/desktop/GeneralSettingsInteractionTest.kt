@@ -59,6 +59,57 @@ class GeneralSettingsInteractionTest {
     }
 
     @Test
+    fun everyEnterBehaviorSavesAndRouteReturnShowsTheSavedChoice() = runComposeUiTest {
+        val repository = GeneralSettingsRepository(MemoryGeneralSettingsStore(), true)
+        runBlocking { repository.load() }
+        val shortcuts = ShortcutsRepository(platform = ShortcutPlatform.Mac)
+        setContent {
+            Box(Modifier.fillMaxSize()) {
+                HarnessApp(null, initialDestination = HarnessDestination.Settings,
+                    generalSettingsRepository = repository, shortcutsRepository = shortcuts)
+            }
+        }
+        EnterBehavior.entries.forEach { behavior ->
+            onNodeWithTag("settings-general-control-enter-behavior").performScrollTo().clickWithMouse()
+            onNodeWithTag("menu:" + behavior.name).clickWithMouse()
+            onNodeWithTag("menu:" + behavior.name).assertDoesNotExist()
+            runOnIdle {
+                assertEquals(behavior, repository.state.value.settings.enterBehavior)
+                assertEquals(behavior.ordinal + 1L, repository.state.value.saveRevision)
+            }
+            onNodeWithTag("settings-row-appearance").clickWithMouse()
+            onNodeWithTag("settings-row-general").clickWithMouse()
+            onNodeWithTag("settings-general-control-enter-behavior").performScrollTo()
+                .assertTextContains(behavior.label(ShortcutPlatform.Mac), substring = true)
+        }
+    }
+
+    /**
+     * `ComposerSubmitButton`: `blockedReason` outranks the shortcut hint in the tooltip
+     * (`w = C ? l : d` in Codex). A shell with no bound connection is exactly such a blocked
+     * composer, so the hover must surface the real block — not a hint advertising a chord that
+     * cannot fire. The saved EnterBehavior still reaches the hint; `LiveConversationInteractionTest`
+     * pins that with an unblocked composer, and `ComposerPresentationTest` pins the hint strings.
+     */
+    @Test
+    fun savedEnterBehaviorBuildsTheComposerWhileAnUnboundShellAdvertisesItsBlock() = runSkikoComposeUiTest(size = Size(1200f, 900f)) {
+        val repository = GeneralSettingsRepository(MemoryGeneralSettingsStore(
+            GeneralSettings(CloseConfirmationPolicy.KeyboardOnly, EnterBehavior.CmdAlways)), true)
+        runBlocking { repository.load() }
+        setContent {
+            HarnessApp(null, generalSettingsRepository = repository,
+                shortcutsRepository = ShortcutsRepository(platform = ShortcutPlatform.Mac))
+        }
+        onNodeWithTag("live-composer-editor").performTextInput("hello")
+        onNodeWithTag("live-composer-send").performMouseInput { moveTo(center) }
+        mainClock.advanceTimeBy(300)
+        waitForIdle()
+        // The block wins the tooltip; the shortcut hint is not shown while a reason exists.
+        onNodeWithText("连接已断开").assertIsDisplayed()
+        onNodeWithText("发送 · ⌘ + Enter；换行 · Enter").assertDoesNotExist()
+    }
+
+    @Test
     fun compactPageDisablesUnavailableControlsAndExposesPluginAction() = runComposeUiTest {
         var opens = 0
         var width by mutableStateOf(420.dp)
@@ -82,7 +133,8 @@ class GeneralSettingsInteractionTest {
         }
         runOnIdle { width = 420.dp }
         onNodeWithTag("settings-general-control-default-permission").assertIsNotEnabled().assertIsOff()
-        onNodeWithTag("settings-general-unavailable-default-permission").assertIsDisplayed().assertTextEquals("暂不可用")
+        // A disabled row carries no reason text — Codex has no 「暂不可用」/「尚未接入…」 status copy.
+        onNodeWithTag("settings-general-unavailable-default-permission").assertDoesNotExist()
         onNodeWithText("尚未接入 Host 权限配置").assertDoesNotExist()
         onNodeWithTag("settings-general-control-task-folder").performScrollTo().assertIsNotEnabled()
         onNodeWithTag("settings-general-control-terminal-location-bottom").performScrollTo().assertIsNotEnabled()
@@ -127,7 +179,7 @@ class GeneralSettingsInteractionTest {
         onNodeWithTag("settings-general-control-confirm-close").performScrollTo().assertIsEnabled()
         runOnIdle { state = state.copy(closePolicyAvailable = false) }
         onNodeWithTag("settings-general-control-confirm-close").assertIsNotEnabled()
-        onNodeWithTag("settings-general-unavailable-confirm-close").assertExists()
+        onNodeWithTag("settings-general-unavailable-confirm-close").assertDoesNotExist()
     }
 
     @Composable

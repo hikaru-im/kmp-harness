@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.input.key.Key
@@ -20,8 +21,11 @@ import im.hikaru.contracts.harness.identity.HostId
 import im.hikaru.harness.client.app.*
 import im.hikaru.harness.client.connection.*
 import im.hikaru.harness.client.conversation.*
+import im.hikaru.harness.client.settings.EnterBehavior
+import im.hikaru.harness.client.settings.ShortcutPlatform
 import im.hikaru.harness.ui.foundation.HarnessTheme
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
+import kotlin.math.sqrt
 import kotlin.test.*
 
 /** Test-only state/messages/catalogs; production callbacks belong to the app owner. */
@@ -66,8 +70,10 @@ class LiveConversationInteractionTest {
                 onNodeWithTag("live-composer-model-select").performClick()
                 savePopup(onNodeWithTag("live-composer-model-popup"), "models-$mode")
                 onNodeWithTag(menuTag(SECOND)).performClick()
-                // A model without effort stops closes the picker instead of showing an empty,
-                // disabled slider panel (Codex filters that view out entirely).
+                // A model without adjustable efforts leaves the effort slot empty; Codex prints no
+                // sentence to explain it.
+                onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertDoesNotExist()
+                onNodeWithTag("live-composer-model-popup").performKeyInput { pressKey(Key.Escape) }
                 onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
             }
         }
@@ -134,6 +140,90 @@ class LiveConversationInteractionTest {
     }
 
     @Test
+    fun enterBehaviorSettingDrivesTheSubmitChord() = runComposeUiTest {
+        val owner = ComposerOwner()
+        setContent { HarnessTheme { owner.Content() } }
+        val editor = onNodeWithTag("live-composer-editor")
+        editor.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+
+        // `enter` (default): a bare Enter sends and Shift+Enter inserts the newline.
+        editor.performTextReplacement("enter mode")
+        editor.performKeyInput { keyDown(Key.ShiftLeft); pressKey(Key.Enter); keyUp(Key.ShiftLeft) }
+        runOnIdle { assertTrue(owner.state.draft.contains("\n")); assertTrue(owner.submitted.isEmpty()) }
+        editor.performTextReplacement("enter sends")
+        editor.performKeyInput { pressKey(Key.Enter) }
+        runOnIdle { assertEquals(listOf("enter sends"), owner.submitted) }
+
+        // `cmdAlways`: Enter only inserts the newline; ⌘+Enter sends (Codex modifier chord).
+        runOnIdle {
+            owner.submitted.clear()
+            owner.state = owner.state.copy(action = ConversationAction.Idle, draft = "")
+            owner.enterBehavior = EnterBehavior.CmdAlways
+        }
+        editor.performTextReplacement("always newline")
+        editor.performKeyInput { pressKey(Key.Enter) }
+        runOnIdle { assertTrue(owner.submitted.isEmpty()); assertTrue(owner.state.draft.contains("\n")) }
+        editor.performKeyInput { keyDown(Key.MetaLeft); pressKey(Key.Enter); keyUp(Key.MetaLeft) }
+        runOnIdle { assertEquals(listOf(owner.state.draft), owner.submitted) }
+
+        // `cmdIfMultiline`: a single line still sends on Enter...
+        runOnIdle {
+            owner.submitted.clear()
+            owner.state = owner.state.copy(action = ConversationAction.Idle, draft = "")
+            owner.enterBehavior = EnterBehavior.CmdIfMultiline
+        }
+        editor.performTextReplacement("single line")
+        editor.performKeyInput { pressKey(Key.Enter) }
+        runOnIdle { assertEquals(listOf("single line"), owner.submitted) }
+
+        // ...but a real newline in the draft switches Enter to the newline and requires ⌘+Enter.
+        runOnIdle {
+            owner.submitted.clear()
+            owner.state = owner.state.copy(action = ConversationAction.Idle, draft = "")
+        }
+        editor.performTextReplacement("first\nsecond")
+        editor.performKeyInput { pressKey(Key.Enter) }
+        runOnIdle { assertTrue(owner.submitted.isEmpty()); assertTrue(owner.state.draft.endsWith("\n")) }
+        editor.performKeyInput { keyDown(Key.MetaLeft); pressKey(Key.Enter); keyUp(Key.MetaLeft) }
+        runOnIdle { assertEquals(listOf(owner.state.draft), owner.submitted) }
+    }
+
+    @Test
+    fun composerHintTracksTheEnterBehaviorAndDraftShape() = runComposeUiTest {
+        val owner = ComposerOwner()
+        setContent { HarnessTheme { owner.Content() } }
+        onNodeWithTag("live-composer-editor").performTextInput("hint")
+        fun hoverSend() {
+            onNodeWithTag("live-composer-send").performMouseInput { moveTo(center) }
+            mainClock.advanceTimeBy(300)
+            waitForIdle()
+        }
+        fun leaveSend() {
+            onNodeWithTag("live-composer-editor").performMouseInput { moveTo(center) }
+            mainClock.advanceTimeBy(300)
+            waitForIdle()
+        }
+        hoverSend()
+        onNodeWithText("发送 · Enter；换行 · Shift+Enter").assertIsDisplayed()
+
+        leaveSend()
+        runOnIdle { owner.enterBehavior = EnterBehavior.CmdAlways }
+        hoverSend()
+        onNodeWithText("发送 · ⌘ + Enter；换行 · Enter").assertIsDisplayed()
+
+        leaveSend()
+        runOnIdle { owner.enterBehavior = EnterBehavior.CmdIfMultiline }
+        hoverSend()
+        onNodeWithText("发送 · Enter；换行 · Shift+Enter").assertIsDisplayed()
+
+        // Multiline means the text contains a newline; visual wrapping never switches the chord.
+        onNodeWithTag("live-composer-editor").performTextReplacement("first\nsecond")
+        leaveSend()
+        hoverSend()
+        onNodeWithText("发送 · ⌘ + Enter；换行 · Enter").assertIsDisplayed()
+    }
+
+    @Test
     fun blankDisconnectedAndUnavailableDisableSendWithoutDroppingDraft() = runComposeUiTest {
         val owner = ComposerOwner()
         setContent { HarnessTheme { owner.Content() } }
@@ -147,9 +237,13 @@ class LiveConversationInteractionTest {
         editor.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         editor.performKeyInput { pressKey(Key.Enter) }
         runOnIdle { owner.state = owner.state.copy(connected = true); owner.submitReason = "当前 Host 无法创建会话。" }
-        onNodeWithTag("live-composer-send").assertIsNotEnabled()
-        // The disabled button carries the block; no explanation sentence sits under the draft.
+        // `ComposerSubmitButton`'s blocked state is `opacity-50`, not `disabled`: the dimmed disc
+        // still takes the click so `BlockedSubmitDialog` can open from it.
+        onNodeWithTag("live-composer-send").assertIsEnabled()
+        // The block is carried by the button, never by a sentence under the draft.
         onNodeWithTag("live-composer-submit-unavailable").assertDoesNotExist()
+        onNodeWithTag("live-composer-model-unavailable").assertDoesNotExist()
+        // Enter stays inert while blocked: the dialog is the only affordance, never a silent send.
         editor.performKeyInput { pressKey(Key.Enter) }
         runOnIdle {
             assertTrue(owner.submitted.isEmpty())
@@ -197,17 +291,21 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-model-select").performClick()
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
         onNodeWithTag(menuTag(SECOND)).performClick()
-        // SECOND declares no efforts, so the picker closes rather than swapping to the slider view.
-        onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
+        // Selection returns to the reasoning panel even when the model has no adjustable efforts.
+        // `IntelligenceDropdown` renders nothing there in that case — no explanatory sentence.
+        onNodeWithText("此模型未提供可调整的思考强度，跟随厂商。").assertDoesNotExist()
+        onNodeWithText("请先选择模型").assertDoesNotExist()
         runOnIdle { assertEquals(listOf(SECOND), owner.selected); assertTrue(owner.submitted.isEmpty()) }
+        onNodeWithTag("live-composer-model-popup").performKeyInput { pressKey(Key.Escape) }
+        onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
         onNodeWithTag("live-composer-model").performClick()
         onNodeWithTag("live-composer-model-popup").performKeyInput { pressKey(Key.Escape) }
         onNodeWithTag("live-composer-model-popup").assertDoesNotExist()
         runOnIdle { owner.state = owner.state.copy(selectedSessionId = SessionId("thread")) }
         onNodeWithTag("live-composer-model").assertIsEnabled().performClick()
-        // A selected session still opens the catalogue: the next turn may use another model, so the
-        // choice is live rather than inert.
+        // Existing sessions can select the next turn's model through the same reasoning stack.
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
+        onNodeWithTag("live-composer-model-select").performClick()
         onNodeWithTag(menuTag(FIRST)).performClick()
         runOnIdle { assertEquals(listOf(SECOND, FIRST), owner.selected) }
     }
@@ -320,8 +418,10 @@ class LiveConversationInteractionTest {
 
     @Test
     fun longTypedTimelineScrollsInsideNarrowViewport() = runSkikoComposeUiTest(size = Size(420f, 600f)) {
-        val messages = (0..24).map { index -> Message("long-$index", MessageRole.ASSISTANT,
-            listOf(TextContent("Actual message $index " + "unbroken".repeat(100))), ModelMessageSource("test", "model")) }
+        // One human message per turn: with turn-grouped lazy items the final turn is still directly
+        // addressable by index, and its long unbroken text must stay inside the narrow viewport.
+        val messages = (0..24).map { index -> Message("long-$index", MessageRole.USER,
+            listOf(TextContent("Actual message $index " + "unbroken".repeat(100))), UserMessageSource) }
         setContent { HarnessTheme(HarnessThemeMode.Dark) {
             LiveThreadSurface(readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
                 onRetry = { error("No retry expected") })
@@ -330,6 +430,30 @@ class LiveConversationInteractionTest {
         val last = onNodeWithText("Actual message 24 ", substring = true).assertExists().getUnclippedBoundsInRoot()
         val root = onNodeWithTag("live-thread").getUnclippedBoundsInRoot()
         assertTrue(last.left >= root.left && last.right <= root.right)
+    }
+
+    @Test
+    fun conversationFindCountsMatchesNavigatesAndClosesWithEscape() = runSkikoComposeUiTest(size = Size(600f, 500f)) {
+        val messages = (0..2).map { index -> Message(
+            "find-$index", MessageRole.USER, listOf(TextContent("needle $index and needle")), UserMessageSource,
+        ) }
+        var closed by mutableStateOf(false)
+        setContent { HarnessTheme {
+            LiveThreadSurface(
+                readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
+                onRetry = { error("No retry expected") },
+                findOpen = !closed,
+                onCloseFind = { closed = true },
+            )
+        } }
+        onNodeWithTag("conversation-find").assertExists()
+        onNodeWithTag("conversation-find-field").performTextInput("needle")
+        onNodeWithTag("conversation-find-count").assertTextEquals("1 / 6")
+        onNodeWithTag("conversation-find-next").performClick()
+        onNodeWithTag("conversation-find-count").assertTextEquals("2 / 6")
+        onNodeWithTag("conversation-find-field").performKeyInput { pressKey(Key.Escape) }
+        runOnIdle { assertTrue(closed) }
+        onNodeWithTag("conversation-find").assertDoesNotExist()
     }
 
     @Test
@@ -391,17 +515,236 @@ class LiveConversationInteractionTest {
             LiveThreadSurface(readyState().copy(history = messages, historyPhase = ConversationDataPhase.Ready),
                 onRetry = { error("No retry expected") })
         } }
-        // Marker rows are part of the document, so the index of the final message shifts by one per
-        // preceding turn; scrolling still reaches it and the timeline is still pinned to the bottom.
-        val lastIndex = messages.size + 24
-        onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(lastIndex)
+        // CONV-02: one lazy item per turn, so the final turn is index 24 (the end anchor follows it).
+        // Scrolling still reaches the final reply and the timeline is still pinned to the bottom.
+        onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(24)
+        onNodeWithTag("conversation-turn:long-24").assertExists()
         val last = onNodeWithText("Reply 24").assertExists().getUnclippedBoundsInRoot()
         val root = onNodeWithTag("live-thread").getUnclippedBoundsInRoot()
         assertTrue(last.left >= root.left && last.right <= root.right)
-        // Scrolling back up finds the separator rows themselves, so they are real timeline items
-        // rather than decoration pinned to a message.
+        // Scrolling back up finds the first turn and its separator on the same lazy item, so the
+        // marker is real timeline content rather than decoration pinned to a message.
         onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(0)
+        onNodeWithTag("conversation-turn:long-0").assertExists()
         onNodeWithTag("conversation-time-marker:long-0").assertExists()
+    }
+
+    @Test
+    fun newMessageDoesNotMoveAReaderParkedAboveTheBottom() = runSkikoComposeUiTest(size = Size(600f, 700f)) {
+        val history = (0..24).map { scrollableTurn(it) }
+        var state by mutableStateOf(readyState().copy(history = history, historyPhase = ConversationDataPhase.Ready))
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            LiveThreadSurface(state, onRetry = { error("No retry expected") })
+        } }
+        parkOnTurn(index = 12, tag = "anchor-12")
+        val parked = turnBounds("anchor-12")
+        // A dropped-in message only appends a turn; the reader stays exactly where they parked.
+        runOnIdle { state = state.copy(history = history + scrollableTurn(25)) }
+        waitForIdle()
+        assertEquals(parked.top.value, turnBounds("anchor-12").top.value, 0.5f)
+        onNodeWithText("Actual message 25 ", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun toolExpansionAndStreamingGrowthKeepTheReaderParked() = runSkikoComposeUiTest(size = Size(600f, 700f)) {
+        val session = SessionId("thread")
+        val history = (0..15).flatMap { index ->
+            if (index == 12) listOf(
+                Message("tool-12", MessageRole.USER, listOf(TextContent("Actual message 12")), UserMessageSource),
+                Message("tool-12-assistant", MessageRole.ASSISTANT, listOf(
+                    TextContent("Answer 12"),
+                    ToolCallContent("call-12", "read_fixture", "{\"path\":\"fixture.kt\"}"),
+                ), ModelMessageSource("test", "model")),
+                Message("tool-12-result", MessageRole.USER,
+                    listOf(ToolResultContent("call-12", listOf(TextContent("Raw tool output 12")))),
+                    ToolMessageSource("call-12")),
+            ) else listOf(
+                Message("tool-$index", MessageRole.USER,
+                    listOf(TextContent("Actual message $index " + "scrollable ".repeat(60))), UserMessageSource),
+                Message("tool-$index-assistant", MessageRole.ASSISTANT, listOf(TextContent("Answer $index")),
+                    ModelMessageSource("test", "model")),
+            )
+        }
+        var live by mutableStateOf(LiveTranscript(session, listOf(streamingAnswer("Streaming answer"))))
+        var state by mutableStateOf(readyState().copy(
+            selectedSessionId = session, history = history, historyPhase = ConversationDataPhase.Ready))
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            LiveThreadSurface(state, live = live, onRetry = { error("No retry expected") })
+        } }
+        parkOnTurn(index = 12, tag = "tool-12")
+        val parked = turnBounds("tool-12")
+        // Expanding a disclosure below the anchored turn top only grows the item's tail.
+        val header = onNodeWithTag("message:tool-12-assistant:content:1:header", useUnmergedTree = true)
+        header.assertIsDisplayed()
+        header.performClick()
+        waitForIdle()
+        val timeline = onNodeWithContentDescription("会话", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals("已展开", header.fetchSemanticsNode().config[SemanticsProperties.StateDescription],
+            "turn=$parked timeline=$timeline header=${header.getUnclippedBoundsInRoot()}")
+        onNodeWithTag("message:tool-12-result:content:0:content:0", useUnmergedTree = true).assertExists()
+        onNodeWithText("Raw tool output 12", substring = true, useUnmergedTree = true).assertExists()
+        assertEquals(parked.top.value, turnBounds("tool-12").top.value, 0.5f)
+        // The streaming tail keeps growing at the end of the transcript, far below the reader.
+        runOnIdle { live = LiveTranscript(session, listOf(streamingAnswer("Streaming answer " + "grow ".repeat(80)))) }
+        waitForIdle()
+        assertEquals(parked.top.value, turnBounds("tool-12").top.value, 0.5f)
+    }
+
+    @Test
+    fun historyRefreshKeepsTheReaderOnTheSameTurn() = runSkikoComposeUiTest(size = Size(600f, 700f)) {
+        val recent = (5..24).map { scrollableTurn(it) }
+        val older = (0..4).map { scrollableTurn(it) }
+        var state by mutableStateOf(readyState().copy(
+            selectedSessionId = SessionId("thread"), history = recent, historyPhase = ConversationDataPhase.Ready))
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            LiveThreadSurface(state, onRetry = { error("No retry expected") })
+        } }
+        // The reader parked on turn 12 while it was item 7 of the loaded page.
+        parkOnTurn(index = 7, tag = "anchor-12")
+        val parked = turnBounds("anchor-12")
+        // Refreshing with an older page shifts every index by five; the turn id does not move.
+        runOnIdle { state = state.copy(history = older + recent) }
+        waitForIdle()
+        assertEquals(parked.top.value, turnBounds("anchor-12").top.value, 0.5f)
+    }
+
+    @Test
+    fun sessionSwitchStartsAtTheNewSessionsBottom() = runSkikoComposeUiTest(size = Size(600f, 700f)) {
+        val parkedHistory = (0..24).map { scrollableTurn(it) }
+        val otherHistory = (0..24).map { index -> Message("other-$index", MessageRole.USER,
+            listOf(TextContent("Other message $index " + "scrollable ".repeat(60))), UserMessageSource) }
+        var state by mutableStateOf(readyState().copy(
+            selectedSessionId = SessionId("thread"), history = parkedHistory, historyPhase = ConversationDataPhase.Ready))
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            LiveThreadSurface(state, onRetry = { error("No retry expected") })
+        } }
+        parkOnTurn(index = 12, tag = "anchor-12")
+        // Switching sessions recreates the viewport: no stale anchor may survive into the new thread.
+        runOnIdle { state = state.copy(selectedSessionId = SessionId("other"), history = otherHistory) }
+        waitForIdle()
+        onNodeWithTag("conversation-turn:other-24", useUnmergedTree = true).assertExists()
+        onNodeWithTag("conversation-turn:other-0", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun viewportResizeKeepsTheReaderOnTheSameTurn() = runSkikoComposeUiTest(size = Size(900f, 700f)) {
+        val history = (0..24).map { scrollableTurn(it) }
+        var width by mutableStateOf(900.dp)
+        setContent { HarnessTheme(HarnessThemeMode.Dark) {
+            Box(Modifier.requiredSize(width, 700.dp)) {
+                LiveThreadSurface(readyState().copy(history = history, historyPhase = ConversationDataPhase.Ready),
+                    onRetry = { error("No retry expected") })
+            }
+        } }
+        parkOnTurn(index = 12, tag = "anchor-12")
+        val parked = turnBounds("anchor-12")
+        // Narrowing reflows every wrapped message; the parked turn's top must stay at its offset.
+        runOnIdle { width = 440.dp }
+        waitForIdle()
+        assertEquals(parked.top.value, turnBounds("anchor-12").top.value, 0.5f)
+    }
+
+    private fun scrollableTurn(index: Int) = Message("anchor-$index", MessageRole.USER,
+        listOf(TextContent("Actual message $index " + "scrollable ".repeat(60))), UserMessageSource)
+
+    private fun streamingAnswer(text: String) = Message("live:1:1", MessageRole.ASSISTANT,
+        listOf(TextContent(text)), ModelMessageSource("test", "model"))
+
+    private fun ComposeUiTest.settle() { mainClock.advanceTimeByFrame(); waitForIdle() }
+
+    private fun ComposeUiTest.turnBounds(tag: String) =
+        onNodeWithTag("conversation-turn:$tag", useUnmergedTree = true).assertExists().getUnclippedBoundsInRoot()
+
+    /**
+     * Park deterministically on [index], then emit a real wheel gesture: a semantics index jump is
+     * not observed as a user scroll, and the extra offset proves the anchor restores more than zero.
+     * The jump must land first; a wheel dispatched into its animation leaves an arbitrary offset.
+     */
+    private fun ComposeUiTest.parkOnTurn(index: Int, tag: String) {
+        onNodeWithContentDescription("会话", useUnmergedTree = true).performScrollToIndex(index)
+        settle()
+        wheelTranscript(notches = 1f)
+        onNodeWithTag("conversation-turn:$tag", useUnmergedTree = true).assertExists()
+    }
+
+    private fun ComposeUiTest.wheelTranscript(notches: Float) {
+        val timeline = onNodeWithContentDescription("会话", useUnmergedTree = true).fetchSemanticsNode()
+        val rootNode = generateSequence(timeline) { it.parent }.last()
+        val root = onNode(SemanticsMatcher("Transcript root ${rootNode.id}") { it.id == rootNode.id }, true)
+        val viewport = timeline.boundsInRoot.intersect(rootNode.boundsInRoot)
+        assertTrue(viewport.width > 0f && viewport.height > 0f, "Measured transcript viewport")
+        val point = Offset(viewport.left + minOf(4f, viewport.width / 2f), viewport.center.y) -
+            rootNode.boundsInRoot.topLeft
+        // Same conversion as the other Skiko wheel tests: this input path has no AWT scrollAmount.
+        val unit = when (val os = System.getProperty("os.name").orEmpty()) {
+            "Mac OS X" -> 10f * timeline.layoutInfo.density.density
+            else -> if (os.startsWith("Linux")) sqrt(timeline.size.height.toFloat()) else timeline.size.height / 20f
+        }
+        root.performMouseInput { moveTo(point); advanceEventTime(16); scroll(notches * unit) }
+        settle()
+    }
+
+    @Test
+    fun turnsGroupEachHumanPromptWithItsOwnMessages() = runSkikoComposeUiTest(size = Size(600f, 900f)) {
+        setContent { HarnessTheme { LiveThreadSurface(
+            readyState().copy(selectedSessionId = SessionId("thread"), history = timedHistory(),
+                historyPhase = ConversationDataPhase.Ready),
+            onRetry = { error("No retry expected") }) } }
+        // One lazy item per human-delimited turn; the separator and both messages belong to it.
+        onNodeWithTag("conversation-turn:user-1", useUnmergedTree = true).assertExists()
+            .assert(hasAnyDescendant(hasTestTag("conversation-time-marker:user-1")))
+            .assert(hasAnyDescendant(hasTestTag("message:user-1")))
+            .assert(hasAnyDescendant(hasTestTag("message:assistant-1")))
+        onNodeWithTag("conversation-turn:user-2", useUnmergedTree = true).assertExists()
+            .assert(hasAnyDescendant(hasTestTag("message:user-2")))
+        onNodeWithTag("conversation-turn:user-3", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun editingStateStillRendersAboveTheComposer() = runSkikoComposeUiTest(size = Size(600f, 600f)) {
+        val owner = ComposerOwner()
+        owner.state = readyState("edited draft").copy(
+            selectedSessionId = SessionId("thread"),
+            editing = ConversationEdit("message-1", "edited draft", ""),
+        )
+        setContent { HarnessTheme { owner.Content() } }
+        onNodeWithTag("live-composer-editing").assertExists()
+        onNodeWithTag("live-composer-editor").assertExists()
+    }
+
+    @Test
+    fun escapeStopsARunningTurnAndStaysInertWhenSettled() = runSkikoComposeUiTest(size = Size(600f, 600f)) {
+        val owner = ComposerOwner()
+        owner.state = readyState("keep this draft").copy(
+            selectedSessionId = SessionId("thread"), runState = ConversationRunState.Running)
+        setContent { HarnessTheme { owner.Content() } }
+        onNodeWithTag("live-composer-editor").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        onNodeWithTag("live-composer-editor").performKeyInput { pressKey(Key.Escape) }
+        runOnIdle {
+            assertEquals(1, owner.cancelled)
+            assertEquals("keep this draft", owner.state.draft)
+        }
+        // A settled turn leaves Escape to the existing popup/back handling.
+        runOnIdle { owner.state = owner.state.copy(cancelling = false, runState = ConversationRunState.Idle) }
+        onNodeWithTag("live-composer-editor").performKeyInput { pressKey(Key.Escape) }
+        runOnIdle { assertEquals(1, owner.cancelled) }
+    }
+
+    @Test
+    fun unavailableMessageActionsKeepDisabledStateWithoutReasonCopy() = runSkikoComposeUiTest(size = Size(600f, 600f)) {
+        val answer = Message("answer", MessageRole.ASSISTANT, listOf(TextContent("Answer")),
+            ModelMessageSource("test", "model"))
+        setContent { HarnessTheme { LiveThreadSurface(
+            readyState().copy(selectedSessionId = SessionId("thread"), history = listOf(answer),
+                historyPhase = ConversationDataPhase.Ready), onRetry = {}) } }
+        listOf("喜欢", "不喜欢", "分叉").forEach { label ->
+            onNodeWithContentDescription(label, useUnmergedTree = true).assertIsNotEnabled()
+            onNodeWithContentDescription("$label（暂不可用）", useUnmergedTree = true).assertDoesNotExist()
+        }
+        listOf("朗读", "评价回复", "从这里创建聊天分支").forEach { label ->
+            onNodeWithContentDescription(label, useUnmergedTree = true).assertDoesNotExist()
+            onNodeWithContentDescription("$label（暂不可用）", useUnmergedTree = true).assertDoesNotExist()
+        }
     }
 
     @Test
@@ -454,21 +797,46 @@ class LiveConversationInteractionTest {
         onNodeWithTag("live-composer-effort-slider").assertDoesNotExist()
     }
 
+    /**
+     * `ComposerSubmitButton` + `BlockedSubmitDialog`: a blocked submit never prints a standing line
+     * above the composer. The reason rides the submit button's tooltip, and the click — which the
+     * dimmed disc still accepts — opens 无法发送消息 with the reason as its subtitle.
+     */
+    @Test
+    fun blockedSubmitShowsNoStandingHintAndOpensTheBlockedSubmitDialog() = runComposeUiTest {
+        val owner = ComposerOwner()
+        runOnIdle { owner.submitReason = "远程连接已断开"; owner.state = owner.state.copy(draft = "hello") }
+        setContent { HarnessTheme { owner.Content() } }
+        // No standing copy, and the send never happened.
+        onNodeWithText("远程连接已断开").assertDoesNotExist()
+        onNodeWithTag("live-composer-send").assertExists()
+        onNodeWithTag("live-composer-send").performMouseInput { click() }
+        // The dimmed disc still takes the click, which is what opens the dialog.
+        onNodeWithText("无法发送消息").assertIsDisplayed()
+        onNodeWithTag("blocked-submit-message").assertIsDisplayed()
+        onNodeWithText("远程连接已断开").assertIsDisplayed()
+        onNodeWithTag("blocked-submit-ok").performMouseInput { click() }
+        onNodeWithText("无法发送消息").assertDoesNotExist()
+        assertTrue(owner.submitted.isEmpty())
+    }
+
     private class ComposerOwner {
         var state by mutableStateOf(readyState())
         var models by mutableStateOf(listOf(FIRST, SECOND))
         var chosen by mutableStateOf<ConversationModelChoice?>(null)
-        var modelReason by mutableStateOf<String?>(null)
         var submitReason by mutableStateOf<String?>(null)
         val submitted = mutableListOf<String>()
         val selected = mutableListOf<ConversationModelChoice>()
         var cancelled = 0
         var effort by mutableStateOf<String?>(null)
         var permission by mutableStateOf(ComposerPermission.Ask)
+        var enterBehavior by mutableStateOf(EnterBehavior.Enter)
+        var shortcutPlatform by mutableStateOf(ShortcutPlatform.Mac)
 
         @Composable
         fun Content() {
             LiveConversationComposer(state,
+                enterBehavior = enterBehavior, shortcutPlatform = shortcutPlatform,
                 onDraftChange = { state = state.copy(draft = it, draftRevision = state.draftRevision + 1) },
                 onSubmit = { if (state.canSubmit && submitReason == null) {
                     submitted += state.draft
@@ -476,7 +844,7 @@ class LiveConversationInteractionTest {
                 } },
                 onCancel = { if (state.canCancel) { cancelled++; state = state.copy(cancelling = true) } },
                 models = models, selectedModel = chosen, onModelSelect = { selected += it; chosen = it },
-                modelUnavailableReason = modelReason, submitUnavailableReason = submitReason,
+                submitUnavailableReason = submitReason,
                 selectedReasoningEffort = effort, onReasoningEffortSelect = { effort = it },
                 permission = permission, onPermissionSelect = { permission = it })
         }

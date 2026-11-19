@@ -38,6 +38,18 @@ public class HoverPopoverState<K : Any> internal constructor(
     public var hoveredKey: K? by mutableStateOf(null)
         internal set
 
+    public var contentFocused: Boolean by mutableStateOf(false)
+        private set
+
+    public fun openForKeyboard(key: K) {
+        activeKey = key
+        contentFocused = true
+    }
+
+    public fun onContentFocus(focused: Boolean) {
+        contentFocused = focused
+    }
+
     public val isOpen: Boolean get() = activeKey != null
 
     /**
@@ -47,6 +59,7 @@ public class HoverPopoverState<K : Any> internal constructor(
     public fun close() {
         triggerHovered = false
         contentHovered = false
+        contentFocused = false
         hoveredKey = null
         activeKey = null
     }
@@ -80,13 +93,13 @@ public class HoverPopoverState<K : Any> internal constructor(
 @Composable
 public fun <K : Any> rememberHoverPopoverState(settleMillis: Long = 200): HoverPopoverState<K> {
     val state = remember { HoverPopoverState<K>(settleMillis) }
-    LaunchedEffect(state.triggerHovered, state.contentHovered, state.hoveredKey) {
+    LaunchedEffect(state.triggerHovered, state.contentHovered, state.contentFocused, state.hoveredKey) {
         when {
             state.triggerHovered -> state.activeKey = state.hoveredKey
-            state.contentHovered -> Unit // keep the current key
+            state.contentHovered || state.contentFocused -> Unit // keep the current key
             else -> {
                 delay(settleMillis)
-                if (!state.triggerHovered && !state.contentHovered) state.activeKey = null
+                if (!state.triggerHovered && !state.contentHovered && !state.contentFocused) state.activeKey = null
             }
         }
     }

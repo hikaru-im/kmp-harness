@@ -81,7 +81,7 @@ class WorkspaceManagementPageInteractionTest {
                 onNodeWithTag("account-mobile").assertTextEquals("")
                 onNodeWithTag("account-password").assertTextEquals("")
                 runOnIdle { local = true }
-                onNodeWithText("本地模式无需登录。").assertExists()
+                onNodeWithText("本地模式无需登录。").assertDoesNotExist()
                 onNodeWithTag("account-login").assertIsNotEnabled()
                 onNodeWithTag("account-settings").performScrollTo().performClick()
                 assertEquals(1, settings)

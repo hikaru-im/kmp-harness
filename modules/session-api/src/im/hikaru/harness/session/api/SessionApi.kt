@@ -120,12 +120,18 @@ interface SessionApi {
         agentOptions: AgentOptions = AgentOptions(),
     ): SessionSummary
 
+    suspend fun modelConfiguration(id: SessionId): AgentOptions? = null
     suspend fun history(id: SessionId): List<Message>
 
     suspend fun prompt(
         id: SessionId,
         message: Message,
     ): SessionPrompt
+
+    suspend fun prompt(id: SessionId, message: Message, options: AgentOptions?): SessionPrompt {
+        require(options == null) { "Per-message model selection is unavailable" }
+        return prompt(id, message)
+    }
 
     suspend fun cancel(
         id: SessionId,
@@ -318,13 +324,24 @@ internal class DefaultSessionApi(
         return conversationSummaries(handle.agent.session.id, includeSubagents = true).single()
     }
 
+    override suspend fun modelConfiguration(id: SessionId): AgentOptions? {
+        check(context.get(SessionPersistenceKey)?.metadata(id)?.deleted != true) { "Conversation was deleted" }
+        val events = context.sessions.get(id)?.events() ?: context.get(SessionPersistenceKey)?.readEvents(id).orEmpty()
+        val config = foldRequestHeader(events)?.config
+        return config?.let { AgentOptions(provider = it.provider, model = it.model,
+            reasoningEffort = it.reasoningEffort, maxTokens = it.maxTokens, reasoning = it.reasoning) }
+            ?: context.agents.get(AgentId(id.value))?.options
+    }
+
     override suspend fun history(id: SessionId): List<Message> {
         check(context.get(SessionPersistenceKey)?.metadata(id)?.deleted != true) { "Conversation was deleted" }
         return context.sessions.get(id)?.deriveMessages() ?: context.get(SessionPersistenceKey)?.readEvents(id)
             ?.let(::deriveMessages) ?: error("Session history is unavailable")
     }
 
-    override suspend fun prompt(id: SessionId, message: Message): SessionPrompt {
+    override suspend fun prompt(id: SessionId, message: Message): SessionPrompt = prompt(id, message, null)
+
+    override suspend fun prompt(id: SessionId, message: Message, options: AgentOptions?): SessionPrompt {
         check(context.get(SessionPersistenceKey)?.metadata(id)?.deleted != true) { "Conversation was deleted" }
         val agent = restoreMutex.withLock {
             context.agents.get(AgentId(id.value)) ?: run {
@@ -336,8 +353,10 @@ internal class DefaultSessionApi(
                 val config = im.hikaru.harness.session.foldRequestHeader(events)?.config
                 try { when (val restored = context.agents.restoreQuiescent(loaded.session, AgentOptions(
                     cwd = loaded.session.header.cwd, preset = loaded.session.header.agentPreset,
-                    provider = request?.provider ?: config?.provider, model = request?.model ?: config?.model,
-                    reasoningEffort = config?.reasoningEffort, maxTokens = config?.maxTokens))) {
+                    provider = options?.provider ?: request?.provider ?: config?.provider, model = options?.model ?: request?.model ?: config?.model,
+                    reasoningEffort = if (options != null) options.reasoningEffort else config?.reasoningEffort,
+                    maxTokens = if (options != null) options.maxTokens else config?.maxTokens,
+                    reasoning = if (options != null) options.reasoning else config?.reasoning))) {
                     is AgentQuiescentRestore.Granted -> restored.handle.agent
                     is AgentQuiescentRestore.Rejected -> error(restored.reason)
                 } } catch (error: Throwable) {
@@ -346,7 +365,7 @@ internal class DefaultSessionApi(
                 }
             }
         }
-        val messageId = agent.followup(message)
+        val messageId = if (options == null) agent.followup(message) else agent.followup(message, options)
         checkpoint(agent.session)
         return DefaultSessionPrompt(
             receipt = SessionPromptReceipt(id, messageId),
@@ -387,6 +406,7 @@ internal class DefaultSessionApi(
                 cwd = header.cwd, preset = header.agentPreset,
                 provider = config?.provider, model = config?.model,
                 reasoningEffort = config?.reasoningEffort, maxTokens = config?.maxTokens,
+                reasoning = config?.reasoning,
             ),
             sessionOptions = CreateSessionOptions(
                 cwd = header.cwd ?: context.get(SessionDefaultCwdKey),

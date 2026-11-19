@@ -72,6 +72,48 @@ class PluginsPageInteractionTest {
         }
     }
 
+    @Test fun managementCategoriesStayHonestAtBothWidths() {
+        listOf(Size(1440f, 900f), Size(600f, 800f)).forEach { size ->
+            runSkikoComposeUiTest(size = size) {
+                val repository = PluginsPageFixtureRepository()
+                val connection = PluginsPageTestConnection("categories-${size.width}")
+                setContent {
+                    val app = @Composable {
+                        HarnessApp(connection,
+                            initialDestination = if (size.width == 600f) HarnessDestination.Account
+                            else HarnessDestination.PluginInventory,
+                            installedPluginRepository = repository,
+                            connectionTransport = ConnectionTransport.Local, themeMode = HarnessThemeMode.Light)
+                    }
+                    if (size.width == 600f) PluginsPageWindow(content = app) else app()
+                }
+                if (size.width == 600f) {
+                    pluginsPageAwaitTag("app-rail")
+                    pluginsPageMouseClick("rail-plugins")
+                    pluginsPageAwaitEnabled("plugins-search")
+                    pluginsPageToggleNavigator()
+                    pluginsPageSettle()
+                } else {
+                    pluginsPageAwaitEnabled("plugins-search")
+                }
+                pluginsPageAwaitTag("plugins-management-tab-plugins")
+                onAllNodesWithTag("plugins-management-tab-plugins")
+                    .assertAll(isSelected()).assertAll(isEnabled())
+                listOf("apps", "skills", "marketplace").forEach { category ->
+                    onAllNodesWithTag("plugins-management-tab-$category")
+                        .assertAll(isNotEnabled())
+                        .onFirst()
+                        .performMouseInput { click() }
+                }
+                onAllNodesWithTag("plugins-management-tab-mcps").assertAll(isEnabled())
+                onAllNodesWithTag("plugins-management-tab-plugins").assertAll(isSelected())
+                onNodeWithTag(pluginsPageRowTag("installed-plugin-categories-${size.width}-0"))
+                    .assertIsDisplayed()
+                if (size.width == 600f) pluginsPageToggleNavigator()
+            }
+        }
+    }
+
     @Test fun compactPluginsRouteFloatsItsNavigatorAndKeepsTheRail() =
         runSkikoComposeUiTest(size = Size(600f, 800f)) {
             val repository = PluginsPageFixtureRepository()
@@ -195,7 +237,10 @@ class PluginsPageInteractionTest {
                     pluginsPageMouseClick("plugin-detail-back")
                 }
                 onNodeWithText("尚无已登记插件").assertExists()
-                onNodeWithTag("plugin-mutation-receipt").assertTextEquals("登记已保存")
+                // Returning to inventory must not replay the completed removal outcome.
+                onAllNodes(hasTestTag("harness-toast-info") and
+                    hasAnyDescendant(hasText("已移除登记；源目录和源文件均已保留。")), useUnmergedTree = true)
+                    .assertCountEquals(1)
                 assertTrue(runBlocking { fixture.service.read() }.plugins.isEmpty())
             }
             assertTrue(Files.isRegularFile(fixture.inventoryFile))
@@ -272,8 +317,8 @@ class PluginsPageInteractionTest {
                 pluginsPageMouseClick("plugin-local-directory")
                 onNodeWithTag("plugin-local-directory").performTextInput(fixture.source.toString())
                 pluginsPageMouseClick("plugin-register-confirm")
-                waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("plugin-saved-refresh-failure").fetchSemanticsNodes().isNotEmpty() }
-                onNodeWithTag("plugin-mutation-receipt").assertTextEquals("登记已保存")
+                waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("harness-toast-error").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithTag("harness-toast-info").assertExists()
                 onNodeWithText("尚无已登记插件").assertDoesNotExist()
                 onNodeWithTag("plugins-add-local").assertIsNotEnabled()
                 val plugin = runBlocking { fixture.service.read() }.plugins.single()
@@ -281,7 +326,7 @@ class PluginsPageInteractionTest {
                 runOnIdle { repository.failReads = false; repository.failAfterRegister = false }
                 pluginsPageMouseClick("plugins-refresh")
                 pluginsPageAwaitEnabled("plugins-add-local")
-                onNodeWithTag("plugin-saved-refresh-failure").assertDoesNotExist()
+                onNodeWithTag("plugins-refresh").assertIsEnabled()
                 onNodeWithTag("installed-plugin-" + plugin.id).assertExists()
                 assertEquals(1, runBlocking { fixture.service.read() }.plugins.size)
             }
@@ -328,8 +373,7 @@ class PluginsPageInteractionTest {
                     waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("plugin-detail-name").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("plugin-set-enabled").assertDoesNotExist()
                     onNodeWithTag("plugin-remove-registration").assertDoesNotExist()
-                    pluginsPageWheelTo("plugin-detail-list", "plugin-management-unavailable")
-                    onNodeWithTag("plugin-management-unavailable").assertIsDisplayed().assertIsNotEnabled()
+                    onNodeWithTag("plugin-set-enabled").assertDoesNotExist()
                 }
             } finally {
                 account?.let { runBlocking { it.shutdown() } }

@@ -7,7 +7,13 @@ import kotlinx.coroutines.CancellationException
 public class DesktopManagedGitBackend(
     private val delegate: GitBackend,
     private val repository: DesktopManagedWorktreeRepository,
-) : GitBackend by delegate, GitWorktreeCreator, GitBranchSwitcher, GitCommitter {
+) : GitBackend by delegate, GitWorktreeCreator, GitBranchSwitcher, GitCommitter, GitStager {
+    override fun canStage(binding: GitBinding): Boolean = (delegate as? GitStager)?.canStage(binding) == true
+
+    override suspend fun applyStage(repository: GitRepository, request: GitStageRequest): GitStageResult =
+        (delegate as? GitStager)?.applyStage(repository, request)
+            ?: GitStageResult.Rejected(GitFailure(GitFailureKind.Unavailable, "本机暂存不可用。"))
+
     override fun canCommit(binding: GitBinding): Boolean = (delegate as? GitCommitter)?.canCommit(binding) == true
 
     override suspend fun readCommitSnapshot(repository: GitRepository): GitCommitSnapshot =

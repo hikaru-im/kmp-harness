@@ -5,9 +5,11 @@ product: jvm/lib
 dependencies:
   - ../../contracts
   - ../../contracts/harness-protocol
+  - ../api/gateway
   - ../boot
   - ../home
   - ../loader
+  - ../mcp-client
   - ../profile
   - ../runtime
   - org.yaml:snakeyaml:2.4

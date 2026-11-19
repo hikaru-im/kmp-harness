@@ -12,7 +12,15 @@ class ShortcutsRepositoryTest {
         val store = MemoryShortcutsStore()
         val repository = ShortcutsRepository(store, platform)
         repository.load()
-        assertEquals(6, ShortcutRegistry.commands.size)
+        assertEquals(9, ShortcutRegistry.commands.size)
+        assertEquals(ShortcutCommand.SearchFiles, repository.commandFor(ShortcutChord(ShortcutKey.P, meta = true)))
+        assertEquals(ShortcutCommand.FindInConversation, repository.commandFor(ShortcutChord(ShortcutKey.F, meta = true)))
+        assertEquals(
+            ShortcutCommand.OpenQuickChat,
+            repository.commandFor(ShortcutChord(ShortcutKey.S, meta = true, alt = true)),
+        )
+        assertEquals(listOf(ShortcutChord(ShortcutKey.P, ctrl = true)),
+            ShortcutRegistry.defaults(ShortcutCommand.SearchFiles, ShortcutPlatform.Windows))
         assertEquals(emptyList(), repository.state.value.settings.bindings(ShortcutCommand.ManageTasks, platform))
         val defaults = repository.state.value.settings.bindings(ShortcutCommand.CloseWindow, platform)
         assertTrue(repository.save(ShortcutsSettings().withBindings(ShortcutCommand.CloseWindow, defaults + custom)))
@@ -50,9 +58,9 @@ class ShortcutsRepositoryTest {
         assertEquals(ShortcutCaptureMode.None, repository.state.value.capture)
         assertNull(repository.commandFor(custom))
         assertTrue(repository.saveEditor())
-        repository.beginRecording(ShortcutCommand.ManageTasks)
+        repository.beginRecording(ShortcutCommand.CloseWindow)
         repository.record(custom)
-        assertNotNull(repository.state.value.editor?.error)
+        assertEquals("已被 ${ShortcutCommand.ManageTasks.label} 使用", repository.state.value.editor?.error)
         repository.cancelCapture()
         repository.requestReset()
         assertTrue(repository.resetAll())
@@ -76,6 +84,7 @@ class ShortcutsRepositoryTest {
         repository.beginRecording(ShortcutCommand.CloseWindow, 0)
         repository.record(custom)
         assertFalse(repository.saveEditor())
+        assertEquals("更新快捷键失败", repository.state.value.saveError)
         assertEquals(previous, repository.state.value.settings)
         assertEquals(custom, repository.state.value.editor?.chord)
         assertNotNull(repository.state.value.draft)

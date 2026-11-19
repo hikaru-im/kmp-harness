@@ -56,22 +56,23 @@ private fun ApprovalCard(
         .padding(12.dp)
         .semantics { testTag = "approval-card:$id" },
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            HarnessIcon(HarnessIconName.Warning, tint = HarnessTokens.Colors.Warning, size = 16.dp)
-            HarnessText("需要你的批准", Modifier.padding(start = 6.dp),
-                color = ConversationAppearance.ink, style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
-                maxLines = 1)
-            Spacer(Modifier.weight(1f))
-            HarnessText(if (pending.responding) "提交中…" else "待批准",
-                Modifier.semantics { testTag = "approval-status:$id" },
-                color = ConversationAppearance.tertiary, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        // `execApprovalRequest.prompt` = 是否运行此命令？ for a command; `composer.mcpToolCallApproval`
+        // builds 允许运行 {name} 工具？ for a tool with no command to show. Codex's card is that question
+        // plus the command — no "your approval is needed" banner and no status caption.
+        val asksForCommand = request.command.isNotBlank()
+        HarnessText(
+            if (asksForCommand) "是否运行此命令？" else "允许运行 ${request.toolName} 工具？",
+            Modifier.semantics { testTag = "approval-title:$id" },
+            color = ConversationAppearance.ink, style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+        )
+        // The tool is the card's subtitle — a fact from the request, printed bare. The question above
+        // already names it when there is no command, so it is not repeated there.
+        if (asksForCommand) {
+            HarnessText(request.toolName, Modifier.semantics { testTag = "approval-tool:$id" },
+                color = ConversationAppearance.muted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
-        HarnessText("工具 ${request.toolName}", Modifier.semantics { testTag = "approval-tool:$id" },
-            color = ConversationAppearance.muted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-        if (request.command.isNotBlank()) {
-            HarnessText("是否运行此命令？", color = ConversationAppearance.muted,
-                style = MaterialTheme.typography.bodySmall)
+        if (asksForCommand) {
             SelectionContainer {
                 Box(Modifier.fillMaxWidth().heightIn(max = 160.dp)
                     .background(ConversationAppearance.popup, RoundedCornerShape(8.dp))
@@ -83,11 +84,11 @@ private fun ApprovalCard(
                         overflow = TextOverflow.Visible)
                 }
             }
-        } else HarnessText("是否允许运行此工具？", color = ConversationAppearance.muted,
-            style = MaterialTheme.typography.bodySmall)
+        }
         request.reason?.takeIf { it.isNotBlank() }?.let { reason ->
             Column(Modifier.semantics { testTag = "approval-reason:$id" },
                 verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // `approvalRequestCard.reasonLabel` = 原因.
                 HarnessText("原因", color = ConversationAppearance.tertiary,
                     style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 HarnessText(reason, color = ConversationAppearance.muted,
@@ -102,13 +103,18 @@ private fun ApprovalCard(
             verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.weight(1f))
             // Cancelling and refusing sit left of the two allow actions; only offered choices appear.
-            ApprovalChoice.entries.filter { it in request.choices }.sortedBy { APPROVAL_CHOICE_ORDER.indexOf(it) }
-                .forEach { choice ->
-                    HarnessButton(approvalChoiceLabel(choice), { onChoice(id, choice) },
-                        enabled = !inactive, size = HarnessControlSize.Compact,
-                        variant = approvalChoiceVariant(choice),
-                        testTag = "approval:$id:${approvalChoiceTag(choice)}")
-                }
+            // While a decision is in flight Codex spins the primary submit rather than captioning the
+            // card with a status line, so the spinner sits on the allow action itself.
+            val offered = ApprovalChoice.entries.filter { it in request.choices }
+                .sortedBy { APPROVAL_CHOICE_ORDER.indexOf(it) }
+            val spinning = if (pending.responding) offered.lastOrNull() else null
+            offered.forEach { choice ->
+                HarnessButton(approvalChoiceLabel(choice), { onChoice(id, choice) },
+                    enabled = !inactive, size = HarnessControlSize.Compact,
+                    state = if (choice == spinning) HarnessControlState.Loading else HarnessControlState.Normal,
+                    variant = approvalChoiceVariant(choice),
+                    testTag = "approval:$id:${approvalChoiceTag(choice)}")
+            }
         }
     }
 }
@@ -121,10 +127,12 @@ private val APPROVAL_CHOICE_ORDER = listOf(
     ApprovalChoice.ALLOW_ONCE,
 )
 
+/** `execApprovalRequest.menu.runOnce` = 是; `execApprovalRequest.menu.runAlways` = 是，且本次会话不再询问. */
 private fun approvalChoiceLabel(choice: ApprovalChoice): String = when (choice) {
-    ApprovalChoice.ALLOW_ONCE -> "允许一次"
-    ApprovalChoice.ALLOW_SESSION -> "本会话允许"
+    ApprovalChoice.ALLOW_ONCE -> "是"
+    ApprovalChoice.ALLOW_SESSION -> "是，且本次会话不再询问"
     ApprovalChoice.DENY -> "拒绝"
+    // `approvalRequestCard.cancel` = 取消, `approvalRequestCard.allow` = 允许.
     ApprovalChoice.CANCEL -> "取消"
 }
 

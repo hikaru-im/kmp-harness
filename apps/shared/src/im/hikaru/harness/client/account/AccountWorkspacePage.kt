@@ -50,7 +50,6 @@ public fun AccountWorkspacePage(
                 Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     HarnessText(if (state.session == null) "登录远程账号" else "当前账号", style = MaterialTheme.typography.titleLarge)
                     if (account == null) {
-                        HarnessText("本地模式无需登录。", color = HarnessTokens.Colors.TextMuted)
                         HarnessButton("登录", {}, modifier = Modifier.fillMaxWidth(), enabled = false, testTag = "account-login")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -103,15 +102,17 @@ public fun AccountWorkspacePage(
                             }, enabled = !busy, variant = HarnessButtonVariant.Secondary, testTag = "account-logout")
                             HarnessButton(if (details) "收起账号详情" else "账号详情", { details = !details },
                                 variant = HarnessButtonVariant.Ghost, size = HarnessControlSize.Compact, testTag = "account-details")
-                            if (details) HarnessText("登录存储：" + state.persistence.name, color = HarnessTokens.Colors.TextMuted,
-                                style = MaterialTheme.typography.bodySmall)
+                            if (details) HarnessText("用户 ID：${state.session.identity.userId}",
+                                Modifier.semantics { testTag = "account-user-id" }, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     error?.let { HarnessText(it, Modifier.semantics { testTag = "account-error" }, color = HarnessTokens.Colors.Danger) }
-                    if (account != null && (state.session != null || state.persistence == PersistenceStatus.READ_FAILED ||
-                            state.persistence == PersistenceStatus.CLEAR_FAILED)) state.persistence.message?.let {
-                        HarnessText(it, Modifier.semantics { testTag = "account-storage-status" },
-                            color = HarnessTokens.Colors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                    if (account != null && state.persistence in setOf(
+                            PersistenceStatus.READ_FAILED, PersistenceStatus.WRITE_FAILED, PersistenceStatus.CLEAR_FAILED)) {
+                        state.persistence.message?.let {
+                            HarnessText(it, Modifier.semantics { testTag = "account-storage-status" },
+                                color = HarnessTokens.Colors.Danger, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }

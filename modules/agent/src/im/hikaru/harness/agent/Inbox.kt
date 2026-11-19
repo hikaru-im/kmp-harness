@@ -41,6 +41,7 @@ class Inbox internal constructor(
         message: Message,
         target: AgentSendTarget,
         wakeup: AgentWakeup,
+        callConfig: im.hikaru.harness.llm.LlmCallConfig? = null,
     ): String =
         mutate {
             val id = "${agentId.value}:$nextItemId"
@@ -50,6 +51,7 @@ class Inbox internal constructor(
                     message = copyMessage(message),
                     target = target,
                     wakeup = wakeup,
+                    callConfig = callConfig,
                 )
             val queue = queueFor(target)
             val nextItems = (queue + item).map(::copyItem)

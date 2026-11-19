@@ -56,10 +56,10 @@ import im.hikaru.harness.ui.foundation.harnessPointer
  * One 工具 card of the new-tab page: its Codex label, the keyboard chord the reference prints in the
  * card, the artwork of its leading glyph, and whether this client can open it.
  *
- * [opens] is true for 变更 only: it opens the Git page, which is the one destination the reference's
- * other three cards have an equivalent for. The rest keep the reference's geometry and are drawn
- * disabled instead of pretending to open a terminal, a file picker or a side chat this client does not
- * have. [options] marks the card that carries the reference's own `⋯` control (终端).
+ * [opens] is true for 变更 in the shared default. Desktop may additionally enable 侧边聊天 through
+ * [NewTabPage]'s platform-owned availability flag; unsupported hosts keep it visibly disabled instead
+ * of pretending to open a terminal, a file picker or a side chat. [options] marks the card that carries
+ * the reference's own `⋯` control (终端).
  */
 public enum class NewTabTool(
     public val label: String,
@@ -109,6 +109,7 @@ private const val DisabledAlpha: Float = 0.4f
 public fun NewTabPage(
     onOpenTool: (NewTabTool) -> Unit,
     modifier: Modifier = Modifier,
+    sideChatAvailable: Boolean = false,
 ) {
     Column(modifier.fillMaxSize().background(HarnessTokens.Colors.WorkspaceBackground)) {
         BrowserToolbar()
@@ -131,7 +132,7 @@ public fun NewTabPage(
                         .align(Alignment.CenterHorizontally),
                 verticalArrangement = Arrangement.spacedBy(HarnessTokens.Control.BrowserSectionGap),
             ) {
-                ToolSection(onOpenTool)
+                ToolSection(onOpenTool, sideChatAvailable)
             }
         }
     }
@@ -300,7 +301,7 @@ private fun ToolbarPill(
 
 /** The 工具 section: its heading, then the reference's two-column grid. */
 @Composable
-private fun ToolSection(onOpenTool: (NewTabTool) -> Unit) {
+private fun ToolSection(onOpenTool: (NewTabTool) -> Unit, sideChatAvailable: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Four)) {
         HarnessText(
             "工具",
@@ -310,7 +311,7 @@ private fun ToolSection(onOpenTool: (NewTabTool) -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.One)) {
             NewTabToolRows.forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Four)) {
-                    row.forEach { tool -> ToolCell(tool, onOpenTool) }
+                    row.forEach { tool -> ToolCell(tool, onOpenTool, sideChatAvailable) }
                 }
             }
         }
@@ -328,8 +329,9 @@ private fun ToolSection(onOpenTool: (NewTabTool) -> Unit) {
  * settings rows' corner instead of inventing a tenth value.
  */
 @Composable
-private fun RowScope.ToolCell(tool: NewTabTool, onOpenTool: (NewTabTool) -> Unit) {
+private fun RowScope.ToolCell(tool: NewTabTool, onOpenTool: (NewTabTool) -> Unit, sideChatAvailable: Boolean) {
     val colors = HarnessTokens.Colors
+    val opens = tool.opens || (tool == NewTabTool.SideChat && sideChatAvailable)
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
     val focused by source.collectIsFocusedAsState()
@@ -343,21 +345,21 @@ private fun RowScope.ToolCell(tool: NewTabTool, onOpenTool: (NewTabTool) -> Unit
                 .clip(shape)
                 .background(colors.OverlayBackground)
                 .background(when {
-                    pressed && tool.opens -> colors.PressedBackground
-                    hovered && tool.opens -> colors.ChromeFill
+                    pressed && opens -> colors.PressedBackground
+                    hovered && opens -> colors.ChromeFill
                     else -> Color.Transparent
                 })
-                .border(if (focused && tool.opens) 2.dp else 1.dp,
-                    if (focused && tool.opens) colors.BorderFocused else colors.BorderSubtle, shape)
-                .hoverable(source, enabled = tool.opens)
-                .alpha(if (tool.opens) 1f else DisabledAlpha)
+                .border(if (focused && opens) 2.dp else 1.dp,
+                    if (focused && opens) colors.BorderFocused else colors.BorderSubtle, shape)
+                .hoverable(source, enabled = opens)
+                .alpha(if (opens) 1f else DisabledAlpha)
                 .padding(
                     end = if (tool.options) HarnessTokens.Control.BrowserToolCardPaddingX else 0.dp,
                 )
                 .semantics {
                     testTag = "new-tab-tool-" + tool.name.lowercase()
                     // The card this client cannot open says so, like the toolbar's dead 返回/前进 pair.
-                    if (!tool.opens) disabled()
+                    if (!opens) disabled()
                 },
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -366,9 +368,9 @@ private fun RowScope.ToolCell(tool: NewTabTool, onOpenTool: (NewTabTool) -> Unit
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .harnessPointer(tool.opens)
+                    .harnessPointer(opens)
                     .clickable(
-                        enabled = tool.opens,
+                        enabled = opens,
                         indication = null,
                         interactionSource = source,
                     ) { onOpenTool(tool) }

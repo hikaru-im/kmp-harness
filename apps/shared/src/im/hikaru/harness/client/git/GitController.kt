@@ -11,7 +11,7 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
     private val tasks = CoroutineScope(scope.coroutineContext + owner)
     private val mutableState = MutableStateFlow(GitState())
     public val state: StateFlow<GitState> = mutableState.asStateFlow()
-    private enum class Query { Repository, Status, Branches, Worktrees, Diff, Commit, SummaryStats }
+    private enum class Query { Repository, Status, Branches, Worktrees, Diff, ReviewDiff, Commit, SummaryStats }
     private val jobs = mutableMapOf<Query, Job>()
     private val requests = mutableMapOf<Query, Long>()
     private val previewJobs = mutableMapOf<String, Job>()
@@ -21,6 +21,7 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
     private val switcher = backend as? GitBranchSwitcher
     private val branchCreator = backend as? GitBranchCreator
     private val committer = backend as? GitCommitter
+    private val stager = backend as? GitStager
     private var mutationBusy = false
     // Kept across navigation; a fenced unknown result must still require a scan when revisited.
     private data class UncertaintyKey(val owner: GitBinding, val commonDir: String)
@@ -36,6 +37,12 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
     private fun indexKey(repo: GitRepository) = IndexKey(uncertaintyKey(repo), repo.root, repo.gitDir)
     private val uncertainCommits = mutableMapOf<IndexKey, CommitUncertainty>()
     private fun commitUnknownFor(repo: GitRepository): Boolean = uncertainCommits.keys.any { it.repository == uncertaintyKey(repo) }
+    /** The stage slot is the same worktree index, so it shares [IndexKey] resolution with commit. */
+    private class StageUncertainty
+    private val uncertainStages = mutableMapOf<IndexKey, StageUncertainty>()
+    private fun stageUnknownFor(repo: GitRepository): Boolean = uncertainStages.keys.any { it.repository == uncertaintyKey(repo) }
+    private fun stageAvailable(binding: GitBinding?): Boolean = binding != null &&
+        binding.access == GitAccess.LocalReadOnly && stager?.canStage(binding) == true
     private fun commitAvailable(binding: GitBinding?): Boolean = binding != null &&
         binding.access == GitAccess.LocalReadOnly && committer?.canCommit(binding) == true
     private fun switchAvailable(binding: GitBinding?): Boolean = binding != null &&
@@ -54,7 +61,8 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         invalidate()
         mutableState.value = GitState(binding = binding, selectedCwd = old.selectedCwd.takeIf { sameHost },
             creationAvailable = available(binding), creationBusy = mutationBusy, checkoutAvailable = switchAvailable(binding),
-            branchCreateAvailable = branchCreateAvailable(binding), commitAvailable = commitAvailable(binding))
+            branchCreateAvailable = branchCreateAvailable(binding), commitAvailable = commitAvailable(binding),
+            stageAvailable = stageAvailable(binding))
         if (state.value.canRefresh) discover()
     }
 
@@ -66,7 +74,8 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         invalidate()
         mutableState.value = GitState(binding = state.value.binding, selectedCwd = selected,
             creationAvailable = available(state.value.binding), creationBusy = mutationBusy, checkoutAvailable = switchAvailable(state.value.binding),
-            branchCreateAvailable = branchCreateAvailable(state.value.binding), commitAvailable = commitAvailable(state.value.binding))
+            branchCreateAvailable = branchCreateAvailable(state.value.binding), commitAvailable = commitAvailable(state.value.binding),
+            stageAvailable = stageAvailable(state.value.binding))
         if (state.value.canRefresh) discover()
     }
 
@@ -163,6 +172,117 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
     private fun commitUnknownFailure() = GitFailure(GitFailureKind.CommandFailed,
         "结果未知：先前提交可能已完成，请重新读取原工作树暂存区与仓库状态；不要直接重试。")
 
+    /** Whole-file staging for the given change. The path must be eligible in the current status. */
+    public fun stageFile(path: String) = stage(GitStageAction.Stage, path, hunkPatch = null)
+
+    public fun unstageFile(path: String) = stage(GitStageAction.Unstage, path, hunkPatch = null)
+
+    /**
+     * Stage/unstage exactly one hunk. The patch is built from the displayed diff; the backend still
+     * re-validates that it is a single-file, single-hunk patch for [path] before touching the index.
+     */
+    public fun stageHunk(path: String, patch: String) = stage(GitStageAction.Stage, path, patch)
+
+    public fun unstageHunk(path: String, patch: String) = stage(GitStageAction.Unstage, path, patch)
+
+    /**
+     * Index-only mutation with the same admission, fencing and unknown-outcome rules as commit.
+     * Eligibility is decided from the accepted status snapshot, so a stale or redirected selection
+     * can never apply an action the user was not looking at.
+     */
+    private fun stage(action: GitStageAction, path: String, hunkPatch: String?) {
+        check(!closed)
+        if (mutationBusy || !state.value.canStage) return
+        if (!gitStagePathIsSafe(path)) return
+        val repo = (state.value.repository as? GitRead.Ready<GitRepository>)?.value ?: return
+        val snapshot = (state.value.status as? GitRead.Ready<GitStatusSnapshot>)?.value ?: return
+        val change = snapshot.changes.singleOrNull { it.path == path } ?: return
+        if (!action.accepts(change)) return
+        val capability = stager ?: return
+        val target = if (hunkPatch == null) GitStageTarget.File(path) else GitStageTarget.Hunk(path, hunkPatch)
+        val request = GitStageRequest(repo.binding, repo.root, snapshot.branch, snapshot.headOid, action, target)
+        invalidate()
+        val capturedEpoch = epoch
+        fun current(): Boolean = !closed && epoch == capturedEpoch && state.value.binding == repo.binding &&
+            (state.value.repository as? GitRead.Ready<GitRepository>)?.value == repo
+        mutationBusy = true
+        mutableState.value = state.value.copy(creationBusy = true, stageBusy = true,
+            stage = GitStage.Applying(request), status = GitRead.Unselected, branches = GitRead.Unselected,
+            worktrees = GitRead.Unselected, diff = GitRead.Unselected, reviewDiff = GitRead.Unselected,
+            commitSnapshot = GitRead.Unselected)
+        var started = false
+        val job = tasks.launch(start = CoroutineStart.LAZY) {
+            started = true
+            var refreshFencedSelection = false
+            try {
+                when (val result = capability.applyStage(repo, request)) {
+                    is GitStageResult.Applied -> {
+                        if (!validStageReceipt(repo, request, result.receipt)) {
+                            recordStageUnknown(repo, current())
+                        } else if (current()) {
+                            invalidate()
+                            val receipt = result.receipt
+                            mutableState.value = state.value.copy(stage = GitStage.Applied(receipt),
+                                status = GitRead.Ready(receipt.status.copy(changes = receipt.status.changes.toList())),
+                                diff = GitRead.Unselected, commitSnapshot = GitRead.Unselected)
+                            // The entry state above cleared branches and worktrees; a fenced read that was
+                            // still Loading can never finish, so a full reread is the only way back to a
+                            // coherent page. It re-reads the status from the backend as well, so a stale
+                            // receipt can never be the last word on the list.
+                            refreshData()
+                        } else refreshFencedSelection = true
+                    }
+                    is GitStageResult.Rejected -> if (current()) {
+                        mutableState.value = state.value.copy(stage = GitStage.Rejected(result.failure))
+                        refreshFencedSelection = true
+                    }
+                    is GitStageResult.UnknownOutcome -> recordStageUnknown(repo, current())
+                }
+            } catch (_: CancellationException) {
+                recordStageUnknown(repo, current())
+            } catch (_: Exception) {
+                recordStageUnknown(repo, current())
+            } finally {
+                mutationBusy = false
+                if (!closed) mutableState.value = state.value.copy(creationBusy = false, stageBusy = false)
+                if (refreshFencedSelection && !closed) refreshCurrentCommonDir(repo)
+            }
+        }
+        job.invokeOnCompletion {
+            if (!started) {
+                // Cancelled before the body ran: no Git call happened, so this is a rejection.
+                mutationBusy = false
+                if (!closed) mutableState.value = state.value.copy(creationBusy = false, stageBusy = false,
+                    stage = if (current()) GitStage.Rejected(GitFailure(GitFailureKind.CommandFailed,
+                        "暂存操作在调用 Git 前已取消。")) else state.value.stage)
+            }
+        }
+        job.start()
+    }
+
+    /**
+     * A receipt is accepted only when it echoes this repository and request and its status is a
+     * plausible post-operation read: HEAD is unchanged (staging never moves it) and the branch
+     * matches the accepted snapshot. The change set itself is not predicted — it is the real reread.
+     */
+    private fun validStageReceipt(repo: GitRepository, request: GitStageRequest, receipt: GitStageReceipt): Boolean =
+        receipt.repository == repo && receipt.request == request && receipt.status.headOid == request.expectedHeadOid &&
+        receipt.status.branch == request.expectedBranch
+
+    private fun stageUnknownFailure() = GitFailure(GitFailureKind.CommandFailed,
+        "结果未知：暂存区可能已被先前操作修改，请重新读取仓库状态；不要直接重试。")
+
+    private fun recordStageUnknown(repo: GitRepository, publish: Boolean) {
+        uncertainStages[indexKey(repo)] = StageUncertainty()
+        val selected = (state.value.repository as? GitRead.Ready<GitRepository>)?.value
+        if (!closed && (publish || selected != null && uncertaintyKey(selected) == uncertaintyKey(repo))) {
+            invalidate()
+            mutableState.value = state.value.copy(stage = GitStage.UnknownOutcome(stageUnknownFailure()), stageNeedsRescan = true,
+                commitSnapshot = GitRead.Unselected, status = GitRead.Unselected, branches = GitRead.Unselected,
+                worktrees = GitRead.Unselected, diff = GitRead.Unselected)
+        }
+    }
+
     private fun recordCommitUnknown(repo: GitRepository, publish: Boolean) {
         uncertainCommits[indexKey(repo)] = CommitUncertainty()
         val selected = (state.value.repository as? GitRead.Ready<GitRepository>)?.value
@@ -179,7 +299,8 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         if (selected != null && uncertaintyKey(selected) == uncertaintyKey(repo)) {
             invalidate()
             mutableState.value = state.value.copy(status = GitRead.Unselected, branches = GitRead.Unselected,
-                worktrees = GitRead.Unselected, diff = GitRead.Unselected, commitSnapshot = GitRead.Unselected, selectedBranchRef = null)
+                worktrees = GitRead.Unselected, diff = GitRead.Unselected, reviewDiff = GitRead.Unselected,
+                commitSnapshot = GitRead.Unselected, selectedBranchRef = null)
             refreshData()
         } else if (selected == null && state.value.canRefresh && state.value.binding?.sameHost(repo.binding) == true) {
             invalidate()
@@ -407,6 +528,23 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
     }
 
     /**
+     * Read the patch for the thread side panel's Changes tab. This is the review tab's own read:
+     * it follows [GitState.changeFilter] (unstaged → worktree, staged → index) and never touches
+     * [GitState.diffRequest], so the Settings → Git page keeps whatever comparison it was set to.
+     * Purely a read — no index, HEAD, branch or worktree is written.
+     */
+    public fun refreshReviewDiff() {
+        check(!closed)
+        if (!state.value.canRefresh) return
+        val repo = (state.value.repository as? GitRead.Ready<GitRepository>)?.value ?: return
+        val request = GitDiffRequest(source = state.value.changeFilter.diffSource)
+        read(Query.ReviewDiff, { it.copy(reviewDiff = GitRead.Loading) },
+            { backend.diff(repo, request) },
+            { snapshot -> mutableState.value = state.value.copy(reviewDiff = GitRead.Ready(snapshot)) },
+            { s, e -> s.copy(reviewDiff = GitRead.Failed(e)) })
+    }
+
+    /**
      * Read the thread summary's Environment numbers: the local uncommitted-to-HEAD diff, expressed as
      * file/additions/deletions counts. This reuses the read-only diff capability with the resolved
      * HEAD commit as base; it never stages, checks out, commits or writes. It stays independent of the
@@ -464,6 +602,21 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         }
     }
 
+    /**
+     * Readiness-only selection, like Codex's `review.stageFilter`: it only chooses which half of the
+     * already-read change list the page shows. It never stages, unstages or re-reads the repository,
+     * and a rebind resets it with the rest of [GitState].
+     */
+    public fun selectChangeFilter(filter: GitChangeFilter) {
+        check(!closed)
+        if (state.value.changeFilter == filter) return
+        mutableState.value = state.value.copy(changeFilter = filter)
+    }
+
+    /** The currently loaded changes for [filter]; empty until a real status read arrives. */
+    public fun changesFor(filter: GitChangeFilter = state.value.changeFilter): List<GitChange> =
+        (state.value.status as? GitRead.Ready<GitStatusSnapshot>)?.value?.let { filter.filter(it.changes) }.orEmpty()
+
     /** Readiness-only toggle; it never stages anything and is reset when the repository changes. */
     public fun setIncludeUnstaged(value: Boolean) {
         check(!closed)
@@ -500,7 +653,7 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
                             mutableState.value = GitState(binding = repo.binding, selectedCwd = receipt.worktree.path,
                                 creationAvailable = available(repo.binding), creationBusy = true,
                                 checkoutAvailable = switchAvailable(repo.binding), branchCreateAvailable = branchCreateAvailable(repo.binding),
-                                commitAvailable = commitAvailable(repo.binding),
+                                commitAvailable = commitAvailable(repo.binding), stageAvailable = stageAvailable(repo.binding),
                                 creation = GitWorktreeCreation.Created(receipt))
                             discover()
                         }
@@ -554,6 +707,8 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
                     branchCreateNeedsRescan = branchCreatePending != null,
                     commitNeedsRescan = commitUnknownFor(repository),
                     commit = if (commitUnknownFor(repository)) GitCommit.UnknownOutcome(commitUnknownFailure()) else state.value.commit,
+                    stageNeedsRescan = stageUnknownFor(repository),
+                    stage = if (stageUnknownFor(repository)) GitStage.UnknownOutcome(stageUnknownFailure()) else state.value.stage,
                     checkout = checkoutPending?.let { GitBranchCheckout.UnknownOutcome(it.failure) } ?: state.value.checkout,
                     branchCreation = branchCreatePending?.let { GitBranchCreation.UnknownOutcome(it.failure) } ?: state.value.branchCreation,
                     creation = pending?.let { GitWorktreeCreation.Failed(it) } ?: state.value.creation)
@@ -565,10 +720,20 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
         val repo = (state.value.repository as? GitRead.Ready<GitRepository>)?.value ?: return
         val checkoutScan = uncertainCheckouts[uncertaintyKey(repo)].takeIf { !mutationBusy && state.value.checkoutNeedsRescan }
         val branchCreateScan = uncertainBranchCreates[uncertaintyKey(repo)].takeIf { !mutationBusy && state.value.branchCreateNeedsRescan }
+        val stageScan = uncertainStages[indexKey(repo)].takeIf { !mutationBusy && state.value.stageNeedsRescan }
         val scanEpoch = epoch
         var scannedStatus: GitStatusSnapshot? = null
         var scannedBranches: List<GitBranch>? = null
         var scannedWorktrees: List<GitWorktree>? = null
+        // Staging writes only the index, and [GitBackend.status] already fences HEAD across its read,
+        // so one successful status reread is exactly the proof that resolves stage uncertainty.
+        fun resolveStageScan() {
+            if (scannedStatus == null) return
+            if (stageScan == null || mutationBusy || scanEpoch != epoch ||
+                uncertainStages[indexKey(repo)] !== stageScan) return
+            uncertainStages.remove(indexKey(repo))
+            mutableState.value = state.value.copy(stageNeedsRescan = false, stage = GitStage.Rescanned)
+        }
         fun resolveCheckoutScan() {
             val status = scannedStatus ?: return
             val refs = scannedBranches ?: return
@@ -596,7 +761,7 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
                 newBranchStartRef = null)
         }
         read(Query.Status, { it.copy(status = GitRead.Loading) }, { backend.status(repo).let { it.copy(changes = it.changes.toList()) } },
-            { mutableState.value = state.value.copy(status = GitRead.Ready(it)); scannedStatus = it; resolveCheckoutScan(); resolveBranchCreateScan() },
+            { mutableState.value = state.value.copy(status = GitRead.Ready(it)); scannedStatus = it; resolveCheckoutScan(); resolveBranchCreateScan(); resolveStageScan() },
             { s, e -> s.copy(status = GitRead.Failed(e)) })
         read(Query.Branches, { it.copy(branches = GitRead.Loading) }, { backend.branches(repo).toList() },
             { mutableState.value = state.value.copy(branches = GitRead.Ready(it)); scannedBranches = it; resolveCheckoutScan(); resolveBranchCreateScan() },
@@ -613,6 +778,9 @@ public class GitController(scope: CoroutineScope, private val backend: GitBacken
                 resolveBranchCreateScan()
             }, { s, e -> s.copy(worktrees = GitRead.Failed(e)) })
         refreshDiff()
+        // Only refresh the review half once someone has asked for it: an unopened Changes tab must
+        // not add a second diff read to every repository refresh.
+        if (state.value.reviewDiff !is GitRead.Unselected) refreshReviewDiff()
         refreshCommitSnapshot()
     }
 

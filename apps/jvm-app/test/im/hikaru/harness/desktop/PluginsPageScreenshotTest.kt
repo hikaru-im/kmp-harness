@@ -20,6 +20,9 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.v2.runSkikoComposeUiTest
 import androidx.compose.ui.unit.Density
 import im.hikaru.harness.client.plugins.*
+import im.hikaru.harness.ui.foundation.HarnessToastHost
+import im.hikaru.harness.ui.foundation.LocalHarnessToastState
+import im.hikaru.harness.ui.foundation.rememberHarnessToastState
 import im.hikaru.harness.ui.foundation.HarnessTheme
 import im.hikaru.harness.ui.foundation.HarnessThemeMode
 import im.hikaru.harness.ui.foundation.HarnessTokens
@@ -78,8 +81,8 @@ class PluginsPageScreenshotTest {
                             onNodeWithTag("plugins-search").assertIsNotEnabled()
                             onNodeWithTag("plugins-add-local").assertIsNotEnabled()
                             if (case == Case.SavedRefreshFailure) {
-                                onNodeWithTag("plugin-mutation-receipt").assertTextEquals("登记已保存")
-                                onNodeWithTag("plugin-saved-refresh-failure").assertIsDisplayed()
+                                onNodeWithTag("harness-toast-info").assertExists()
+                                onNodeWithTag("harness-toast-error").assertIsDisplayed()
                             }
                         }
                         Case.Unavailable -> {
@@ -90,7 +93,7 @@ class PluginsPageScreenshotTest {
                         }
                         Case.ReadOnly -> {
                             onNodeWithTag("plugins-add-local").assertDoesNotExist()
-                            onNodeWithTag("plugin-management-unavailable").assertIsNotEnabled()
+                            onNodeWithTag("plugins-search").assertIsEnabled()
                         }
                         Case.Registration, Case.InvalidRegistration, Case.Removal -> {
                             val confirmTag = if (case == Case.Removal) "plugin-remove-confirm" else "plugin-register-confirm"
@@ -148,7 +151,8 @@ class PluginsPageScreenshotTest {
 
     @Composable private fun Page(case: Case, initial: InstalledPluginsState, theme: HarnessThemeMode) {
         var state by remember(case, initial) { mutableStateOf(initial) }
-        CompositionLocalProvider(LocalDensity provides Density(1f)) {
+        val toast = rememberHarnessToastState()
+        CompositionLocalProvider(LocalDensity provides Density(1f), LocalHarnessToastState provides toast) {
             HarnessTheme(themeMode = theme) {
                 Box(Modifier.fillMaxSize().background(HarnessTokens.Colors.Canvas)
                     .testTag("plugins-page-capture-viewport")) {
@@ -161,8 +165,10 @@ class PluginsPageScreenshotTest {
                             else -> state
                         }
                     }
+                    PluginManagementFeedback(state)
                     if (case.detail) InstalledPluginDetailPage(state, onAction)
                     else InstalledPluginsPage(state, onAction)
+                    HarnessToastHost(toast)
                 }
             }
         }

@@ -45,7 +45,8 @@ internal class LiveSessionDescendants(
                 startedAtEpochMillis = entry.session.header.createdAt,
                 provider = options.provider,
                 model = options.model,
-                reasoningEffort = options.reasoningEffort?.value,
+                reasoningEffort = (options.reasoning?.effort ?: options.reasoningEffort)?.value,
+                reasoning = options.reasoning,
                 lastAssistantMessage = finalReply?.text,
                 lastAssistantAtEpochMillis = finalReply?.timestampMillis,
             )

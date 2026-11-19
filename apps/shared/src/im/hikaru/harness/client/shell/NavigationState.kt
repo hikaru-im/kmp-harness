@@ -123,6 +123,8 @@ public sealed interface OverlayId {
     public data object ModelPicker : OverlayId
 
     public data object CommandPalette : OverlayId
+
+    public data object FileSearch : OverlayId
 }
 
 /**
