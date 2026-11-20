@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import im.hikaru.harness.client.conversation.ComposerAttachment
@@ -62,6 +63,7 @@ internal fun ConversationComposerToolbar(
     attachments: List<ComposerAttachment> = emptyList(),
     onAddAttachment: (() -> Unit)? = null,
     onRemoveAttachment: (String) -> Unit = {},
+    addMenuWidth: Dp = 280.dp,
 ) {
     var popupStack by remember(state.host, state.selectedSessionId) { mutableStateOf(emptyList<ComposerPopup>()) }
     // `BlockedSubmitDialog` is owned by the composer, not the caller: Codex opens it from the submit
@@ -117,16 +119,51 @@ internal fun ConversationComposerToolbar(
     Row(Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Composer.FooterPaddingX)
         .semantics { testTag = "live-composer-footer" },
         verticalAlignment = Alignment.CenterVertically) {
-        // The control stays disabled when no local picker is supplied; it never prints a reason line.
-        HarnessTooltipTrigger(state.attachmentError) { tip ->
-            Box(tip.size(HarnessTokens.Composer.ActionSize)
-                .then(if (onAddAttachment != null) Modifier.clickable(onClick = onAddAttachment) else Modifier)
-                .semantics {
-                    testTag = "live-composer-attachment"; role = Role.Button
-                    if (onAddAttachment == null) disabled()
-                    contentDescription = "添加附件"
-                }, contentAlignment = Alignment.Center) {
-                ConversationIcon(ConversationGlyph.Plus, ConversationAppearance.ink, 16.dp)
+        var addMenuExpanded by remember(state.host, state.selectedSessionId) { mutableStateOf(false) }
+        HarnessPopover(expanded = addMenuExpanded, onDismissRequest = { addMenuExpanded = false },
+            onExpandedChange = { addMenuExpanded = it }, anchor = { toggle ->
+                HarnessTooltipTrigger(state.attachmentError) { tip ->
+                    Box(tip.size(HarnessTokens.Composer.ActionSize).clickable { toggle() }
+                        .semantics {
+                            testTag = "live-composer-attachment"; role = Role.Button
+                            contentDescription = "添加附件"
+                        }, contentAlignment = Alignment.Center) {
+                        ConversationIcon(ConversationGlyph.Plus, ConversationAppearance.ink, 16.dp)
+                    }
+                }
+            }, side = HarnessPopoverSide.Top, popupWidth = addMenuWidth, popupMaxHeight = 320.dp,
+            popupShape = 20.dp,
+            popupColor = ConversationAppearance.popup, popupBorder = ConversationAppearance.popupRing,
+            popupBorderWidth = 1.dp, popupShadow = 0.dp,
+            popupModifier = Modifier.padding(4.dp)
+                .semantics { testTag = "live-composer-add-menu" }) {
+            val addMenuTextStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp)
+            HarnessText("添加", modifier = Modifier.fillMaxWidth().heightIn(min = 26.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp), color = ConversationAppearance.tertiary,
+                style = addMenuTextStyle)
+            composerAddMenuQuery("").take(6).forEach { entry ->
+                HarnessMenuItem(entry.label, enabled = entry.available &&
+                    (entry.action != ComposerAddMenuAction.AddFiles || onAddAttachment != null), onClick = {
+                    addMenuExpanded = false
+                    if (entry.action == ComposerAddMenuAction.AddFiles) onAddAttachment?.invoke()
+                }, modifier = Modifier.semantics { testTag = "live-composer-add-${entry.action.name}" },
+                    height = 29.dp, horizontalPadding = 8.dp, textStyle = addMenuTextStyle)
+            }
+            HarnessText("插件", modifier = Modifier.fillMaxWidth().heightIn(min = 26.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp), color = ConversationAppearance.tertiary,
+                style = addMenuTextStyle)
+            composerAddMenuQuery("").drop(6).take(3).forEach { entry ->
+                HarnessMenuItem(entry.label, enabled = false, onClick = {}, height = 29.dp,
+                    horizontalPadding = 8.dp, textStyle = addMenuTextStyle,
+                    modifier = Modifier.semantics { testTag = "live-composer-add-${entry.action.name}" })
+            }
+            HarnessText("文件和聊天", modifier = Modifier.fillMaxWidth().heightIn(min = 26.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp), color = ConversationAppearance.tertiary,
+                style = addMenuTextStyle)
+            composerAddMenuEntries.last().let { entry ->
+                HarnessMenuItem(entry.label, enabled = false, onClick = {}, height = 29.dp,
+                    horizontalPadding = 8.dp, textStyle = addMenuTextStyle,
+                    modifier = Modifier.semantics { testTag = "live-composer-add-${entry.action.name}" })
             }
         }
         Spacer(Modifier.width(HarnessTokens.Composer.ControlGap))

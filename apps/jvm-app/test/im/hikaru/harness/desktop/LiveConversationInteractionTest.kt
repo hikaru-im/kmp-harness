@@ -311,11 +311,35 @@ class LiveConversationInteractionTest {
     }
 
     @Test
+    fun addMenuShowsSupportedAndUnavailableActionsTruthfully() = runComposeUiTest {
+        val owner = ComposerOwner()
+        setContent { HarnessTheme { owner.Content() } }
+        onNodeWithTag("live-composer-attachment").assertIsEnabled().performClick()
+        onNodeWithTag("live-composer-add-menu").assertExists()
+        onNodeWithTag("live-composer-add-AddFiles").assertIsNotEnabled()
+        onNodeWithTag("live-composer-add-AttachClaude").assertIsNotEnabled()
+        onNodeWithTag("live-composer-add-Documents").assertIsNotEnabled()
+        onNodeWithTag("live-composer-add-FilesAndChats").assertIsNotEnabled()
+        assertEquals(listOf("PDF"), composerAddMenuQuery("pdf").map { it.label })
+        assertEquals(listOf("文件和文件夹"), composerAddMenuQuery("文件").take(1).map { it.label })
+    }
+
+    @Test
+    fun addMenuKeepsTheFilePickerAction() = runComposeUiTest {
+        val owner = ComposerOwner()
+        owner.pickerAvailable = true
+        setContent { HarnessTheme { owner.Content() } }
+        onNodeWithTag("live-composer-attachment").performClick()
+        onNodeWithTag("live-composer-add-AddFiles").assertIsEnabled().performClick()
+        runOnIdle { assertEquals(1, owner.pickerInvocations) }
+        onNodeWithTag("live-composer-add-menu").assertDoesNotExist()
+    }
+
+    @Test
     fun permissionsSelectAndReflectLocallyWhileAttachmentStaysUnavailable() = runComposeUiTest {
         val owner = ComposerOwner()
         setContent { HarnessTheme { owner.Content() } }
-        val attachment = onNodeWithTag("live-composer-attachment").assertIsNotEnabled().fetchSemanticsNode()
-        assertFalse(attachment.config.contains(SemanticsActions.OnClick))
+        onNodeWithTag("live-composer-attachment").assertIsEnabled()
         onNodeWithTag("live-composer-permissions").assertIsEnabled().performClick()
         onNodeWithTag("live-composer-permission-FullAccess").performClick()
         onNodeWithTag("live-composer-permission-popup").assertDoesNotExist()
@@ -832,6 +856,8 @@ class LiveConversationInteractionTest {
         var permission by mutableStateOf(ComposerPermission.Ask)
         var enterBehavior by mutableStateOf(EnterBehavior.Enter)
         var shortcutPlatform by mutableStateOf(ShortcutPlatform.Mac)
+        var pickerAvailable by mutableStateOf(false)
+        var pickerInvocations = 0
 
         @Composable
         fun Content() {
@@ -846,7 +872,8 @@ class LiveConversationInteractionTest {
                 models = models, selectedModel = chosen, onModelSelect = { selected += it; chosen = it },
                 submitUnavailableReason = submitReason,
                 selectedReasoningEffort = effort, onReasoningEffortSelect = { effort = it },
-                permission = permission, onPermissionSelect = { permission = it })
+                permission = permission, onPermissionSelect = { permission = it },
+                onAddAttachment = if (pickerAvailable) ({ pickerInvocations++ }) else null)
         }
     }
 

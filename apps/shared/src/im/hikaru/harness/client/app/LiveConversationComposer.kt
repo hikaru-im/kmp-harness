@@ -82,6 +82,8 @@ public fun LiveConversationComposer(
             TextRange(editor.selection.start.coerceIn(0, state.draft.length), editor.selection.end.coerceIn(0, state.draft.length)))
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // The start-aligned popup begins at the plus button, one footer inset inside the card.
+        val addMenuWidth = (maxWidth - HarnessTokens.Composer.FooterPaddingX).coerceAtLeast(0.dp)
         val viewport = suppliedViewport ?: if (constraints.hasBoundedHeight) maxHeight else null
         val editorCap = if (viewport == null) configuredCap else minOf(configuredCap,
             (viewport * HarnessTokens.Composer.ViewportFraction).coerceAtLeast(HarnessTokens.Composer.ThreadEditorMinHeight))
@@ -183,7 +185,7 @@ public fun LiveConversationComposer(
                     selectedReasoning = selectedReasoning, onManageModels = onManageModels,
                     submitShortcut = submitShortcut,
                     attachments = attachments, onAddAttachment = onAddAttachment,
-                    onRemoveAttachment = onRemoveAttachment,
+                    onRemoveAttachment = onRemoveAttachment, addMenuWidth = addMenuWidth,
                     // Codex never prints the blocked reason above the composer: it is the submit
                     // button's tooltip, and clicking the dimmed button opens `BlockedSubmitDialog`.
                     submitBlockedReason = submitUnavailableReason)

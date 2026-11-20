@@ -302,18 +302,22 @@ public fun HarnessMenuItem(
     state: HarnessControlState = HarnessControlState.Normal,
     selected: Boolean = false,
     destructive: Boolean = false,
+    height: Dp = HarnessTokens.Control.Height,
+    horizontalPadding: Dp = HarnessTokens.Spacing.Three,
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     HarnessActionSurface(
-        label = text, onClick = onClick, modifier = modifier.fillMaxWidth().height(HarnessTokens.Control.Height),
+        label = text, onClick = onClick, modifier = modifier.fillMaxWidth().height(height),
         state = HarnessButtonState(enabled, selected, state), variant = HarnessButtonVariant.Ghost, tag = text,
     ) { color ->
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = HarnessTokens.Spacing.Three),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(HarnessTokens.Spacing.Two),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (state == HarnessControlState.Loading) HarnessProgress(color)
-            HarnessText(text, color = if (destructive && enabled) HarnessTokens.Colors.Danger else color)
+            HarnessText(text, color = if (destructive && enabled) HarnessTokens.Colors.Danger else color,
+                style = textStyle)
         }
     }
 }

@@ -94,6 +94,33 @@ internal fun ConversationState.composerPrimaryAction(): ComposerPrimaryAction = 
 
 internal enum class ComposerPopup { Closed, Permissions, Reasoning, Models }
 
+/** Add-menu entries describe the intended operation even when this client cannot perform it yet. */
+public enum class ComposerAddMenuAction { AddFiles, AttachClaude, UseWorkInProject, SetTarget, PlanMode, Draw, Documents, Pdf, Spreadsheets, FilesAndChats }
+
+public data class ComposerAddMenuEntry(
+    val action: ComposerAddMenuAction,
+    val label: String,
+    val available: Boolean,
+)
+
+internal val composerAddMenuEntries = listOf(
+    ComposerAddMenuEntry(ComposerAddMenuAction.AddFiles, "文件和文件夹", true),
+    ComposerAddMenuEntry(ComposerAddMenuAction.AttachClaude, "附加 Claude", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.UseWorkInProject, "在项目中使用 Work", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.SetTarget, "目标", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.PlanMode, "计划模式", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.Draw, "绘图", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.Documents, "Documents", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.Pdf, "PDF", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.Spreadsheets, "Spreadsheets", false),
+    ComposerAddMenuEntry(ComposerAddMenuAction.FilesAndChats, "文件和聊天引用", false),
+)
+
+public fun composerAddMenuQuery(query: String): List<ComposerAddMenuEntry> =
+    if (query.isBlank()) composerAddMenuEntries else composerAddMenuEntries.filter {
+        it.label.contains(query.trim(), ignoreCase = true)
+    }
+
 internal fun composerModel(
     state: ConversationState, choices: List<ConversationModelChoice>, preferences: ComposerSessionPreferences?,
 ): ConversationModelChoice? {
