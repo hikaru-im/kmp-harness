@@ -339,7 +339,9 @@ class LiveConversationInteractionTest {
     fun permissionsSelectAndReflectLocallyWhileAttachmentStaysUnavailable() = runComposeUiTest {
         val owner = ComposerOwner()
         setContent { HarnessTheme { owner.Content() } }
-        onNodeWithTag("live-composer-attachment").assertIsEnabled()
+        onNodeWithTag("live-composer-attachment").assertIsEnabled().performClick()
+        onNodeWithTag("live-composer-add-AddFiles").assertIsNotEnabled()
+        onNodeWithTag("live-composer-attachment").performClick()
         onNodeWithTag("live-composer-permissions").assertIsEnabled().performClick()
         onNodeWithTag("live-composer-permission-FullAccess").performClick()
         onNodeWithTag("live-composer-permission-popup").assertDoesNotExist()
