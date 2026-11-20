@@ -3,12 +3,7 @@
     "PreToolUse": [
       {
         "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/Volumes/Data/IdeaProjects/kmp-harness/.agents/skills/comet/scripts/comet-hook-router.mjs\" --platform \"codex\" --project-root \"/Volumes/Data/IdeaProjects/kmp-harness\""
-          }
-        ]
+        "hooks": []
       }
     ]
   }
